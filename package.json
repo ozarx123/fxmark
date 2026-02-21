@@ -1,0 +1,7 @@
+{
+  "name": "fxmark",
+  "private": true,
+  "scripts": {
+    "build": "cd frontend-web && npm ci && npm run build"
+  }
+}
