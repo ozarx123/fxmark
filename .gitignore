@@ -3,3 +3,14 @@
 /fx mark folder.docx
 /FXMARK_FULL_SYSTEM_CODE.zip
 /infrastructure
+
+# Dependencies and build
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+build/
+.env
+.env.local
+*.log
+.DS_Store
