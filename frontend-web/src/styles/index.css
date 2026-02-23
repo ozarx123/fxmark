@@ -4209,6 +4209,113 @@ body {
   margin: 0 0 1rem;
 }
 
+/* Admin panel modals: keep dark theme, fix dropdown/button visibility only */
+.admin-panel .admin-modal,
+.admin-panel .modal-content.admin-modal {
+  background: var(--fxmark-dark-grey) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  color: rgba(255, 255, 255, 0.9) !important;
+}
+
+.admin-panel .admin-modal .filter-select,
+.admin-panel .admin-modal .filter-input,
+.admin-panel .admin-modal select,
+.admin-panel .admin-modal input[type="text"],
+.admin-panel .admin-modal input[type="number"],
+.admin-panel .admin-modal input[type="email"],
+.admin-panel .admin-modal .form-input {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: var(--fxmark-white) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+}
+
+.admin-panel .admin-modal .filter-select option,
+.admin-panel .admin-modal select option {
+  background: var(--fxmark-dark-grey) !important;
+  color: var(--fxmark-white) !important;
+}
+
+.admin-panel .admin-modal .btn-primary {
+  background: var(--fxmark-btn-primary) !important;
+  color: var(--fxmark-white) !important;
+  border: none !important;
+}
+
+.admin-panel .admin-modal .btn-secondary {
+  background: transparent !important;
+  border: 1px solid rgba(255, 255, 255, 0.4) !important;
+  color: rgba(255, 255, 255, 0.95) !important;
+}
+
+.admin-panel .admin-modal .btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+  border-color: rgba(255, 255, 255, 0.6) !important;
+  color: var(--fxmark-white) !important;
+}
+
+.admin-panel .admin-modal label,
+.admin-panel .admin-modal .form-label,
+.admin-panel .admin-modal .filter-group label,
+.admin-panel .admin-modal p,
+.admin-panel .admin-modal h2,
+.admin-panel .admin-modal h3 {
+  color: rgba(255, 255, 255, 0.9) !important;
+}
+
+.admin-panel .admin-modal .modal-actions {
+  border-top-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+.admin-panel .admin-modal .modal-close,
+.admin-panel .modal-content.admin-modal .modal-close {
+  color: rgba(255, 255, 255, 0.9) !important;
+}
+
+.admin-panel .admin-modal .modal-close:hover,
+.admin-panel .modal-content.admin-modal .modal-close:hover {
+  color: var(--fxmark-orange) !important;
+}
+
+/* ConfirmDialog in admin: dark theme to match panel */
+.admin-panel .modal-dialog {
+  background: var(--fxmark-dark-grey) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  color: rgba(255, 255, 255, 0.9) !important;
+}
+
+.admin-panel .modal-dialog .modal-header h2,
+.admin-panel .modal-dialog .modal-close,
+.admin-panel .modal-dialog .confirm-dialog-message,
+.admin-panel .modal-dialog .confirm-dialog-detail-row dt,
+.admin-panel .modal-dialog .confirm-dialog-detail-row dd {
+  color: rgba(255, 255, 255, 0.9) !important;
+}
+
+.admin-panel .modal-dialog .modal-close:hover {
+  color: var(--fxmark-orange) !important;
+}
+
+.admin-panel .modal-dialog .btn-primary {
+  background: var(--fxmark-btn-primary) !important;
+  color: var(--fxmark-white) !important;
+}
+
+.admin-panel .modal-dialog .btn-secondary {
+  background: transparent !important;
+  border: 1px solid rgba(255, 255, 255, 0.4) !important;
+  color: rgba(255, 255, 255, 0.95) !important;
+}
+
+.admin-panel .modal-dialog .btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+  color: var(--fxmark-white) !important;
+}
+
+.admin-panel .modal-dialog .confirm-dialog-details {
+  background: rgba(0, 0, 0, 0.25) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
 .user-form-modal form {
   margin-top: 1rem;
 }
