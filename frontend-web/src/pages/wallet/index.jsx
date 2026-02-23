@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
+import { useAccount } from '../../context/AccountContext';
 import DepositConfirmModal from '../../components/DepositConfirmModal';
 import WithdrawConfirmModal from '../../components/WithdrawConfirmModal';
 
-const MOCK_BALANCE = 12500;
-
 export default function Wallet() {
-  const [balance, setBalance] = useState(MOCK_BALANCE);
+  const { balance, accountType, setLiveBalance, setLiveHasFunds } = useAccount();
   const [depositModalOpen, setDepositModalOpen] = useState(false);
   const [withdrawModalOpen, setWithdrawModalOpen] = useState(false);
 
@@ -17,6 +16,10 @@ export default function Wallet() {
   };
 
   const handleDepositConfirm = async (data) => {
+    if (accountType === 'live') {
+      setLiveHasFunds(true);
+      setLiveBalance((b) => b + (data.amount || 0));
+    }
     try {
       const res = await fetch('/api/wallet/deposit', {
         method: 'POST',
@@ -51,7 +54,7 @@ export default function Wallet() {
         return;
       }
       if (res.ok) {
-        setBalance((b) => b - data.amount);
+        if (accountType === 'live') setLiveBalance((b) => Math.max(0, b - data.amount));
         setWithdrawModalOpen(false);
         return;
       }
@@ -67,7 +70,7 @@ export default function Wallet() {
     <div className="page wallet-page">
       <header className="page-header">
         <h1>Wallet</h1>
-        <p className="page-subtitle">Balance, deposits, and withdrawals</p>
+        <p className="page-subtitle">Balance, deposits, and withdrawals · {accountType === 'demo' ? 'Demo' : 'Live'} account</p>
       </header>
       <section className="page-content">
         <div className="cards-row">

@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import {
   pammSummary,
@@ -22,6 +23,9 @@ export default function Pamm() {
       <header className="page-header">
         <h1>PAMM</h1>
         <p className="page-subtitle">Managers, allocation, risk, growth and P&L</p>
+        <Link to="/pamm/manager" className="pamm-manager-cta">
+          Manage your fund (PAMM Managers) →
+        </Link>
       </header>
 
       <section className="pamm-summary-cards">

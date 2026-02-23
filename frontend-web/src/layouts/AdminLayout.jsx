@@ -8,6 +8,7 @@ const ADMIN_LINKS = [
   { to: '/admin/users', end: false, label: 'Users' },
   { to: '/admin/ib-commission', end: false, label: 'IB & commission' },
   { to: '/admin/audit', end: false, label: 'Audit log' },
+  { to: '/admin/pamm', end: false, label: 'PAMM' },
   { to: '/admin/liquidity', end: false, label: 'Liquidity management' },
   { to: '/admin/leads', end: false, label: 'Leads' },
   { to: '/admin/tickets', end: false, label: 'Tickets' },

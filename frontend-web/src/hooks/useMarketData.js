@@ -35,7 +35,23 @@ export function useMarketData(symbol, timeframe = '1m') {
         throw new Error(err.error || res.statusText || 'Failed to fetch candles');
       }
       const data = await res.json();
-      setCandles(Array.isArray(data) ? data : []);
+      const arr = Array.isArray(data) ? data : [];
+      setCandles(arr);
+      if (arr.length > 0) {
+        const last = arr[arr.length - 1];
+        const lastClose = last.close != null ? Number(last.close) : null;
+        if (lastClose != null) {
+          setTick((prev) => prev && (prev.close != null || prev.price != null) ? prev : {
+            symbol: internalSymbol,
+            close: lastClose,
+            price: lastClose,
+            open: last.open,
+            high: last.high,
+            low: last.low,
+            datetime: last.time || new Date().toISOString(),
+          });
+        }
+      }
     } catch (e) {
       setError(e.message);
       setCandles([]);

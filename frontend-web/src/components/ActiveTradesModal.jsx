@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import ConfirmDialog from './ConfirmDialog';
 
 const LOT_OPTIONS = [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 3, 5, 10];
 
@@ -19,8 +20,10 @@ function formatPnl(pnl) {
 export default function ActiveTradesModal({ isOpen, positions: propPositions, onClose, onClosePosition }) {
   const [positions, setPositions] = useState(propPositions ?? MOCK_POSITIONS);
   const [livePrices, setLivePrices] = useState({});
-  const [closeRow, setCloseRow] = useState(null); // { id, lots }
+  const [closeRow, setCloseRow] = useState(null); // position id for partial row
   const [partialLots, setPartialLots] = useState(0.1);
+  const [closeConfirm, setCloseConfirm] = useState(null); // { pos, partial: false }
+  const [partialConfirm, setPartialConfirm] = useState(null); // { pos, lots }
 
   useEffect(() => {
     if (propPositions) setPositions(propPositions);
@@ -43,19 +46,33 @@ export default function ActiveTradesModal({ isOpen, positions: propPositions, on
     return () => clearInterval(interval);
   }, [isOpen]);
 
-  const handleCloseAll = (pos) => {
-    onClosePosition?.({ id: pos.id, symbol: pos.symbol, lots: pos.lots, type: pos.type, partial: false });
-    setPositions((prev) => prev.filter((p) => p.id !== pos.id));
+  const handleCloseAllClick = (pos) => {
+    setCloseConfirm({ pos, partial: false });
   };
 
-  const handlePartialClose = (pos) => {
+  const handleCloseAllConfirm = () => {
+    if (!closeConfirm) return;
+    const pos = closeConfirm.pos;
+    onClosePosition?.({ id: pos.id, symbol: pos.symbol, lots: pos.lots, type: pos.type, partial: false });
+    setPositions((prev) => prev.filter((p) => p.id !== pos.id));
+    setCloseConfirm(null);
+  };
+
+  const handlePartialCloseClick = (pos) => {
     const lots = Math.min(partialLots, pos.lots);
     if (lots <= 0) return;
+    setPartialConfirm({ pos, lots });
+  };
+
+  const handlePartialCloseConfirm = () => {
+    if (!partialConfirm) return;
+    const { pos, lots } = partialConfirm;
     onClosePosition?.({ id: pos.id, symbol: pos.symbol, lots, type: pos.type, partial: true });
     setPositions((prev) =>
       prev.map((p) => (p.id === pos.id ? { ...p, lots: Math.max(0, p.lots - lots) } : p)).filter((p) => p.lots > 0)
     );
     setCloseRow(null);
+    setPartialConfirm(null);
   };
 
   const openCloseRow = (pos) => {
@@ -108,7 +125,7 @@ export default function ActiveTradesModal({ isOpen, positions: propPositions, on
                           <td>{currentPrice.toFixed(pos.symbol.includes('XAU') ? 2 : 4)}</td>
                           <td className={`pnl-cell ${pnlCls}`}>{pnlText}</td>
                           <td className="close-cell">
-                            <button type="button" className="btn btn-sm btn-sell" onClick={() => handleCloseAll(pos)}>
+                            <button type="button" className="btn btn-sm btn-sell" onClick={() => handleCloseAllClick(pos)}>
                               Close all
                             </button>
                             <button type="button" className="btn btn-sm btn-secondary" onClick={() => openCloseRow(pos)}>
@@ -131,7 +148,7 @@ export default function ActiveTradesModal({ isOpen, positions: propPositions, on
                                   ))}
                                 </select>
                                 <span>lots</span>
-                                <button type="button" className="btn btn-sm btn-sell" onClick={() => handlePartialClose(pos)}>
+                                <button type="button" className="btn btn-sm btn-sell" onClick={() => handlePartialCloseClick(pos)}>
                                   Confirm
                                 </button>
                                 <button type="button" className="btn btn-sm btn-secondary" onClick={() => setCloseRow(null)}>
@@ -149,6 +166,40 @@ export default function ActiveTradesModal({ isOpen, positions: propPositions, on
             </div>
           )}
         </div>
+
+        <ConfirmDialog
+          isOpen={!!closeConfirm}
+          title="Close position"
+          message="Are you sure you want to close this position? This cannot be undone."
+          referenceDetails={closeConfirm ? [
+            { label: 'Symbol', value: closeConfirm.pos.symbol },
+            { label: 'Type', value: closeConfirm.pos.type.toUpperCase() },
+            { label: 'Volume', value: `${closeConfirm.pos.lots} lots` },
+            { label: 'Entry price', value: closeConfirm.pos.entryPrice.toFixed(closeConfirm.pos.symbol.includes('XAU') ? 2 : 4) },
+            { label: 'Current P&L', value: `${closeConfirm.pos.pnl >= 0 ? '+' : ''}${closeConfirm.pos.pnl.toFixed(2)}` },
+          ] : []}
+          confirmLabel="Close position"
+          variant="danger"
+          onConfirm={handleCloseAllConfirm}
+          onClose={() => setCloseConfirm(null)}
+        />
+
+        <ConfirmDialog
+          isOpen={!!partialConfirm}
+          title="Partial close"
+          message="Confirm partial close with the following details."
+          referenceDetails={partialConfirm ? [
+            { label: 'Symbol', value: partialConfirm.pos.symbol },
+            { label: 'Type', value: partialConfirm.pos.type.toUpperCase() },
+            { label: 'Total volume', value: `${partialConfirm.pos.lots} lots` },
+            { label: 'Close volume', value: `${partialConfirm.lots} lots` },
+            { label: 'Entry price', value: partialConfirm.pos.entryPrice.toFixed(partialConfirm.pos.symbol.includes('XAU') ? 2 : 4) },
+          ] : []}
+          confirmLabel="Close partial"
+          variant="primary"
+          onConfirm={handlePartialCloseConfirm}
+          onClose={() => setPartialConfirm(null)}
+        />
       </div>
     </div>
   );

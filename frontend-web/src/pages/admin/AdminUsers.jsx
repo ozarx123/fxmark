@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { ROLES, APPROVAL_STATUSES, initialUsers } from './mockUsersData';
+import ConfirmDialog from '../../components/ConfirmDialog';
 
 export default function AdminUsers() {
   const [users, setUsers] = useState(initialUsers);
@@ -186,19 +187,20 @@ export default function AdminUsers() {
         />
       )}
 
-      {/* Delete confirm modal */}
-      {deleteConfirm && (
-        <div className="modal-overlay" onClick={() => setDeleteConfirm(null)}>
-          <div className="modal-content admin-modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Delete user</h3>
-            <p>Are you sure you want to delete <strong>{deleteConfirm.name}</strong> ({deleteConfirm.email})? This cannot be undone.</p>
-            <div className="modal-actions">
-              <button type="button" className="btn btn-secondary" onClick={() => setDeleteConfirm(null)}>Cancel</button>
-              <button type="button" className="btn btn-danger" onClick={() => handleDelete(deleteConfirm)}>Delete</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        isOpen={!!deleteConfirm}
+        title="Delete user"
+        message="Are you sure you want to delete this user? This action cannot be undone."
+        referenceDetails={deleteConfirm ? [
+          { label: 'Name', value: deleteConfirm.name },
+          { label: 'Email', value: deleteConfirm.email },
+          { label: 'ID', value: String(deleteConfirm.id) },
+        ] : []}
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={() => handleDelete(deleteConfirm)}
+        onClose={() => setDeleteConfirm(null)}
+      />
     </div>
   );
 }
