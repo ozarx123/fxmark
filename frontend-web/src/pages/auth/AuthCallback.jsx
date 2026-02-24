@@ -23,9 +23,9 @@ export default function AuthCallback() {
     if (token && userParam) {
       try {
         const user = ensureUserRole(JSON.parse(decodeURIComponent(userParam)));
-        login(user);
+        login(user, token);
         setStatus('Success! Redirecting…');
-        navigate('/dashboard', { replace: true });
+        navigate(user.profileComplete ? '/dashboard' : '/auth/profile-setup', { replace: true });
       } catch {
         setStatus('Invalid callback data');
         setTimeout(() => navigate('/auth', { replace: true }), 2500);

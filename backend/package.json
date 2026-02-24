@@ -6,12 +6,30 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "seed": "node scripts/seed-dummy-users.js",
+    "test:auth": "node scripts/test-auth-api.js",
+    "test:login": "node scripts/test-login.js",
+    "test:ib": "node scripts/test-ib-commission.js",
+    "test:all": "node scripts/test-all-apis.js",
+    "test:pamm-wallet": "node scripts/test-pamm-wallet.js",
+    "fix-wallet-userids": "node scripts/fix-wallet-userid-strings.js",
+    "ensure-indexes": "node scripts/ensure-indexes.js",
+    "encode-password": "node scripts/encode-password.js",
+    "check-mongo": "node scripts/check-mongo.js",
+    "setup-db": "node scripts/setup-database.js",
+    "create-superadmin": "node scripts/create-superadmin.js",
+    "seed-pamm": "node scripts/seed-pamm-manager.js",
+    "drop-pamm-userid-unique": "node scripts/drop-pamm-userid-unique.js"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
     "ioredis": "^5.4.1",
+    "jsonwebtoken": "^9.0.3",
+    "mongodb": "^6.21.0",
     "node-fetch": "^3.3.2",
     "ws": "^8.18.0"
   }

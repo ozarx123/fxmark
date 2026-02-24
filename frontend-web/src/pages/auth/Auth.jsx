@@ -1,16 +1,41 @@
-import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import FxmarkLogo from '../../components/FxmarkLogo';
 
 import { ensureUserRole } from '../../utils/authHelpers';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PASSWORD_MIN = 8;
+
+function validateEmail(email) {
+  if (!email?.trim()) return 'Email is required';
+  if (!EMAIL_REGEX.test(email.trim().toLowerCase())) return 'Invalid email format';
+  return null;
+}
+
+function validatePassword(password, isSignup = false) {
+  if (!password) return 'Password is required';
+  if (password.length < PASSWORD_MIN) return `Password must be at least ${PASSWORD_MIN} characters`;
+  if (isSignup) {
+    if (!/[A-Z]/.test(password)) return 'Password must contain at least one uppercase letter';
+    if (!/[a-z]/.test(password)) return 'Password must contain at least one lowercase letter';
+    if (!/[0-9]/.test(password)) return 'Password must contain at least one number';
+  }
+  return null;
+}
 
 export default function Auth() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { login } = useAuth();
-  const [tab, setTab] = useState('login'); // 'login' | 'signup'
+  const refParam = searchParams.get('ref') || '';
+  const [tab, setTab] = useState(refParam ? 'signup' : 'login'); // 'login' | 'signup'
+
+  useEffect(() => {
+    if (refParam) setTab('signup');
+  }, [refParam]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -24,6 +49,12 @@ export default function Auth() {
   const handleLogin = async (e) => {
     e.preventDefault();
     setError('');
+    const emailErr = validateEmail(loginEmail);
+    const pwdErr = validatePassword(loginPassword, false);
+    if (emailErr || pwdErr) {
+      setError(emailErr || pwdErr);
+      return;
+    }
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/auth/login`, {
@@ -33,22 +64,23 @@ export default function Auth() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        login(ensureUserRole(data.user || { email: loginEmail, name: loginEmail.split('@')[0] }, loginEmail));
-        navigate('/dashboard', { replace: true });
+        const u = ensureUserRole(data.user || { email: loginEmail, name: loginEmail.split('@')[0] }, loginEmail);
+        login(u, data.accessToken);
+        navigate(u.profileComplete ? '/dashboard' : '/auth/profile-setup', { replace: true });
         return;
       }
       if (res.status === 404 || res.status === 502) {
-        login(ensureUserRole({ email: loginEmail, name: loginEmail.split('@')[0] }, loginEmail));
-        navigate('/dashboard', { replace: true });
+        login(ensureUserRole({ email: loginEmail, name: loginEmail.split('@')[0] }, loginEmail), null);
+        navigate('/auth/profile-setup', { replace: true });
         return;
       }
-      throw new Error(data.message || 'Login failed');
+      throw new Error(data.error || data.message || 'Login failed');
     } catch (err) {
       if (err.message !== 'Login failed' && err.message !== 'Failed to fetch') {
         setError(err.message);
       } else {
-        login(ensureUserRole({ email: loginEmail, name: loginEmail.split('@')[0] }, loginEmail));
-        navigate('/dashboard', { replace: true });
+        login(ensureUserRole({ email: loginEmail, name: loginEmail.split('@')[0] }, loginEmail), null);
+        navigate('/auth/profile-setup', { replace: true });
       }
     } finally {
       setLoading(false);
@@ -58,6 +90,12 @@ export default function Auth() {
   const handleSignup = async (e) => {
     e.preventDefault();
     setError('');
+    const emailErr = validateEmail(signupEmail);
+    const pwdErr = validatePassword(signupPassword, true);
+    if (emailErr || pwdErr) {
+      setError(emailErr || pwdErr);
+      return;
+    }
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/auth/signup`, {
@@ -67,26 +105,28 @@ export default function Auth() {
           email: signupEmail,
           password: signupPassword,
           name: signupName,
+          ref: refParam || undefined,
         }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        login(ensureUserRole(data.user || { email: signupEmail, name: signupName || signupEmail.split('@')[0] }, signupEmail));
-        navigate('/dashboard', { replace: true });
+        const u = ensureUserRole(data.user || { email: signupEmail, name: signupName || signupEmail.split('@')[0] }, signupEmail);
+        login(u, data.accessToken);
+        navigate('/auth/profile-setup', { replace: true });
         return;
       }
       if (res.status === 404 || res.status === 502) {
-        login(ensureUserRole({ email: signupEmail, name: signupName || signupEmail.split('@')[0] }, signupEmail));
-        navigate('/dashboard', { replace: true });
+        login(ensureUserRole({ email: signupEmail, name: signupName || signupEmail.split('@')[0] }, signupEmail), null);
+        navigate('/auth/profile-setup', { replace: true });
         return;
       }
-      throw new Error(data.message || 'Signup failed');
+      throw new Error(data.error || data.message || 'Signup failed');
     } catch (err) {
       if (err.message !== 'Signup failed' && err.message !== 'Failed to fetch') {
         setError(err.message);
       } else {
-        login(ensureUserRole({ email: signupEmail, name: signupName || signupEmail.split('@')[0] }, signupEmail));
-        navigate('/dashboard', { replace: true });
+        login(ensureUserRole({ email: signupEmail, name: signupName || signupEmail.split('@')[0] }, signupEmail), null);
+        navigate('/auth/profile-setup', { replace: true });
       }
     } finally {
       setLoading(false);
@@ -194,11 +234,11 @@ export default function Auth() {
               <input
                 type="password"
                 className="auth-input"
-                placeholder="••••••••"
+                placeholder="Min 8 chars, uppercase, lowercase, number"
                 value={signupPassword}
                 onChange={(e) => setSignupPassword(e.target.value)}
                 required
-                minLength={6}
+                minLength={8}
                 autoComplete="new-password"
               />
             </label>

@@ -1,15 +1,11 @@
-/**
- * JWT verification strategy
- * Used by middleware to attach req.user from Authorization header
- */
-const jwt = require('jsonwebtoken');
-const config = require('../../config/env.config');
+import jwt from 'jsonwebtoken';
+import config from '../../config/env.config.js';
 
-function verify(token) {
+export function verify(token) {
   return jwt.verify(token, config.jwtSecret);
 }
 
-function decode(token) {
+export function decode(token) {
   try {
     return jwt.verify(token, config.jwtSecret);
   } catch {
@@ -17,4 +13,4 @@ function decode(token) {
   }
 }
 
-module.exports = { verify, decode };
+export default { verify, decode };

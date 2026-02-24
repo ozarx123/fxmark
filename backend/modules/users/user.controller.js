@@ -1,8 +1,4 @@
-/**
- * User controller
- * CRUD, profile, notifications
- */
-const userService = require('./user.service');
+import userService from './user.service.js';
 
 async function getProfile(req, res, next) {
   try {
@@ -22,4 +18,4 @@ async function updateProfile(req, res, next) {
   }
 }
 
-module.exports = { getProfile, updateProfile };
+export default { getProfile, updateProfile };

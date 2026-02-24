@@ -29,7 +29,7 @@ export async function fetchCandles({ symbol, tf, from, to, apiKey }) {
     interval,
     apikey: apiKey,
     timezone: 'UTC',
-    outputsize: '5000',
+    outputsize: '500',
   });
 
   if (from) params.set('start_date', from);

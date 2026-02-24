@@ -1,11 +1,11 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  adminPammManagers as initialManagers,
   adminPammAllocations,
   adminPammDefaults as initialDefaults,
   PAMM_MANAGER_STATUSES,
 } from './adminPammMockData';
+import { listPammManagers, approvePammManager } from '../../api/adminApi';
 
 const formatCurrency = (n) =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
@@ -13,71 +13,63 @@ const formatCurrency = (n) =>
 const formatPercent = (n) => (n != null ? `${Number(n).toFixed(1)}%` : '—');
 
 export default function AdminPamm() {
-  const [managers, setManagers] = useState(initialManagers);
+  const [managers, setManagers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [defaults, setDefaults] = useState(initialDefaults);
-  const [statusFilter, setStatusFilter] = useState('');
+  const [approvalFilter, setApprovalFilter] = useState('');
   const [managerFilter, setManagerFilter] = useState('');
-  const [feeEditId, setFeeEditId] = useState(null);
-  const [editPerfFee, setEditPerfFee] = useState('');
-  const [editMgmtFee, setEditMgmtFee] = useState('');
+  const [approvingId, setApprovingId] = useState(null);
+
+  const loadManagers = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = {};
+      if (approvalFilter) params.approvalStatus = approvalFilter;
+      const data = await listPammManagers(params);
+      setManagers(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setError(err.message || 'Failed to load PAMM managers');
+      setManagers([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [approvalFilter]);
+
+  useEffect(() => {
+    loadManagers();
+  }, [loadManagers]);
 
   const filteredManagers = useMemo(() => {
     return managers.filter((m) => {
-      if (statusFilter && m.status !== statusFilter) return false;
+      if (approvalFilter && (m.approvalStatus || 'pending') !== approvalFilter) return false;
       return true;
     });
-  }, [managers, statusFilter]);
+  }, [managers, approvalFilter]);
 
   const filteredAllocations = useMemo(() => {
     return adminPammAllocations.filter((a) => {
-      if (managerFilter && a.managerId !== Number(managerFilter)) return false;
+      if (managerFilter && a.managerId !== managerFilter) return false;
       return true;
     });
   }, [managerFilter]);
 
-  const totalAum = managers.reduce((s, m) => s + (m.aum || 0), 0);
-  const totalInvestors = managers.reduce((s, m) => s + (m.investors || 0), 0);
-
-  const handleStatusChange = (manager, newStatus) => {
-    setManagers((prev) =>
-      prev.map((m) => (m.id === manager.id ? { ...m, status: newStatus } : m))
-    );
-  };
-
-  const openFeeEdit = (m) => {
-    setFeeEditId(m.id);
-    setEditPerfFee(String(m.performanceFeePercent));
-    setEditMgmtFee(String(m.managementFeePercent));
-  };
-
-  const saveFeeEdit = () => {
-    if (!feeEditId) return;
-    const perf = parseFloat(editPerfFee);
-    const mgmt = parseFloat(editMgmtFee);
-    setManagers((prev) =>
-      prev.map((m) =>
-        m.id === feeEditId
-          ? {
-              ...m,
-              performanceFeePercent: isNaN(perf) ? m.performanceFeePercent : perf,
-              managementFeePercent: isNaN(mgmt) ? m.managementFeePercent : mgmt,
-            }
-          : m
-      )
-    );
-    setFeeEditId(null);
-    setEditPerfFee('');
-    setEditMgmtFee('');
-  };
-
-  const cancelFeeEdit = () => {
-    setFeeEditId(null);
-    setEditPerfFee('');
-    setEditMgmtFee('');
+  const handleApprove = async (manager, approvalStatus) => {
+    setApprovingId(manager.id);
+    try {
+      await approvePammManager(manager.id, approvalStatus);
+      setManagers((prev) =>
+        prev.map((m) => (m.id === manager.id ? { ...m, approvalStatus } : m))
+      );
+    } catch (err) {
+      setError(err.message || 'Failed to update');
+    } finally {
+      setApprovingId(null);
+    }
   };
 
   const saveDefaults = () => {
-    // In real app: API call
     alert('Default PAMM settings saved (mock).');
   };
 
@@ -85,8 +77,15 @@ export default function AdminPamm() {
     <div className="page admin-page admin-pamm">
       <header className="page-header">
         <h1>PAMM management</h1>
-        <p className="page-subtitle">Manage PAMM managers, allocations, fees and defaults</p>
+        <p className="page-subtitle">Approve PAMM funds, manage managers and allocations</p>
       </header>
+
+      {error && (
+        <div className="auth-error" style={{ marginBottom: '1rem' }}>
+          {error}
+          <button type="button" className="btn-link" onClick={() => setError('')} style={{ marginLeft: '0.5rem' }}>Dismiss</button>
+        </div>
+      )}
 
       {/* Summary */}
       <section className="admin-section-block">
@@ -96,12 +95,13 @@ export default function AdminPamm() {
             <span className="admin-pamm-stat-label">Managers</span>
           </div>
           <div className="admin-pamm-stat">
-            <span className="admin-pamm-stat-value">{formatCurrency(totalAum)}</span>
-            <span className="admin-pamm-stat-label">Total AUM</span>
+            <span className="admin-pamm-stat-value">{managers.filter((m) => (m.approvalStatus || 'pending') === 'pending').length}</span>
+            <span className="admin-pamm-stat-label">Pending approval</span>
           </div>
           <div className="admin-pamm-stat">
-            <span className="admin-pamm-stat-value">{totalInvestors}</span>
-            <span className="admin-pamm-stat-label">Investors</span>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={loadManagers} disabled={loading}>
+              {loading ? 'Loading…' : 'Refresh'}
+            </button>
           </div>
         </div>
       </section>
@@ -110,10 +110,10 @@ export default function AdminPamm() {
       <section className="admin-section-block">
         <h2 className="section-title">PAMM managers</h2>
         <div className="filter-group" style={{ marginBottom: '1rem' }}>
-          <label>Status</label>
+          <label>Approval status</label>
           <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
+            value={approvalFilter}
+            onChange={(e) => setApprovalFilter(e.target.value)}
             className="filter-select"
           >
             <option value="">All</option>
@@ -126,92 +126,91 @@ export default function AdminPamm() {
           <table className="table admin-pamm-table">
             <thead>
               <tr>
-                <th>Manager</th>
-                <th>Status</th>
-                <th>AUM</th>
-                <th>Investors</th>
+                <th>Fund</th>
+                <th>User ID</th>
+                <th>Approval</th>
                 <th>Performance fee</th>
-                <th>Mgmt fee</th>
-                <th>P&L %</th>
-                <th>Risk</th>
+                <th>Type</th>
+                <th>Created</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {filteredManagers.map((m) => (
-                <tr key={m.id}>
-                  <td>
-                    <strong>{m.name}</strong>
-                    <br />
-                    <span className="muted">{m.email}</span>
-                  </td>
-                  <td>
-                    <span className={`admin-pamm-status admin-pamm-status-${m.status}`}>
-                      {m.status === 'active' ? 'Active' : m.status === 'suspended' ? 'Suspended' : 'Pending'}
-                    </span>
-                  </td>
-                  <td>{formatCurrency(m.aum)}</td>
-                  <td>{m.investors}</td>
-                  <td>
-                    {feeEditId === m.id ? (
-                      <input
-                        type="number"
-                        min={0}
-                        max={100}
-                        step={0.5}
-                        value={editPerfFee}
-                        onChange={(e) => setEditPerfFee(e.target.value)}
-                        className="filter-input"
-                        style={{ width: '4rem' }}
-                      />
-                    ) : (
-                      `${m.performanceFeePercent}%`
-                    )}
-                  </td>
-                  <td>
-                    {feeEditId === m.id ? (
-                      <input
-                        type="number"
-                        min={0}
-                        max={100}
-                        step={0.1}
-                        value={editMgmtFee}
-                        onChange={(e) => setEditMgmtFee(e.target.value)}
-                        className="filter-input"
-                        style={{ width: '4rem' }}
-                      />
-                    ) : (
-                      `${m.managementFeePercent}%`
-                    )}
-                  </td>
-                  <td className={m.pnlPercent >= 0 ? 'positive' : 'negative'}>{formatPercent(m.pnlPercent)}</td>
-                  <td>{m.riskProfile}</td>
-                  <td>
-                    {feeEditId === m.id ? (
-                      <span className="row-actions">
-                        <button type="button" className="btn-link" onClick={saveFeeEdit}>Save</button>
-                        <button type="button" className="btn-link" onClick={cancelFeeEdit}>Cancel</button>
-                      </span>
-                    ) : (
-                      <span className="row-actions">
-                        <button type="button" className="btn-link" onClick={() => openFeeEdit(m)}>Edit fees</button>
-                        {m.status === 'pending' && (
-                          <>
-                            <button type="button" className="btn-link btn-approve" onClick={() => handleStatusChange(m, 'active')}>Approve</button>
-                            <button type="button" className="btn-link btn-reject" onClick={() => handleStatusChange(m, 'suspended')}>Reject</button>
-                          </>
-                        )}
-                        {m.status === 'active' && (
-                          <button type="button" className="btn-link btn-link-danger" onClick={() => handleStatusChange(m, 'suspended')}>Suspend</button>
-                        )}
-                        {m.status === 'suspended' && (
-                          <button type="button" className="btn-link btn-approve" onClick={() => handleStatusChange(m, 'active')}>Activate</button>
-                        )}
-                      </span>
-                    )}
+              {loading ? (
+                <tr><td colSpan={7} className="empty-cell">Loading…</td></tr>
+              ) : filteredManagers.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="empty-cell">
+                    {managers.length === 0
+                      ? 'No PAMM managers yet. Create a fund in PAMM Manager (as a user), or run: npm run seed-pamm'
+                      : 'No managers match the filter.'}
                   </td>
                 </tr>
-              ))}
+              ) : (
+                filteredManagers.map((m) => {
+                  const status = m.approvalStatus || 'pending';
+                  return (
+                    <tr key={m.id}>
+                      <td>
+                        <strong>{m.name}</strong>
+                        {m.strategy && <br />}
+                        {m.strategy && <span className="muted">{m.strategy.slice(0, 50)}{m.strategy.length > 50 ? '…' : ''}</span>}
+                      </td>
+                      <td><span className="muted">{m.userId}</span></td>
+                      <td>
+                        <span className={`admin-pamm-status admin-pamm-status-${status === 'approved' ? 'active' : status === 'rejected' ? 'suspended' : 'pending'}`}>
+                          {status === 'approved' ? 'Approved' : status === 'rejected' ? 'Rejected' : 'Pending'}
+                        </span>
+                      </td>
+                      <td>{m.performanceFeePercent ?? 0}%</td>
+                      <td>{m.fundType || '—'}</td>
+                      <td>{m.createdAt ? new Date(m.createdAt).toLocaleDateString() : '—'}</td>
+                      <td>
+                        {status === 'pending' && (
+                          <span className="row-actions">
+                            <button
+                              type="button"
+                              className="btn-link btn-approve"
+                              onClick={() => handleApprove(m, 'approved')}
+                              disabled={approvingId === m.id}
+                            >
+                              Approve
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-link btn-reject"
+                              onClick={() => handleApprove(m, 'rejected')}
+                              disabled={approvingId === m.id}
+                            >
+                              Reject
+                            </button>
+                          </span>
+                        )}
+                        {status === 'approved' && (
+                          <button
+                            type="button"
+                            className="btn-link btn-link-danger"
+                            onClick={() => handleApprove(m, 'rejected')}
+                            disabled={approvingId === m.id}
+                          >
+                            Reject
+                          </button>
+                        )}
+                        {status === 'rejected' && (
+                          <button
+                            type="button"
+                            className="btn-link btn-approve"
+                            onClick={() => handleApprove(m, 'approved')}
+                            disabled={approvingId === m.id}
+                          >
+                            Approve
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
@@ -228,7 +227,7 @@ export default function AdminPamm() {
             className="filter-select"
           >
             <option value="">All managers</option>
-            {managers.map((m) => (
+            {managers.filter((m) => (m.approvalStatus || 'pending') === 'approved').map((m) => (
               <option key={m.id} value={m.id}>{m.name}</option>
             ))}
           </select>

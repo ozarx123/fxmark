@@ -1,0 +1,128 @@
+/**
+ * PAMM profit distribution — distribute P&L among participants and post to ledger
+ */
+import pammRepo from './pamm.repository.js';
+import tradingAccountRepo from '../trading/trading-account.repository.js';
+import ledgerService from '../finance/ledger.service.js';
+import walletRepo from '../wallet/wallet.repository.js';
+import commissionEngine from '../ib/commission.engine.js';
+
+/**
+ * Distribute PAMM trade P&L to participants (manager + investors) and post to financial modules
+ * @param {string} managerId - PAMM manager userId
+ * @param {string} positionId - closed position id
+ * @param {number} pnl - realized P&L (positive = profit, negative = loss)
+ * @param {string} accountId - PAMM trading account id
+ * @param {object} position - position doc (symbol, side, volume, openPrice)
+ */
+async function distributePammPnl(managerId, positionId, pnl, accountId, position = {}) {
+  const fund = await pammRepo.getFundByTradingAccountId(accountId) || await pammRepo.getManagerByUserId(managerId);
+  const fundId = fund?.id;
+  if (!fundId) return;
+
+  try {
+    await pammRepo.createTrade({
+      managerId: fundId,
+      positionId,
+      symbol: position.symbol,
+      side: position.side,
+      volume: position.volume,
+      price: position.openPrice,
+      pnl,
+    });
+  } catch (e) {
+    console.warn('[pamm] createTrade failed:', e.message);
+  }
+  const manager = fund;
+  if (!manager) return;
+
+  const allocations = await pammRepo.listAllocationsByManager(fundId, { status: 'active' });
+  const managerCapital = Number(manager.currentDeposit) || 0;
+  const investorCapital = allocations.reduce((s, a) => s + (a.allocatedBalance || 0), 0);
+  const totalCapital = managerCapital + investorCapital;
+  if (totalCapital <= 0) return;
+
+  const performanceFeePercent = Number(manager.performanceFeePercent) || 0;
+  const isProfit = pnl > 0;
+
+  if (isProfit && performanceFeePercent > 0) {
+    const feeAmount = Math.round((pnl * performanceFeePercent / 100) * 100) / 100;
+    if (feeAmount > 0.001) {
+      try {
+        await ledgerService.postPammFee(managerId, feeAmount, 'USD', positionId);
+        await walletRepo.updateBalance(managerId, 'USD', feeAmount);
+        await walletRepo.createTransaction({
+          userId: managerId,
+          type: 'pamm_fee',
+          amount: feeAmount,
+          currency: 'USD',
+          status: 'completed',
+          reference: positionId,
+          completedAt: new Date(),
+        });
+      } catch (e) {
+        console.warn('[pamm] Ledger/wallet post fee failed:', e.message);
+      }
+    }
+  }
+
+  const remainingPnl = isProfit ? pnl - (pnl * performanceFeePercent / 100) : pnl;
+  const managerShare = totalCapital > 0 ? (managerCapital / totalCapital) * remainingPnl : 0;
+  const managerShareRounded = Math.round(managerShare * 100) / 100;
+
+  if (Math.abs(managerShareRounded) > 0.001) {
+    if (isProfit) {
+      await tradingAccountRepo.updateBalance(accountId, managerId, managerShareRounded);
+    } else {
+      await tradingAccountRepo.updateBalance(accountId, managerId, managerShareRounded);
+    }
+  }
+
+  for (const alloc of allocations) {
+    const share = totalCapital > 0 ? ((alloc.allocatedBalance || 0) / totalCapital) * remainingPnl : 0;
+    const shareRounded = Math.round(share * 100) / 100;
+    if (Math.abs(shareRounded) <= 0.001) continue;
+
+    try {
+      await ledgerService.postPammDistribution(alloc.followerId, Math.abs(shareRounded), 'USD', positionId, isProfit);
+      await walletRepo.updateBalance(alloc.followerId, 'USD', shareRounded);
+      await walletRepo.createTransaction({
+        userId: alloc.followerId,
+        type: 'pamm_dist',
+        amount: shareRounded,
+        currency: 'USD',
+        status: 'completed',
+        reference: positionId,
+        completedAt: new Date(),
+      });
+    } catch (e) {
+      console.warn('[pamm] Ledger/wallet post dist for', alloc.followerId, 'failed:', e.message);
+    }
+
+    try {
+      const ibIds = await getIbIdsForFollower(alloc.followerId);
+      if (ibIds.length && Math.abs(shareRounded) > 0.001) {
+        await commissionEngine.calculateForHierarchy(
+          { id: positionId, volume: 0.01, symbol: 'PAMM', currency: 'USD' },
+          ibIds,
+          alloc.followerId
+        );
+      }
+    } catch (e) {
+      console.warn('[pamm] IB commission for follower failed:', e.message);
+    }
+  }
+}
+
+async function getIbIdsForFollower(followerId) {
+  try {
+    const userRepo = (await import('../users/user.repository.js')).default;
+    const user = await userRepo.findById(followerId);
+    if (user?.referrerId) return [user.referrerId];
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
+export default { distributePammPnl };

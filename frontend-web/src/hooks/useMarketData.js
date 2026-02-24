@@ -1,7 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 const API_BASE = '/api/market';
 const WS_URL = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
+
+/** Throttle tick state updates (ms) - 0 = immediate realtime */
+const TICK_THROTTLE_MS = 0;
 
 /**
  * Convert display symbol (EUR/USD) to internal (EURUSD)
@@ -21,6 +24,7 @@ export function useMarketData(symbol, timeframe = '1m') {
   const [tick, setTick] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [wsConnected, setWsConnected] = useState(false);
 
   const internalSymbol = toInternalSymbol(symbol);
 
@@ -63,33 +67,64 @@ export function useMarketData(symbol, timeframe = '1m') {
   useEffect(() => {
     if (!internalSymbol) return;
     fetchCandles();
-  }, [fetchCandles, internalSymbol]);
+    const refetchMs = { '1m': 30000, '5m': 60000, '15m': 90000, '1h': 120000, '1d': 300000 }[timeframe] ?? 30000;
+    const id = setInterval(fetchCandles, refetchMs);
+    return () => clearInterval(id);
+  }, [fetchCandles, internalSymbol, timeframe]);
 
+  const tickThrottleRef = useRef(null);
+  const lastTickRef = useRef(null);
+
+  const MAX_RECONNECT_FAILURES = 5;
   useEffect(() => {
     if (!internalSymbol) return;
     let ws = null;
+    let reconnectFailures = 0;
+    const flushTick = () => {
+      tickThrottleRef.current = null;
+      if (lastTickRef.current) {
+        setTick(lastTickRef.current);
+        lastTickRef.current = null;
+      }
+    };
     const connect = () => {
+      if (reconnectFailures >= MAX_RECONNECT_FAILURES) return;
       ws = new WebSocket(WS_URL);
+      ws.onopen = () => setWsConnected(true);
       ws.onmessage = (ev) => {
         try {
           const msg = JSON.parse(ev.data);
           if (msg.type === 'tick' && msg.data && msg.data.symbol === internalSymbol) {
-            setTick(msg.data);
+            lastTickRef.current = msg.data;
+            reconnectFailures = 0;
+            if (TICK_THROTTLE_MS <= 0) {
+              setTick(msg.data);
+            } else if (!tickThrottleRef.current) {
+              setTick(msg.data);
+              tickThrottleRef.current = setTimeout(flushTick, TICK_THROTTLE_MS);
+            }
           }
         } catch {
           // ignore parse errors
         }
       };
       ws.onclose = () => {
-        // Reconnect after delay
-        setTimeout(connect, 3000);
+        setWsConnected(false);
+        reconnectFailures++;
+        if (reconnectFailures < MAX_RECONNECT_FAILURES) {
+          setTimeout(connect, 3000);
+        }
       };
     };
     connect();
     return () => {
+      setWsConnected(false);
+      if (tickThrottleRef.current) clearTimeout(tickThrottleRef.current);
+      tickThrottleRef.current = null;
+      lastTickRef.current = null;
       if (ws) ws.close();
     };
   }, [internalSymbol]);
 
-  return { candles, tick, loading, error, refetch: fetchCandles };
+  return { candles, tick, loading, error, wsConnected, refetch: fetchCandles };
 }

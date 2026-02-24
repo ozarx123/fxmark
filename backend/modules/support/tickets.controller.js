@@ -26,4 +26,4 @@ async function reply(req, res, next) {
   }
 }
 
-module.exports = { create, list, reply };
+export default { create, list, reply };

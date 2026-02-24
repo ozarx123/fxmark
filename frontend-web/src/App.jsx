@@ -2,11 +2,13 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext.jsx';
 import { AccountProvider } from './context/AccountContext.jsx';
+import { FinanceProvider } from './context/FinanceContext.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 import { ADMIN_ROLES, PAMM_MANAGER_ROLES, IB_ROLES } from './config/roleRoutes.js';
 import Landing from './pages/landing/Landing.jsx';
 import Auth from './pages/auth/Auth.jsx';
 import AuthCallback from './pages/auth/AuthCallback.jsx';
+import ProfileSetup from './pages/auth/ProfileSetup.jsx';
 import AppLayout from './AppLayout.jsx';
 import AdminLayout from './layouts/AdminLayout.jsx';
 import Dashboard from './pages/dashboard/index.jsx';
@@ -35,6 +37,7 @@ import AdminAuditLog from './pages/admin/AdminAuditLog.jsx';
 import AdminIbCommission from './pages/admin/AdminIbCommission.jsx';
 import AdminPamm from './pages/admin/AdminPamm.jsx';
 import GatewayRedirect from './pages/wallet/GatewayRedirect.jsx';
+import ProfileSettings from './pages/settings/ProfileSettings.jsx';
 
 function App() {
   return (
@@ -44,7 +47,8 @@ function App() {
           <Route path="/" element={<Landing />} />
           <Route path="/auth" element={<Auth />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
-          <Route element={<AccountProvider><ProtectedRoute requireAuth><AppLayout /></ProtectedRoute></AccountProvider>}>
+          <Route path="/auth/profile-setup" element={<ProfileSetup />} />
+          <Route element={<AccountProvider><FinanceProvider><ProtectedRoute requireAuth><AppLayout /></ProtectedRoute></FinanceProvider></AccountProvider>}>
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="wallet" element={<Wallet />} />
           <Route path="gateway-redirect" element={<GatewayRedirect />} />
@@ -57,6 +61,7 @@ function App() {
           <Route path="copy/master/:slug" element={<MasterProfile />} />
           <Route path="ib" element={<ProtectedRoute allowedRoles={IB_ROLES}><Ib /></ProtectedRoute>} />
           <Route path="finance" element={<Finance />} />
+          <Route path="settings/profile" element={<ProfileSettings />} />
           </Route>
           <Route path="admin" element={<ProtectedRoute requireAuth allowedRoles={ADMIN_ROLES} redirectTo="/dashboard"><AdminLayout /></ProtectedRoute>}>
           <Route index element={<AdminDashboard />} />

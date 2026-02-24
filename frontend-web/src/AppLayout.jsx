@@ -1,15 +1,22 @@
 import React from 'react';
-import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import { Outlet, NavLink, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
+import { useAccount } from './context/AccountContext';
+import { useFinance } from './hooks/useFinance';
 import { hasRole, ADMIN_ROLES, PAMM_MANAGER_ROLES, IB_ROLES } from './config/roleRoutes';
 import FxmarkIcon from './components/FxmarkIcon';
 import AccountTypeToggle from './components/AccountTypeToggle';
+import WalletBalanceSync from './components/WalletBalanceSync';
+import { formatCurrency } from './constants/finance';
 import { List, X } from '@phosphor-icons/react';
 
 export default function AppLayout() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const { activeAccount, balance } = useAccount();
+  const { walletBalance, loading } = useFinance();
   const [navOpen, setNavOpen] = React.useState(false);
+  const displayBalance = activeAccount?.type === 'live' && walletBalance != null ? walletBalance : balance;
   const canAccessAdmin = hasRole(user?.role, ADMIN_ROLES);
   const canAccessPammManager = hasRole(user?.role, PAMM_MANAGER_ROLES);
   const canAccessIb = hasRole(user?.role, IB_ROLES);
@@ -24,6 +31,7 @@ export default function AppLayout() {
 
   return (
     <div className="app">
+      <WalletBalanceSync />
       <header className="app-header">
         <button
           type="button"
@@ -37,6 +45,11 @@ export default function AppLayout() {
         <nav className={`nav ${navOpen ? 'nav-open' : ''}`}>
         <div className="nav-account-toggle">
           <AccountTypeToggle />
+          {user && (
+            <Link to="/wallet" className="nav-balance" onClick={closeNav}>
+              {loading ? '…' : formatCurrency(displayBalance)}
+            </Link>
+          )}
         </div>
         <NavLink to="/dashboard" end className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')} onClick={closeNav}>
           {({ isActive }) => (
@@ -71,7 +84,7 @@ export default function AppLayout() {
           )}
         </NavLink>
         {canAccessPammManager && (
-        <NavLink to="/pamm/manager" className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')} onClick={closeNav}>
+        <NavLink to="/pamm/manager" className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')} onClick={closeNav} title="Create and manage your PAMM fund">
           {({ isActive }) => (
             <>
               <FxmarkIcon name="trader" weight={isActive ? 'bold' : 'regular'} size={20} />
@@ -118,13 +131,14 @@ export default function AppLayout() {
         )}
         {user && (
           <span className="nav-user">
+            <Link to="/settings/profile" className="nav-profile-link" onClick={closeNav}>Profile</Link>
             <span className="nav-user-email">{user.email}</span>
             <button type="button" className="nav-logout" onClick={handleLogout}>Logout</button>
           </span>
         )}
         </nav>
       </header>
-      <main className="main">
+      <main className="main min-h-screen p-6 md:p-8">
         <Outlet />
       </main>
     </div>

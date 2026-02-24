@@ -1,0 +1,407 @@
+/**
+ * FXMARK Design System — Institutional + Futuristic
+ * Dark-first, glassmorphism, sleek dashboard theme (maintains existing colour code)
+ */
+
+/* ========== Design Tokens ========== */
+:root {
+  /* Neon accents (1–2 only, per tenant) — kept for compatibility */
+  --neon-accent: #00D4AA;
+  --neon-accent-soft: rgba(0, 212, 170, 0.25);
+  --neon-accent-glow: rgba(0, 212, 170, 0.4);
+  --neon-secondary: #6366F1;
+  --neon-secondary-soft: rgba(99, 102, 241, 0.2);
+
+  /* Glassmorphism */
+  --glass-bg: rgba(42, 42, 48, 0.6);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-blur: 12px;
+  --glass-blur-strong: 20px;
+
+  /* Spacing (lots of spacing) */
+  --space-xs: 0.25rem;
+  --space-sm: 0.5rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2rem;
+  --space-2xl: 3rem;
+
+  /* Typography */
+  --font-display: 'Inter', 'SF Pro Display', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 1.875rem;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --letter-spacing-tight: -0.02em;
+  --letter-spacing-wide: 0.05em;
+
+  /* Transitions */
+  --transition-fast: 150ms ease;
+  --transition-base: 200ms ease;
+  --transition-slow: 300ms ease;
+}
+
+/* ========== Glassmorphism Cards ========== */
+.glass-card,
+.app .glass-card,
+.app .pamm-card,
+.app .pamm-create-cta-card,
+.app .pamm-manager-card,
+.app .pamm-trading-account-card,
+.app .card {
+  background: var(--theme-card);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--theme-border);
+  border-radius: 12px;
+  transition: border-color var(--transition-base), box-shadow var(--transition-base), transform var(--transition-base);
+}
+
+/* Fallback for browsers without backdrop-filter */
+@supports not (backdrop-filter: blur(12px)) {
+  .app .pamm-card,
+  .app .pamm-create-cta-card,
+  .app .pamm-manager-card,
+  .app .pamm-trading-account-card,
+  .app .card {
+    background: var(--theme-card);
+  }
+}
+
+.glass-card:hover,
+.app .glass-card:hover,
+.app .pamm-card:hover,
+.app .pamm-manager-card:hover,
+.app .pamm-trading-account-card:hover {
+  background: var(--theme-card-hover);
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+}
+
+.glass-card-accent {
+  border-color: var(--neon-accent-soft);
+  box-shadow: 0 0 20px var(--neon-accent-glow);
+}
+
+/* ========== Micro-animations ========== */
+.app .card,
+.app .pamm-card,
+.app .pamm-create-cta-card,
+.app .pamm-manager-card,
+.app .pamm-trading-account-card {
+  transition: transform var(--transition-base), box-shadow var(--transition-base), border-color var(--transition-base);
+}
+
+.app .card:hover,
+.app .pamm-card:hover,
+.app .pamm-manager-card:hover,
+.app .pamm-trading-account-card:hover {
+  transform: translateY(-1px);
+}
+
+.app .btn,
+.app .nav-link,
+.app button[type="submit"],
+.app .btn-primary,
+.app .btn-secondary {
+  transition: all var(--transition-fast);
+}
+
+.app .btn:hover,
+.app .btn-primary:hover,
+.app .btn-secondary:hover {
+  transform: translateY(-0.5px);
+}
+
+.app .form-input:focus {
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+/* ========== Neon accent highlights ========== */
+.app .nav-link.active {
+  color: var(--fxmark-orange);
+  font-weight: 600;
+  background: rgba(255, 106, 0, 0.15);
+}
+
+.app .positive,
+.app .pamm-manager-stat-value.positive {
+  color: var(--neon-accent);
+}
+
+.app .btn-primary {
+  background: linear-gradient(135deg, var(--fxmark-red) 0%, var(--fxmark-orange) 100%);
+  box-shadow: 0 2px 12px rgba(225, 6, 0, 0.35);
+}
+
+.app .btn-primary:hover {
+  box-shadow: 0 4px 20px rgba(255, 106, 0, 0.45);
+}
+
+/* ========== MetricCard-style enhancements ========== */
+.metric-card,
+.app .pamm-card.metric-style {
+  padding: var(--space-lg);
+  border-radius: 12px;
+  min-height: 100px;
+}
+
+.metric-card .metric-value,
+.app .pamm-value.metric-style {
+  font-size: var(--text-2xl);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: var(--letter-spacing-tight);
+}
+
+.metric-card .metric-delta {
+  font-size: var(--text-sm);
+  margin-top: var(--space-xs);
+}
+
+/* ========== ProfileAvatar — Futuristic avatar ========== */
+.profile-avatar {
+  position: relative;
+  display: inline-flex;
+  --avatar-size: 48px;
+  --avatar-accent: var(--neon-accent);
+}
+
+.profile-avatar-ring {
+  width: var(--avatar-size);
+  height: var(--avatar-size);
+  border-radius: 50%;
+  padding: 3px;
+  background: linear-gradient(135deg, var(--avatar-accent), transparent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--avatar-accent) 50%, transparent);
+  animation: avatarPulse 3s ease-in-out infinite;
+}
+
+@keyframes avatarPulse {
+  0%, 100% { box-shadow: 0 0 12px color-mix(in srgb, var(--avatar-accent) 50%, transparent); }
+  50% { box-shadow: 0 0 20px var(--avatar-accent), 0 0 30px color-mix(in srgb, var(--avatar-accent) 30%, transparent); }
+}
+
+.profile-avatar-inner {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.profile-avatar-initials {
+  font-size: calc(var(--avatar-size) * 0.4);
+  font-weight: 700;
+  color: var(--avatar-accent);
+  letter-spacing: -0.05em;
+  text-shadow: 0 0 8px color-mix(in srgb, var(--avatar-accent) 60%, transparent);
+}
+
+.profile-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.profile-avatar-verified {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  color: var(--neon-accent);
+  background: var(--fxmark-black);
+  border-radius: 50%;
+  padding: 2px;
+  box-shadow: 0 0 8px var(--neon-accent-glow);
+}
+
+/* ========== RiskBadge ========== */
+.risk-badge,
+.risk-badge--low,
+.risk-badge--mid,
+.risk-badge--high {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  transition: all var(--transition-fast);
+}
+
+.risk-badge--low {
+  background: rgba(0, 212, 170, 0.15);
+  color: var(--neon-accent);
+  border: 1px solid rgba(0, 212, 170, 0.3);
+}
+
+.risk-badge--mid {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--fxmark-warning);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.risk-badge--high {
+  background: rgba(220, 38, 38, 0.15);
+  color: var(--fxmark-error);
+  border: 1px solid rgba(220, 38, 38, 0.3);
+}
+
+/* ========== VerifiedBadge ========== */
+.verified-badge,
+.verified-badge--pro,
+.verified-badge--new {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.verified-badge {
+  background: var(--neon-accent-soft);
+  color: var(--neon-accent);
+  border: 1px solid rgba(0, 212, 170, 0.4);
+}
+
+.verified-badge--pro {
+  background: var(--neon-secondary-soft);
+  color: var(--neon-secondary);
+  border: 1px solid rgba(99, 102, 241, 0.4);
+}
+
+.verified-badge--new {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+/* ========== Page layout spacing ========== */
+.app .page {
+  padding: var(--space-xl) 0;
+}
+
+.app .page-header {
+  margin-bottom: var(--space-xl);
+}
+
+.app .page-header h1 {
+  font-size: var(--text-2xl);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: var(--letter-spacing-tight);
+}
+
+.app .page-subtitle {
+  font-size: var(--text-base);
+  margin-top: var(--space-xs);
+  opacity: 0.85;
+}
+
+/* ========== Section spacing ========== */
+.app .pamm-section,
+.app .section {
+  margin-bottom: var(--space-2xl);
+}
+
+.app .pamm-section-title {
+  font-size: var(--text-lg);
+  font-weight: var(--font-weight-semibold);
+  margin-bottom: var(--space-md);
+}
+
+/* ========== Table polish ========== */
+.app .table {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.app .table th {
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  font-size: var(--text-xs);
+}
+
+/* ========== Loading skeleton ========== */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.loading-skeleton {
+  background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 6px;
+}
+
+/* ========== Drawer / Modal polish ========== */
+.app .modal-dialog,
+.app [role="dialog"] {
+  background: var(--theme-card) !important;
+  border-radius: 12px;
+  border: 1px solid var(--theme-border);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
+  animation: modalSlideIn 0.25s ease;
+}
+
+.app .modal-dialog .modal-header {
+  background: rgba(0, 0, 0, 0.2) !important;
+  border-bottom-color: var(--theme-border) !important;
+}
+
+.app .modal-dialog .modal-header h2,
+.app .modal-dialog .form-label,
+.app .modal-dialog .form-label-muted,
+.app .modal-dialog .form-market-price,
+.app .modal-dialog .checkbox-label span,
+.app .modal-dialog .balance-display,
+.app .modal-dialog .modal-close {
+  color: var(--theme-text) !important;
+}
+
+.app .modal-dialog .form-input {
+  background: rgba(0, 0, 0, 0.3) !important;
+  border-color: var(--theme-border) !important;
+  color: var(--theme-text) !important;
+}
+
+.app .modal-dialog .form-input::placeholder {
+  color: var(--theme-text-muted);
+}
+
+.app .modal-dialog .btn-secondary {
+  background: transparent !important;
+  border: 1px solid var(--theme-border) !important;
+  color: var(--theme-text-secondary) !important;
+}
+
+.app .modal-dialog .btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: var(--theme-text) !important;
+}
+
+@keyframes modalSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

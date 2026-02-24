@@ -3,9 +3,9 @@
  */
 
 export const PAMM_MANAGER_STATUSES = [
-  { value: 'active', label: 'Active' },
-  { value: 'suspended', label: 'Suspended' },
+  { value: 'approved', label: 'Approved' },
   { value: 'pending', label: 'Pending approval' },
+  { value: 'rejected', label: 'Rejected' },
 ];
 
 export const adminPammManagers = [

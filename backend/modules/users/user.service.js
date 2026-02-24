@@ -1,20 +1,24 @@
-/**
- * User service
- * Find, create, update users
- */
-async function getById(id) {
-  // TODO: load from DB
-  return { id, email: '', role: '', kycStatus: '' };
-}
+import userRepo from './user.repository.js';
 
-async function update(id, payload) {
-  // TODO: validate and update allowed fields
-  return getById(id);
+async function getById(id) {
+  const user = await userRepo.findById(id);
+  if (!user) return null;
+  return userRepo.ensureAccountNo(id);
 }
 
 async function findByEmail(email) {
-  // TODO: load from DB
-  return null;
+  return userRepo.findByEmail(email);
 }
 
-module.exports = { getById, update, findByEmail };
+async function update(id, payload) {
+  const allowed = ['email', 'role', 'kycStatus', 'name', 'phone', 'country', 'city', 'address', 'avatar', 'profileComplete'];
+  const update = {};
+  for (const k of allowed) {
+    if (payload[k] !== undefined) update[k] = payload[k];
+  }
+  if (payload.email) update.email = payload.email.toLowerCase().trim();
+  if (Object.keys(update).length === 0) return getById(id);
+  return userRepo.updateById(id, update);
+}
+
+export default { getById, update, findByEmail };

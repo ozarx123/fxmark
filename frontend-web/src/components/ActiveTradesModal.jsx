@@ -19,7 +19,6 @@ function formatPnl(pnl) {
 
 export default function ActiveTradesModal({ isOpen, positions: propPositions, onClose, onClosePosition }) {
   const [positions, setPositions] = useState(propPositions ?? MOCK_POSITIONS);
-  const [livePrices, setLivePrices] = useState({});
   const [closeRow, setCloseRow] = useState(null); // position id for partial row
   const [partialLots, setPartialLots] = useState(0.1);
   const [closeConfirm, setCloseConfirm] = useState(null); // { pos, partial: false }
@@ -29,23 +28,6 @@ export default function ActiveTradesModal({ isOpen, positions: propPositions, on
     if (propPositions) setPositions(propPositions);
   }, [propPositions]);
 
-  // Simulate live P&L updates
-  useEffect(() => {
-    if (!isOpen) return;
-    const ids = positions.map((p) => p.id);
-    const interval = setInterval(() => {
-      setLivePrices((prev) => {
-        const next = { ...prev };
-        ids.forEach((id) => {
-          const drift = (Math.random() - 0.48) * 2; // slight drift
-          next[id] = (next[id] ?? 0) + drift;
-        });
-        return next;
-      });
-    }, 1500);
-    return () => clearInterval(interval);
-  }, [isOpen]);
-
   const handleCloseAllClick = (pos) => {
     setCloseConfirm({ pos, partial: false });
   };
@@ -53,7 +35,7 @@ export default function ActiveTradesModal({ isOpen, positions: propPositions, on
   const handleCloseAllConfirm = () => {
     if (!closeConfirm) return;
     const pos = closeConfirm.pos;
-    onClosePosition?.({ id: pos.id, symbol: pos.symbol, lots: pos.lots, type: pos.type, partial: false });
+    onClosePosition?.({ id: pos.id, symbol: pos.symbol, lots: pos.lots, type: pos.type, partial: false, currentPrice: pos.currentPrice });
     setPositions((prev) => prev.filter((p) => p.id !== pos.id));
     setCloseConfirm(null);
   };
@@ -67,7 +49,7 @@ export default function ActiveTradesModal({ isOpen, positions: propPositions, on
   const handlePartialCloseConfirm = () => {
     if (!partialConfirm) return;
     const { pos, lots } = partialConfirm;
-    onClosePosition?.({ id: pos.id, symbol: pos.symbol, lots, type: pos.type, partial: true });
+    onClosePosition?.({ id: pos.id, symbol: pos.symbol, lots, type: pos.type, partial: true, currentPrice: pos.currentPrice });
     setPositions((prev) =>
       prev.map((p) => (p.id === pos.id ? { ...p, lots: Math.max(0, p.lots - lots) } : p)).filter((p) => p.lots > 0)
     );
@@ -109,10 +91,9 @@ export default function ActiveTradesModal({ isOpen, positions: propPositions, on
                 </thead>
                 <tbody>
                   {positions.map((pos) => {
-                    const pnlOffset = livePrices[pos.id] ?? 0;
-                    const pnl = pos.pnl + pnlOffset;
+                    const pnl = pos.pnl ?? 0;
                     const { text: pnlText, cls: pnlCls } = formatPnl(pnl);
-                    const currentPrice = pos.type === 'buy' ? pos.currentPrice + pnlOffset * 0.01 : pos.currentPrice - pnlOffset * 0.01;
+                    const currentPrice = pos.currentPrice ?? pos.entryPrice ?? 0;
                     return (
                       <React.Fragment key={pos.id}>
                         <tr>
@@ -121,8 +102,8 @@ export default function ActiveTradesModal({ isOpen, positions: propPositions, on
                             <span className={`type-badge type-${pos.type}`}>{pos.type}</span>
                           </td>
                           <td>{pos.lots}</td>
-                          <td>{pos.entryPrice.toFixed(pos.symbol.includes('XAU') ? 2 : 4)}</td>
-                          <td>{currentPrice.toFixed(pos.symbol.includes('XAU') ? 2 : 4)}</td>
+                          <td>{(pos.entryPrice ?? 0).toFixed(pos.symbol?.includes('XAU') ? 2 : 4)}</td>
+                          <td>{Number(currentPrice).toFixed(pos.symbol?.includes('XAU') ? 2 : 4)}</td>
                           <td className={`pnl-cell ${pnlCls}`}>{pnlText}</td>
                           <td className="close-cell">
                             <button type="button" className="btn btn-sm btn-sell" onClick={() => handleCloseAllClick(pos)}>
@@ -175,8 +156,8 @@ export default function ActiveTradesModal({ isOpen, positions: propPositions, on
             { label: 'Symbol', value: closeConfirm.pos.symbol },
             { label: 'Type', value: closeConfirm.pos.type.toUpperCase() },
             { label: 'Volume', value: `${closeConfirm.pos.lots} lots` },
-            { label: 'Entry price', value: closeConfirm.pos.entryPrice.toFixed(closeConfirm.pos.symbol.includes('XAU') ? 2 : 4) },
-            { label: 'Current P&L', value: `${closeConfirm.pos.pnl >= 0 ? '+' : ''}${closeConfirm.pos.pnl.toFixed(2)}` },
+            { label: 'Entry price', value: (closeConfirm.pos.entryPrice ?? 0).toFixed(closeConfirm.pos.symbol?.includes('XAU') ? 2 : 4) },
+            { label: 'Current P&L', value: `${(closeConfirm.pos.pnl ?? 0) >= 0 ? '+' : ''}${(closeConfirm.pos.pnl ?? 0).toFixed(2)}` },
           ] : []}
           confirmLabel="Close position"
           variant="danger"
@@ -193,7 +174,7 @@ export default function ActiveTradesModal({ isOpen, positions: propPositions, on
             { label: 'Type', value: partialConfirm.pos.type.toUpperCase() },
             { label: 'Total volume', value: `${partialConfirm.pos.lots} lots` },
             { label: 'Close volume', value: `${partialConfirm.lots} lots` },
-            { label: 'Entry price', value: partialConfirm.pos.entryPrice.toFixed(partialConfirm.pos.symbol.includes('XAU') ? 2 : 4) },
+            { label: 'Entry price', value: (partialConfirm.pos.entryPrice ?? 0).toFixed(partialConfirm.pos.symbol?.includes('XAU') ? 2 : 4) },
           ] : []}
           confirmLabel="Close partial"
           variant="primary"

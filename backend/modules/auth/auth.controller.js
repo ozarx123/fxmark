@@ -1,8 +1,4 @@
-/**
- * Auth controller
- * Register, login, refresh, logout, me
- */
-const authService = require('./auth.service');
+import authService from './auth.service.js';
 
 async function register(req, res, next) {
   try {
@@ -49,4 +45,4 @@ async function me(req, res, next) {
   }
 }
 
-module.exports = { register, login, refresh, logout, me };
+export default { register, login, refresh, logout, me };

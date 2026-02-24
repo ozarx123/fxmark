@@ -5,6 +5,7 @@
 
 /** Roles that can access the Admin panel (/admin/*) */
 export const ADMIN_ROLES = [
+  'superadmin',
   'super_admin',
   'admin',
   'dealing_desk',
@@ -14,9 +15,11 @@ export const ADMIN_ROLES = [
   'support_manager',
 ];
 
-/** Roles that can access PAMM Manager (/pamm/manager) */
+/** Roles that can access PAMM Manager (/pamm/manager) — trader/investor can create fund, then get pamm_manager */
 export const PAMM_MANAGER_ROLES = [
   'pamm_manager',
+  'trader',
+  'investor',
   ...ADMIN_ROLES,
 ];
 
