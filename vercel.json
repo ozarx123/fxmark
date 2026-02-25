@@ -3,5 +3,12 @@
   "outputDirectory": "frontend-web/dist",
   "installCommand": "cd frontend-web && npm install",
   "framework": null,
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+  "build": {
+    "env": {
+      "VITE_API_URL": "https://fxmark-backend-541368249845.us-central1.run.app/api"
+    }
+  },
+  "rewrites": [
+    {"source": "/(.*)", "destination": "/index.html"}
+  ]
 }
