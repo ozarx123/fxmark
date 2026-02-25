@@ -57,3 +57,17 @@ export async function approvePammManager(id, approvalStatus) {
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to update PAMM manager');
   return res.json();
 }
+
+/** Super Admin only: add funds to a customer wallet */
+export async function addFundsToWallet(userId, { amount, currency = 'USD', reference }) {
+  const res = await fetchWithAuth(`/admin/wallets/${userId}/add-funds`, {
+    method: 'POST',
+    body: JSON.stringify({ amount: Number(amount), currency, reference }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 403) throw new Error('Super Admin role required');
+    throw new Error(data.error || 'Failed to add funds');
+  }
+  return res.json();
+}

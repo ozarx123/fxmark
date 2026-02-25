@@ -1,5 +1,4 @@
 # FXMARK local dev stack
-version: '3.8'
 services:
   backend:
     build:
@@ -9,11 +8,20 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=development
+      - CONNECTION_STRING=mongodb://mongodb:27017/fxmark
+      - JWT_SECRET=dev_jwt_secret_min_32_characters_long
       - DB_HOST=postgres
       - REDIS_HOST=redis
     depends_on:
+      - mongodb
       - postgres
       - redis
+  mongodb:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodata:/data/db
   postgres:
     image: postgres:15-alpine
     environment:
@@ -30,3 +38,4 @@ services:
       - "6379:6379"
 volumes:
   pgdata: {}
+  mongodata: {}

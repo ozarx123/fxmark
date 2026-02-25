@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { APPROVAL_STATUSES } from './mockUsersData';
-import { listUsers, updateUser } from '../../api/adminApi';
+import { listUsers, updateUser, addFundsToWallet } from '../../api/adminApi';
+import { useAuth } from '../../context/AuthContext';
 /** Roles supported by backend (subset for editing) */
 const EDITABLE_ROLES = [
   { value: 'user', label: 'User', category: 'client' },
@@ -15,6 +16,8 @@ const EDITABLE_ROLES = [
 ];
 
 export default function AdminUsers() {
+  const { user: currentUser } = useAuth();
+  const isSuperAdmin = currentUser?.role === 'superadmin';
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -23,6 +26,7 @@ export default function AdminUsers() {
   const [search, setSearch] = useState('');
   const [editingUser, setEditingUser] = useState(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [addFundsUser, setAddFundsUser] = useState(null);
   const [saving, setSaving] = useState(false);
 
   const formatCurrency = (n) =>
@@ -85,6 +89,24 @@ export default function AdminUsers() {
   const openEdit = (user) => {
     setEditingUser(user);
     setIsFormOpen(true);
+  };
+
+  const handleAddFunds = async (formData) => {
+    if (!addFundsUser) return;
+    setSaving(true);
+    try {
+      await addFundsToWallet(addFundsUser.id, formData);
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.id === addFundsUser.id ? { ...u, balance: (u.balance ?? 0) + Number(formData.amount) } : u
+        )
+      );
+      setAddFundsUser(null);
+    } catch (err) {
+      setError(err.message || 'Failed to add funds');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -222,6 +244,16 @@ export default function AdminUsers() {
                         <button type="button" className="btn-link" onClick={() => openEdit(user)}>
                           Edit role
                         </button>
+                        {isSuperAdmin && (
+                          <button
+                            type="button"
+                            className="btn-link"
+                            onClick={() => setAddFundsUser(user)}
+                            style={{ marginLeft: '0.5rem' }}
+                          >
+                            Add funds
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -245,6 +277,82 @@ export default function AdminUsers() {
           saving={saving}
         />
       )}
+
+      {addFundsUser && (
+        <AddFundsModal
+          user={addFundsUser}
+          onSave={handleAddFunds}
+          onClose={() => setAddFundsUser(null)}
+          saving={saving}
+        />
+      )}
+    </div>
+  );
+}
+
+function AddFundsModal({ user, onSave, onClose, saving }) {
+  const [amount, setAmount] = useState('');
+  const [currency, setCurrency] = useState('USD');
+  const [reference, setReference] = useState('');
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    const amt = parseFloat(amount);
+    if (!amt || amt <= 0) return;
+    onSave({ amount: amt, currency, reference: reference.trim() || undefined });
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-content admin-modal" onClick={(e) => e.stopPropagation()}>
+        <h3>Add funds to {user?.email}</h3>
+        <p className="modal-subtitle">
+          Current balance: {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(user?.balance ?? 0)}
+        </p>
+        <form onSubmit={handleSubmit}>
+          <div className="form-row">
+            <div className="filter-group">
+              <label>Amount</label>
+              <input
+                type="number"
+                step="0.01"
+                min="0.01"
+                placeholder="0.00"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                className="filter-input"
+                required
+              />
+            </div>
+            <div className="filter-group">
+              <label>Currency</label>
+              <select value={currency} onChange={(e) => setCurrency(e.target.value)} className="filter-select">
+                <option value="USD">USD</option>
+                <option value="EUR">EUR</option>
+                <option value="GBP">GBP</option>
+              </select>
+            </div>
+          </div>
+          <div className="filter-group" style={{ marginTop: '0.5rem' }}>
+            <label>Reference (optional)</label>
+            <input
+              type="text"
+              placeholder="e.g. Bonus, Manual credit"
+              value={reference}
+              onChange={(e) => setReference(e.target.value)}
+              className="filter-input"
+            />
+          </div>
+          <div className="modal-actions" style={{ marginTop: '1rem' }}>
+            <button type="button" className="btn btn-secondary" onClick={onClose} disabled={saving}>
+              Cancel
+            </button>
+            <button type="submit" className="btn btn-primary" disabled={saving || !amount || parseFloat(amount) <= 0}>
+              {saving ? 'Adding…' : 'Add funds'}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

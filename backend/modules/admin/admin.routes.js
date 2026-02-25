@@ -14,6 +14,13 @@ const requireAdmin = (req, res, next) => {
   next();
 };
 
+const requireSuperAdmin = (req, res, next) => {
+  if (req.user?.role !== 'superadmin') {
+    return res.status(403).json({ error: 'Super Admin role required' });
+  }
+  next();
+};
+
 const router = express.Router();
 router.use(authenticate);
 router.use(requireAdmin);
@@ -25,5 +32,6 @@ router.patch('/pamm/managers/:id', controller.approvePammManager);
 router.post('/kyc-override', controller.kycOverride);
 router.post('/pamm-privacy', controller.pammPrivacy);
 router.post('/broadcast', controller.broadcast);
+router.post('/wallets/:userId/add-funds', requireSuperAdmin, controller.addFundsToWallet);
 
 export default router;

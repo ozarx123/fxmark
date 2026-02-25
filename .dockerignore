@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Env and secrets (never ship to image)
+.env
+.env.*
+!.env.example
+
+# Build outputs
+dist/
+build/
+**/dist/
+**/build/
+
+# Git and IDE
+.git/
+.gitignore
+.cursor/
+.vscode/
+*.swp
+*.swo
+
+# Docs and non-runtime
+docs/
+*.md
+!backend/README.md
+
+# Logs and temp
+*.log
+**/logs/
+tmp/
+temp/
+
+# Test and dev
+**/__tests__/
+**/*.test.js
+**/*.spec.js
+coverage/
+.nyc_output/
+
+# Other project parts (backend-only image)
+frontend-web/
+frontend-admin/
+mobile-flutter/
+docker/
+
+# Archives
+*.zip
+*.pdf
+*.docx

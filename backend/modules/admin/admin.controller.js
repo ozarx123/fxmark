@@ -110,6 +110,37 @@ async function approvePammManager(req, res, next) {
   }
 }
 
+/** Superadmin only: add funds to a customer wallet */
+async function addFundsToWallet(req, res, next) {
+  try {
+    const { userId } = req.params;
+    const { amount, currency = 'USD', reference } = req.body;
+    const amt = Number(amount);
+    if (!userId || !Number.isFinite(amt) || amt <= 0) {
+      return res.status(400).json({ error: 'userId and positive amount required' });
+    }
+    const user = await userRepo.findById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const wallet = await walletRepo.updateBalance(userId, currency || 'USD', amt);
+    await walletRepo.createTransaction({
+      userId,
+      type: 'admin_credit',
+      amount: amt,
+      currency: currency || 'USD',
+      status: 'completed',
+      reference: reference || `Admin credit by ${req.user?.email || req.user?.id}`,
+      completedAt: new Date(),
+    });
+    res.json({
+      success: true,
+      wallet: { balance: wallet.balance, currency: wallet.currency },
+      message: `Added ${amt} ${currency || 'USD'} to ${user.email}`,
+    });
+  } catch (e) {
+    next(e);
+  }
+}
+
 export default {
   getLeads,
   kycOverride,
@@ -119,4 +150,5 @@ export default {
   updateUser,
   listPammManagers,
   approvePammManager,
+  addFundsToWallet,
 };
