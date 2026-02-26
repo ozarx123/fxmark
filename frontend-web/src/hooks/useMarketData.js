@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { subscribeTick, getDatafeedSocket } from '../lib/datafeedSocket.js';
 
 /** API base for market data - use backend URL in production (Vercel → GCP) */
 const API_BASE = (() => {
@@ -6,17 +7,6 @@ const API_BASE = (() => {
   if (base) return base.replace(/\/api\/?$/, '') + '/api/market';
   return '/api/market';
 })();
-
-/** WebSocket URL - must point to backend in production (Vercel has no WS) */
-const getWsUrl = () => {
-  const api = import.meta.env.VITE_API_URL;
-  if (api) {
-    const wsBase = api.replace(/^https?/, 'wss').replace(/\/api\/?$/, '');
-    return `${wsBase}/ws`;
-  }
-  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${window.location.host}/ws`;
-};
 
 /** Throttle tick state updates (ms) - 0 = immediate realtime */
 const TICK_THROTTLE_MS = 0;
@@ -90,11 +80,9 @@ export function useMarketData(symbol, timeframe = '1m') {
   const tickThrottleRef = useRef(null);
   const lastTickRef = useRef(null);
 
-  const MAX_RECONNECT_FAILURES = 5;
+  // Socket.IO datafeed for live ticks
   useEffect(() => {
     if (!internalSymbol) return;
-    let ws = null;
-    let reconnectFailures = 0;
     const flushTick = () => {
       tickThrottleRef.current = null;
       if (lastTickRef.current) {
@@ -102,42 +90,33 @@ export function useMarketData(symbol, timeframe = '1m') {
         lastTickRef.current = null;
       }
     };
-    const connect = () => {
-      if (reconnectFailures >= MAX_RECONNECT_FAILURES) return;
-      ws = new WebSocket(getWsUrl());
-      ws.onopen = () => setWsConnected(true);
-      ws.onmessage = (ev) => {
-        try {
-          const msg = JSON.parse(ev.data);
-          if (msg.type === 'tick' && msg.data && msg.data.symbol === internalSymbol) {
-            lastTickRef.current = msg.data;
-            reconnectFailures = 0;
-            if (TICK_THROTTLE_MS <= 0) {
-              setTick(msg.data);
-            } else if (!tickThrottleRef.current) {
-              setTick(msg.data);
-              tickThrottleRef.current = setTimeout(flushTick, TICK_THROTTLE_MS);
-            }
-          }
-        } catch {
-          // ignore parse errors
-        }
-      };
-      ws.onclose = () => {
-        setWsConnected(false);
-        reconnectFailures++;
-        if (reconnectFailures < MAX_RECONNECT_FAILURES) {
-          setTimeout(connect, 3000);
-        }
-      };
-    };
-    connect();
+    const unsubTick = subscribeTick((tickData) => {
+      if (!tickData || typeof tickData !== 'object') return;
+      const price = tickData.close ?? tickData.price;
+      if (tickData.symbol !== internalSymbol || (price != null && !Number.isFinite(Number(price)))) return;
+      lastTickRef.current = tickData;
+      if (TICK_THROTTLE_MS <= 0) {
+        setTick(tickData);
+      } else if (!tickThrottleRef.current) {
+        setTick(tickData);
+        tickThrottleRef.current = setTimeout(flushTick, TICK_THROTTLE_MS);
+      }
+    });
+    const socket = getDatafeedSocket();
+    setWsConnected(socket.connected);
+    const onConnect = () => setWsConnected(true);
+    const onDisconnect = () => setWsConnected(false);
+    socket.on('connect', onConnect);
+    socket.on('disconnect', onDisconnect);
+
     return () => {
+      socket.off('connect', onConnect);
+      socket.off('disconnect', onDisconnect);
+      unsubTick();
       setWsConnected(false);
       if (tickThrottleRef.current) clearTimeout(tickThrottleRef.current);
       tickThrottleRef.current = null;
       lastTickRef.current = null;
-      if (ws) ws.close();
     };
   }, [internalSymbol]);
 

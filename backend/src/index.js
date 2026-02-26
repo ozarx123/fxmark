@@ -5,7 +5,7 @@ import { createServer } from 'http';
 import { initWebSocket, broadcastTick } from './websocket.js';
 import { logMarketTick } from './services/marketDataLogger.js';
 import marketRoutes from './routes/market.js';
-import { fetchQuote } from './services/twelveData.js';
+import { fetchQuotesBatch } from './services/twelveData.js';
 import { createTwelveDataWebSocket } from './services/twelveDataWebSocket.js';
 import { getDb } from '../config/mongo.js';
 import apiRoutes from '../core/routes.js';
@@ -46,30 +46,24 @@ const server = createServer(app);
 initWebSocket(server);
 
 /** Symbols to poll for quotes (broadcast via WebSocket for real-time P&L) */
-const SUBSCRIBED_SYMBOLS = ['XAUUSD', 'EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'USDCAD', 'AUDUSD', 'NZDUSD'];
-/** Top symbols polled more frequently for chart (Gold, EUR, GBP) */
-const FAST_SYMBOLS = ['XAUUSD', 'EURUSD', 'GBPUSD'];
-const QUOTE_POLL_INTERVAL_MS = parseInt(process.env.QUOTE_POLL_INTERVAL_MS || '1000', 10);
-const FAST_POLL_INTERVAL_MS = 500;
+const SUBSCRIBED_SYMBOLS = ['XAUUSD'];
+/** 10s = 6 polls/min × 8 symbols = 48 credits/min (under Twelve Data free tier 55/min) */
+const QUOTE_POLL_INTERVAL_MS = parseInt(process.env.QUOTE_POLL_INTERVAL_MS || '10000', 10);
 
 const MAX_CONSECUTIVE_FAILURES = 5;
 
 async function pollSymbols(apiKey, symbols) {
-  const results = await Promise.allSettled(
-    symbols.map((symbol) => fetchQuote(symbol, apiKey))
-  );
-  let hadError = false;
-  for (let i = 0; i < results.length; i++) {
-    const r = results[i];
-    if (r.status === 'fulfilled') {
-      broadcastTick(r.value);
-      logMarketTick(r.value, 'quote');
-    } else {
-      hadError = true;
-      console.error(`[poller] ${symbols[i]}:`, r.reason?.message);
+  try {
+    const ticks = await fetchQuotesBatch(symbols, apiKey);
+    for (const tick of ticks) {
+      broadcastTick(tick);
+      logMarketTick(tick, 'quote');
     }
+    return ticks.length === 0;
+  } catch (err) {
+    console.error('[poller]', err.message);
+    return true;
   }
-  return hadError;
 }
 
 const USE_TWELVE_WS = process.env.TWELVE_DATA_WS === 'true';
@@ -114,35 +108,34 @@ async function runQuotePoller() {
   }
 
   let consecutiveFailures = 0;
-  let fastId = null;
-  let fullId = null;
+  let pollId = null;
 
-  const runPoll = async (symbols) => {
+  const runPoll = async () => {
     if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) return;
-    const hadError = await pollSymbols(apiKey, symbols);
+    const hadError = await pollSymbols(apiKey, SUBSCRIBED_SYMBOLS);
     if (hadError) {
       consecutiveFailures++;
       if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
         console.error(`[poller] Stopping after ${MAX_CONSECUTIVE_FAILURES} consecutive failures`);
-        if (fastId) clearInterval(fastId);
-        if (fullId) clearInterval(fullId);
+        if (pollId) clearInterval(pollId);
       }
     } else {
       consecutiveFailures = 0;
     }
   };
 
-  await runPoll(SUBSCRIBED_SYMBOLS);
+  await runPoll();
   if (consecutiveFailures < MAX_CONSECUTIVE_FAILURES) {
-    fastId = setInterval(() => runPoll(FAST_SYMBOLS), FAST_POLL_INTERVAL_MS);
-    fullId = setInterval(() => runPoll(SUBSCRIBED_SYMBOLS), QUOTE_POLL_INTERVAL_MS);
-    console.log(`[poller] Quote poller: fast (${FAST_POLL_INTERVAL_MS}ms) for ${FAST_SYMBOLS.join(', ')}, full (${QUOTE_POLL_INTERVAL_MS}ms) for all`);
+    pollId = setInterval(runPoll, QUOTE_POLL_INTERVAL_MS);
+    const creditsPerMin = Math.round((60000 / QUOTE_POLL_INTERVAL_MS) * SUBSCRIBED_SYMBOLS.length);
+    console.log(`[poller] Quote poller: ${SUBSCRIBED_SYMBOLS.length} symbols every ${QUOTE_POLL_INTERVAL_MS}ms (~${creditsPerMin} credits/min, limit 55)`);
   }
 }
 
 server.listen(PORT, async () => {
   console.log(`[server] Listening on port ${PORT}`);
   console.log(`[server] WebSocket: ws://localhost:${PORT}/ws`);
+  console.log(`[server] Socket.IO datafeed: http://localhost:${PORT}/socket.io`);
 
   if (!process.env.CONNECTION_STRING && !process.env.MONGODB_URI) {
     console.warn('[server] MongoDB not configured. Set CONNECTION_STRING in backend/.env');

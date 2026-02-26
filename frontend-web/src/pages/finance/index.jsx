@@ -145,7 +145,16 @@ export default function Finance() {
     }
   };
 
-  const groupedBalances = groupBalancesByType(balances);
+  // Revenue tab should reflect real (live) revenue only.
+  // When viewing a demo account, hide revenue by zeroing out revenue accounts (4100, 4200, 4300) in the UI.
+  const REVENUE_CODES = ['4100', '4200', '4300'];
+  const effectiveBalances = activeAccount?.type === 'demo'
+    ? balances.map((b) => (REVENUE_CODES.includes(b.accountCode)
+      ? { ...b, balance: 0 }
+      : b))
+    : balances;
+
+  const groupedBalances = groupBalancesByType(effectiveBalances);
   const hasDiscrepancy = reconciliation?.status === 'discrepancy';
 
   if (!isAuthenticated) {

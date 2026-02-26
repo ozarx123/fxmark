@@ -77,24 +77,16 @@ async function closePosition(userId, positionId, options = {}) {
           console.warn('[positions] PAMM distribution failed:', e.message);
           await tradingAccountRepo.updateBalance(targetAccountId, userId, pnl);
         }
+      } else if (account?.type === 'demo') {
+        // Demo only: update trading account balance; do not touch ledger or real wallet
+        if (targetAccountId) {
+          await tradingAccountRepo.updateBalance(targetAccountId, userId, pnl);
+        }
       } else {
-        await ledgerService.postTradingPnl(userId, Math.abs(pnl), 'USD', positionId, pnl > 0);
-        if (targetAccountId && account) {
-          if (account.type === 'demo') {
-            await tradingAccountRepo.updateBalance(targetAccountId, userId, pnl);
-          } else {
-            await walletRepo.updateBalance(userId, 'USD', pnl);
-            await walletRepo.createTransaction({
-              userId,
-              type: 'trade',
-              amount: pnl,
-              currency: 'USD',
-              status: 'completed',
-              reference: positionId,
-              completedAt: now,
-            });
-          }
-        } else if (!targetAccountId) {
+        // Live only: post P&L to ledger and update real wallet (exclude demo from real wallet)
+        const isLive = account?.type === 'live';
+        if (isLive) {
+          await ledgerService.postTradingPnl(userId, Math.abs(pnl), 'USD', positionId, pnl > 0);
           await walletRepo.updateBalance(userId, 'USD', pnl);
           await walletRepo.createTransaction({
             userId,
@@ -105,18 +97,23 @@ async function closePosition(userId, positionId, options = {}) {
             reference: positionId,
             completedAt: now,
           });
+        } else if (!targetAccountId) {
+          // Legacy: no account id — do not post to ledger or wallet (avoid demo leaking into real)
         }
-        try {
-          const ibIds = await ibRepo.getUplineChainForClient(userId);
-          if (ibIds.length && (Number(pos.volume) || 0) > 0) {
-            await commissionEngine.calculateForHierarchy(
-              { id: positionId, volume: pos.volume, symbol: pos.symbol || null, currency: 'USD' },
-              ibIds,
-              userId
-            );
+        // IB commission only for live trades (not demo)
+        if (isLive) {
+          try {
+            const ibIds = await ibRepo.getUplineChainForClient(userId);
+            if (ibIds.length && (Number(pos.volume) || 0) > 0) {
+              await commissionEngine.calculateForHierarchy(
+                { id: positionId, volume: pos.volume, symbol: pos.symbol || null, currency: 'USD' },
+                ibIds,
+                userId
+              );
+            }
+          } catch (e) {
+            console.warn('[positions] IB commission failed:', e.message);
           }
-        } catch (e) {
-          console.warn('[positions] IB commission failed:', e.message);
         }
       }
     }

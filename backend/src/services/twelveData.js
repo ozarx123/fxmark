@@ -71,6 +71,80 @@ function parseQuotePrice(data) {
   return Number.isFinite(n) ? n : 0;
 }
 
+/** Map Twelve Data symbol back to internal (EUR/USD -> EURUSD) */
+function fromTwelveDataSymbol(twelveSymbol) {
+  const map = {
+    'XAU/USD': 'XAUUSD',
+    'GOLD': 'XAUUSD',
+    'EUR/USD': 'EURUSD',
+    'GBP/USD': 'GBPUSD',
+    'USD/JPY': 'USDJPY',
+    'USD/CHF': 'USDCHF',
+    'USD/CAD': 'USDCAD',
+    'AUD/USD': 'AUDUSD',
+    'NZD/USD': 'NZDUSD',
+  };
+  return map[twelveSymbol] ?? twelveSymbol?.replace('/', '') ?? null;
+}
+
+/**
+ * Fetch quotes for multiple symbols in one API call (saves credits vs N separate calls).
+ * Twelve Data free tier: 55 credits/min. Batch uses 1 credit per symbol per request.
+ * @param {string[]} symbols - Internal symbols (e.g. ['EURUSD', 'XAUUSD'])
+ * @param {string} apiKey - Twelve Data API key
+ * @returns {Promise<Array<{symbol: string, price: number, open: number, high: number, low: number, close: number, volume: number, datetime: string}>>}
+ */
+export async function fetchQuotesBatch(symbols, apiKey) {
+  if (!symbols?.length) return [];
+  const twelveSymbols = symbols
+    .map((s) => toTwelveDataSymbol(s))
+    .filter(Boolean);
+  if (!twelveSymbols.length) return [];
+
+  const params = new URLSearchParams({
+    symbol: twelveSymbols.join(','),
+    apikey: apiKey,
+  });
+  const url = `${BASE_URL}/quote?${params}`;
+  const res = await fetch(url);
+  const data = await res.json();
+
+  if (data.status === 'error') {
+    throw new Error(data.message || 'Twelve Data API error');
+  }
+
+  const results = [];
+  // Batch response: { "EUR/USD": {...}, "GBP/USD": {...} } or single { symbol, close, ... }
+  let items = [];
+  if (Array.isArray(data)) {
+    items = data.map((q) => [q?.symbol, q]);
+  } else if (data?.symbol) {
+    items = [[data.symbol, data]];
+  } else if (typeof data === 'object' && data !== null) {
+    items = Object.entries(data)
+      .filter(([k]) => !['meta', 'status', 'message'].includes(k) && typeof data[k] === 'object')
+      .map(([k, v]) => [v?.symbol ?? k, v]);
+  }
+
+  for (const [sym, quote] of items) {
+    const price = parseQuotePrice(quote);
+    if (!sym || !Number.isFinite(price)) continue;
+    const internalSymbol = fromTwelveDataSymbol(sym);
+    if (!internalSymbol) continue;
+    results.push({
+      symbol: internalSymbol,
+      price,
+      open: parseFloat(quote?.open ?? quote?.o ?? 0),
+      high: parseFloat(quote?.high ?? quote?.h ?? 0),
+      low: parseFloat(quote?.low ?? quote?.l ?? 0),
+      close: price,
+      volume: parseFloat(quote?.volume ?? quote?.v ?? 0),
+      datetime: quote?.datetime ?? quote?.t ?? new Date().toISOString(),
+    });
+  }
+  return results;
+}
+
 /**
  * Fetch real-time quote from Twelve Data API
  * @param {string} symbol - Internal symbol (e.g. EURUSD, XAUUSD)

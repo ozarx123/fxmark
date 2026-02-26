@@ -1,15 +1,5 @@
 import { useState, useEffect } from 'react';
-
-/** WebSocket URL - must point to backend in production (Vercel has no WS) */
-const getWsUrl = () => {
-  const api = import.meta.env.VITE_API_URL;
-  if (api) {
-    const wsBase = api.replace(/^https?/, 'wss').replace(/\/api\/?$/, '');
-    return `${wsBase}/ws`;
-  }
-  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${window.location.host}/ws`;
-};
+import { subscribeTick } from '../lib/datafeedSocket.js';
 
 /** Normalize symbol for matching (EUR/USD -> EURUSD) */
 function toInternal(s) {
@@ -17,7 +7,7 @@ function toInternal(s) {
 }
 
 /**
- * useLivePrices — subscribe to WebSocket ticks and store latest price per symbol.
+ * useLivePrices — subscribe to Socket.IO datafeed ticks and store latest price per symbol.
  * Used for real-time P&L on open positions.
  * @returns {{ prices: Record<string, number>, lastUpdate: Date|null }}
  */
@@ -25,38 +15,17 @@ export function useLivePrices() {
   const [prices, setPrices] = useState({});
   const [lastUpdate, setLastUpdate] = useState(null);
 
-  const MAX_RECONNECT_FAILURES = 5;
   useEffect(() => {
-    let ws = null;
-    let reconnectFailures = 0;
-    const connect = () => {
-      if (reconnectFailures >= MAX_RECONNECT_FAILURES) return;
-      ws = new WebSocket(getWsUrl());
-      ws.onmessage = (ev) => {
-        try {
-          const msg = JSON.parse(ev.data);
-          if (msg.type === 'tick' && msg.data) {
-            const { symbol, close, price } = msg.data;
-            const p = close ?? price;
-            if (symbol && typeof p === 'number') {
-              setPrices((prev) => ({ ...prev, [symbol]: p }));
-              setLastUpdate(new Date());
-              reconnectFailures = 0;
-            }
-          }
-        } catch {
-          // ignore
-        }
-      };
-      ws.onclose = () => {
-        reconnectFailures++;
-        if (reconnectFailures < MAX_RECONNECT_FAILURES) {
-          setTimeout(connect, 3000);
-        }
-      };
-    };
-    connect();
-    return () => { if (ws) ws.close(); };
+    const unsubTick = subscribeTick((tickData) => {
+      if (!tickData || typeof tickData !== 'object') return;
+      const { symbol, close, price } = tickData;
+      const p = close ?? price;
+      if (symbol && Number.isFinite(Number(p))) {
+        setPrices((prev) => ({ ...prev, [symbol]: Number(p) }));
+        setLastUpdate(new Date());
+      }
+    });
+    return () => unsubTick();
   }, []);
 
   return { prices, lastUpdate };
