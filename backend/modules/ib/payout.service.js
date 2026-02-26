@@ -88,4 +88,30 @@ async function listReferrals(ibId, options = {}) {
   return ibRepo.listReferralsByIb(effectiveId, options);
 }
 
-export default { getBalance, requestPayout, listCommissions, listPayouts, listReferrals };
+async function listReferralJoinings(ibId, options = {}) {
+  const profile = await ibRepo.getProfileById(ibId) || await ibRepo.getProfileByUserId(ibId);
+  const effectiveId = profile ? profile.userId : ibId;
+  return ibRepo.listReferralJoiningsByIb(effectiveId, options);
+}
+
+/**
+ * Get IB stats: referral count, earnings (pending + paid), joinings
+ */
+async function getStats(ibId) {
+  const profile = await ibRepo.getProfileById(ibId) || await ibRepo.getProfileByUserId(ibId);
+  const effectiveId = profile ? profile.userId : ibId;
+  const [balance, referralCount] = await Promise.all([
+    getBalance(effectiveId),
+    ibRepo.countReferralsByIb(effectiveId),
+  ]);
+  const totalEarnings = (balance.pending || 0) + (balance.paid || 0);
+  return {
+    referralCount: referralCount ?? 0,
+    pending: balance.pending ?? 0,
+    paid: balance.paid ?? 0,
+    totalEarnings: Math.round(totalEarnings * 100) / 100,
+    currency: balance.currency || 'USD',
+  };
+}
+
+export default { getBalance, requestPayout, listCommissions, listPayouts, listReferrals, listReferralJoinings, getStats };

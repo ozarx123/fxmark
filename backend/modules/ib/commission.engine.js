@@ -5,7 +5,7 @@ import ibRepo from './ib.repository.js';
 import levelCalculator from './level.calculator.js';
 import ledgerService from '../finance/ledger.service.js';
 
-/** Default rate per lot by level (USD). Level 1 = top IB. */
+/** Default rate per lot by level (USD). Level 1 = top IB. Used when no admin settings. */
 const DEFAULT_RATE_PER_LOT_BY_LEVEL = {
   1: 7,
   2: 5,
@@ -13,6 +13,14 @@ const DEFAULT_RATE_PER_LOT_BY_LEVEL = {
   4: 2,
   5: 1,
 };
+
+async function getRatePerLotByLevel() {
+  const stored = await ibRepo.getSettings();
+  if (stored && typeof stored === 'object' && Object.keys(stored).length > 0) {
+    return { ...DEFAULT_RATE_PER_LOT_BY_LEVEL, ...stored };
+  }
+  return DEFAULT_RATE_PER_LOT_BY_LEVEL;
+}
 
 /**
  * Calculate commission for one trade and one IB, persist as pending.
@@ -28,7 +36,8 @@ async function calculate(trade, ibId, clientUserId = null) {
   }
 
   const level = await levelCalculator.getLevel(profile.userId);
-  const ratePerLot = profile.ratePerLot ?? DEFAULT_RATE_PER_LOT_BY_LEVEL[level] ?? DEFAULT_RATE_PER_LOT_BY_LEVEL[1];
+  const ratesByLevel = await getRatePerLotByLevel();
+  const ratePerLot = profile.ratePerLot ?? ratesByLevel[level] ?? ratesByLevel[1];
   const volumeLots = Number(trade.volume) || 0;
   const amount = Math.round((volumeLots * ratePerLot) * 100) / 100;
   const currency = trade.currency || profile.currency || 'USD';

@@ -7,6 +7,8 @@ import { ObjectId } from 'mongodb';
 const PROFILES_COLLECTION = 'ib_profiles';
 const COMMISSIONS_COLLECTION = 'ib_commissions';
 const PAYOUTS_COLLECTION = 'ib_payouts';
+const SETTINGS_COLLECTION = 'ib_settings';
+const SETTINGS_ID = 'default';
 
 async function profilesCol() {
   const db = await getDb();
@@ -21,6 +23,11 @@ async function commissionsCol() {
 async function payoutsCol() {
   const db = await getDb();
   return db.collection(PAYOUTS_COLLECTION);
+}
+
+async function settingsCol() {
+  const db = await getDb();
+  return db.collection(SETTINGS_COLLECTION);
 }
 
 // ---------- IB profiles ----------
@@ -58,6 +65,43 @@ async function updateProfile(userId, update) {
   return result ? { id: result._id.toString(), ...result, _id: undefined } : null;
 }
 
+/** List all IB profiles (admin) */
+async function listAllProfiles(options = {}) {
+  const col = await profilesCol();
+  const { limit = 200 } = options;
+  const list = await col.find({}).sort({ createdAt: -1 }).limit(limit).toArray();
+  return list.map((p) => ({ id: p._id.toString(), ...p, _id: undefined }));
+}
+
+/** List commissions across all IBs (admin). Optional filter by ibId, status. */
+async function listCommissionsAll(options = {}) {
+  const col = await commissionsCol();
+  const { ibId, status, limit = 200 } = options;
+  const filter = {};
+  if (ibId) filter.ibId = ibId;
+  if (status) filter.status = status;
+  const list = await col.find(filter).sort({ createdAt: -1 }).limit(limit).toArray();
+  return list.map((c) => ({ id: c._id.toString(), ...c, _id: undefined }));
+}
+
+/** Get IB commission settings (default rates by level) */
+async function getSettings() {
+  const col = await settingsCol();
+  const doc = await col.findOne({ _id: SETTINGS_ID });
+  return doc ? doc.ratePerLotByLevel || null : null;
+}
+
+/** Update IB commission settings */
+async function updateSettings(ratePerLotByLevel) {
+  const col = await settingsCol();
+  await col.updateOne(
+    { _id: SETTINGS_ID },
+    { $set: { ratePerLotByLevel, updatedAt: new Date() } },
+    { upsert: true }
+  );
+  return ratePerLotByLevel;
+}
+
 /** Get hierarchy depth (level) for an IB: 1 = top, 2 = under level 1, etc. */
 async function getHierarchyDepth(userId) {
   const col = await profilesCol();
@@ -68,6 +112,31 @@ async function getHierarchyDepth(userId) {
     current = await col.findOne({ userId: current.parentId });
   }
   return level;
+}
+
+/**
+ * Get IB upline chain for a client (trader): [direct referrer, parent IB, grandparent IB, ...].
+ * @param {string} clientUserId - user who traded (must have referrerId in users)
+ * @returns {Promise<string[]>} IB userIds from direct to top
+ */
+async function getUplineChainForClient(clientUserId) {
+  if (!clientUserId) return [];
+  const db = await getDb();
+  const usersCol = db.collection('users');
+  const uid = ObjectId.isValid(clientUserId) ? new ObjectId(clientUserId) : null;
+  if (!uid) return [];
+  const user = await usersCol.findOne({ _id: uid }, { projection: { referrerId: 1 } });
+  if (!user?.referrerId) return [];
+  const chain = [];
+  let currentId = user.referrerId;
+  const col = await profilesCol();
+  while (currentId) {
+    const profile = await col.findOne({ userId: currentId });
+    if (!profile) break;
+    chain.push(profile.userId);
+    currentId = profile.parentId || null;
+  }
+  return chain;
 }
 
 // ---------- Commissions ----------
@@ -174,6 +243,31 @@ async function sumPaidByIb(ibId) {
   return result ? result.total : 0;
 }
 
+/** Count users who signed up with this IB's referral link (referrerId = ibId) */
+async function countReferralsByIb(ibId) {
+  const db = await getDb();
+  const usersCol = db.collection('users');
+  return usersCol.countDocuments({ referrerId: ibId });
+}
+
+/** List referral joinings: users who signed up with this IB's ref link, with joinedAt */
+async function listReferralJoiningsByIb(ibId, options = {}) {
+  const db = await getDb();
+  const usersCol = db.collection('users');
+  const { limit = 50 } = options;
+  const list = await usersCol
+    .find({ referrerId: ibId }, { projection: { email: 1, name: 1, createdAt: 1 } })
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .toArray();
+  return list.map((u) => ({
+    clientUserId: u._id.toString(),
+    clientEmail: u.email || null,
+    clientName: u.name || null,
+    joinedAt: u.createdAt,
+  }));
+}
+
 /** List referrals: clients with commission totals, grouped by clientUserId */
 async function listReferralsByIb(ibId, options = {}) {
   const db = await getDb();
@@ -201,6 +295,7 @@ async function listReferralsByIb(ibId, options = {}) {
   return refs.map((r) => ({
     clientUserId: r._id,
     clientEmail: userMap[String(r._id)]?.email || null,
+    joinedAt: userMap[String(r._id)]?.createdAt || null,
     totalCommission: Math.round(r.totalCommission * 100) / 100,
     firstCommissionAt: r.firstCommissionAt,
     tradeCount: r.tradeCount,
@@ -213,8 +308,10 @@ export default {
   getProfileById,
   updateProfile,
   getHierarchyDepth,
+  getUplineChainForClient,
   createCommission,
   listCommissionsByIb,
+  listCommissionsAll,
   sumPendingByIb,
   markCommissionsPaid,
   markAllPendingPaid,
@@ -223,5 +320,10 @@ export default {
   listPayoutsByIb,
   updatePayoutStatus,
   sumPaidByIb,
+  countReferralsByIb,
+  listReferralJoiningsByIb,
   listReferralsByIb,
+  listAllProfiles,
+  getSettings,
+  updateSettings,
 };

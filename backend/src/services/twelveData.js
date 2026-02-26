@@ -64,6 +64,13 @@ export async function fetchCandles({ symbol, tf, from, to, apiKey }) {
   return mapped.reverse();
 }
 
+/** Parse numeric from Twelve Data quote/candle object (multiple possible key names) */
+function parseQuotePrice(data) {
+  const raw = data.close ?? data.price ?? data.c ?? data.p;
+  const n = parseFloat(raw);
+  return Number.isFinite(n) ? n : 0;
+}
+
 /**
  * Fetch real-time quote from Twelve Data API
  * @param {string} symbol - Internal symbol (e.g. EURUSD, XAUUSD)
@@ -76,27 +83,48 @@ export async function fetchQuote(symbol, apiKey) {
     throw new Error(`Unknown symbol: ${symbol}`);
   }
 
-  const params = new URLSearchParams({
-    symbol: twelveSymbol,
-    apikey: apiKey,
-  });
-
-  const url = `${BASE_URL}/quote?${params}`;
-  const res = await fetch(url);
-  const data = await res.json();
-
-  if (data.status === 'error') {
-    throw new Error(data.message || 'Twelve Data API error');
+  const symbolsToTry = [twelveSymbol];
+  // Some Twelve Data plans/exchanges use "GOLD" for spot gold; try as fallback for XAU/USD
+  if (symbol.toUpperCase() === 'XAUUSD' && twelveSymbol === 'XAU/USD') {
+    symbolsToTry.push('GOLD');
   }
 
-  return {
-    symbol,
-    price: parseFloat(data.close ?? data.price ?? 0),
-    open: parseFloat(data.open ?? 0),
-    high: parseFloat(data.high ?? 0),
-    low: parseFloat(data.low ?? 0),
-    close: parseFloat(data.close ?? 0),
-    volume: parseFloat(data.volume ?? 0),
-    datetime: data.datetime ?? new Date().toISOString(),
-  };
+  let lastError;
+  for (const trySymbol of symbolsToTry) {
+    try {
+      const params = new URLSearchParams({
+        symbol: trySymbol,
+        apikey: apiKey,
+      });
+      const url = `${BASE_URL}/quote?${params}`;
+      const res = await fetch(url);
+      const data = await res.json();
+
+      if (data.status === 'error') {
+        lastError = new Error(data.message || 'Twelve Data API error');
+        continue;
+      }
+
+      const price = parseQuotePrice(data);
+      if (!price) {
+        lastError = new Error('No price in response');
+        if (trySymbol === symbolsToTry[symbolsToTry.length - 1]) break;
+        continue;
+      }
+
+      return {
+        symbol,
+        price,
+        open: parseFloat(data.open ?? data.o ?? 0),
+        high: parseFloat(data.high ?? data.h ?? 0),
+        low: parseFloat(data.low ?? data.l ?? 0),
+        close: price,
+        volume: parseFloat(data.volume ?? data.v ?? 0),
+        datetime: data.datetime ?? data.t ?? new Date().toISOString(),
+      };
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError || new Error(`Quote failed for ${symbol}`);
 }

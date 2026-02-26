@@ -57,7 +57,7 @@ export default function Dashboard() {
             <div className="dashboard-card-glow" />
             <h3 className="dashboard-card-title">Balance</h3>
             <p className="dashboard-card-value">{loading ? '…' : formatCurrency(displayBalance)}</p>
-            <span className="dashboard-card-label">USD</span>
+            <span className="dashboard-card-label">USD · trade account</span>
           </div>
           <div className="dashboard-card dashboard-card-equity">
             <div className="dashboard-card-glow" />

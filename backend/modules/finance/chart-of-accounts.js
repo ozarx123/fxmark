@@ -8,12 +8,12 @@
  */
 export const ACCOUNTS = {
   // Assets
-  WALLET: '1100',           // User wallet balance
   CASH_BANK: '1200',       // External cash/bank (deposits in, withdrawals out)
   RECEIVABLES: '1300',     // Amounts owed to us
 
-  // Liabilities
-  CLIENT_FUNDS: '2100',       // Client funds held
+  // Liabilities (credit normal: credit increases balance)
+  WALLET: '2110',            // User wallet balance (we owe the user)
+  CLIENT_FUNDS: '2100',      // Client funds held
   PAYABLES: '2200',           // Amounts we owe
   WITHDRAWALS_PAYABLE: '2300', // Withdrawals approved but not yet paid
   ACCRUED_COMMISSIONS: '2400', // IB commissions earned but not yet paid

@@ -1,10 +1,11 @@
 /**
  * FinanceContext — shared finance/ledger state across Dashboard, Wallet, Finance.
- * Ensures data stays in sync when deposits, withdrawals, or trades update the ledger.
+ * Uses wallet API as single source of truth for balance/equity display.
  */
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useAuth } from './AuthContext';
 import * as financeApi from '../api/financeApi';
+import * as walletApi from '../api/walletApi';
 
 const FinanceContext = createContext(null);
 
@@ -13,6 +14,7 @@ export function FinanceProvider({ children }) {
   const [balances, setBalances] = useState([]);
   const [pnl, setPnl] = useState(null);
   const [entries, setEntries] = useState([]);
+  const [walletBalanceFromApi, setWalletBalanceFromApi] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -21,14 +23,16 @@ export function FinanceProvider({ children }) {
     setLoading(true);
     setError('');
     try {
-      const [balRes, pnlRes, entriesRes] = await Promise.all([
+      const [balRes, pnlRes, entriesRes, walletRes] = await Promise.all([
         financeApi.getLedgerBalances().catch(() => []),
         financeApi.getPnl().catch(() => null),
         financeApi.getLedgerEntries({ limit: 50 }).catch(() => []),
+        walletApi.getBalance('USD').catch(() => null),
       ]);
       setBalances(Array.isArray(balRes) ? balRes : []);
       setPnl(pnlRes);
       setEntries(Array.isArray(entriesRes) ? entriesRes : []);
+      setWalletBalanceFromApi(walletRes?.balance ?? 0);
     } catch (e) {
       setError(e.message || 'Failed to load finance');
     } finally {
@@ -49,7 +53,8 @@ export function FinanceProvider({ children }) {
     return () => document.removeEventListener('visibilitychange', onVisibilityChange);
   }, [isAuthenticated, load]);
 
-  const walletBalance = balances.find((b) => b.accountCode === '1100')?.balance ?? pnl?.walletBalance ?? 0;
+  // Single source of truth: wallet API (wallets collection). Matches Trading page equity & Wallet page.
+  const walletBalance = walletBalanceFromApi != null ? walletBalanceFromApi : (pnl?.walletBalance ?? 0);
   const realizedPnl = pnl?.realized ?? 0;
 
   const value = {

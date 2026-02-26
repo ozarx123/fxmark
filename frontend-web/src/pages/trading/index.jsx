@@ -36,7 +36,7 @@ const TIMEFRAMES = [
 
 /** Fallback prices when API/WS provide no data (market order still shows a price) */
 const FALLBACK_MARKET_PRICES = {
-  'XAU/USD': 2625.5,
+  'XAU/USD': 2650,
   'EUR/USD': 1.0852,
   'GBP/USD': 1.2655,
   'USD/JPY': 150.12,
@@ -152,7 +152,11 @@ export default function Trading() {
   const { candles, tick, loading, error, wsConnected } = useMarketData(symbol, timeframe);
   const { prices: livePrices } = useLivePrices();
   const lastCandleClose = candles?.length ? candles[candles.length - 1]?.close : null;
-  const marketPrice = tick?.close ?? tick?.price ?? lastCandleClose ?? FALLBACK_MARKET_PRICES[symbol] ?? null;
+  // Use tick first, then livePrices (same WS stream, all symbols), then candle close, then fallback
+  const livePriceForSymbol = getPriceForSymbol(livePrices, symbol);
+  const marketPrice = tick?.close ?? tick?.price ?? livePriceForSymbol ?? lastCandleClose ?? FALLBACK_MARKET_PRICES[symbol] ?? null;
+  // So chart updates last candle when price comes from livePrices (e.g. XAU/USD) even if useMarketData tick is missing
+  const chartTick = tick ?? (livePriceForSymbol != null ? { close: livePriceForSymbol, price: livePriceForSymbol } : null);
   const [modal, setModal] = useState(null);
   const [advancedModalOpen, setAdvancedModalOpen] = useState(false);
   const [tradesModalOpen, setTradesModalOpen] = useState(false);
@@ -249,7 +253,6 @@ export default function Trading() {
   }, [isAuthenticated, loadTradingData]);
 
   const equity = displayBalance;
-  const margin = 0;
 
   // Merge positions with live P&L: use WS prices, fallback to chart price when symbol matches
   const positionsWithLivePnl = positions.map((p) => {
@@ -264,6 +267,17 @@ export default function Trading() {
     return { ...p, currentPrice, livePnl: currentPrice != null ? pnl : null, pnl };
   });
   const profit = positionsWithLivePnl.reduce((s, p) => s + (p.pnl ?? 0), 0);
+
+  // Margin = sum of (volume * contract_size * price / leverage). Gold: 100oz, forex: 100k, leverage 100
+  const margin = positionsWithLivePnl.reduce((sum, p) => {
+    const vol = Number(p.volume) || 0;
+    const price = p.currentPrice ?? p.openPrice ?? 0;
+    if (!vol || !price) return sum;
+    const isGold = String(p.symbol || '').toUpperCase().includes('XAU');
+    const contractSize = isGold ? 100 : 100000;
+    const leverage = 100;
+    return sum + (vol * contractSize * price) / leverage;
+  }, 0);
 
   const analysis = getAnalysisForSymbol(symbol, marketPrice);
 
@@ -424,11 +438,12 @@ export default function Trading() {
             height={380}
             showCandles={chartType === 'candles'}
             data={candles}
-            tick={tick}
+            tick={chartTick}
             timeframe={timeframe}
             loading={loading}
             error={error}
             wsConnected={wsConnected}
+            marketPrice={marketPrice}
           />
         </div>
         <div className="section-block trading-analysis-section">

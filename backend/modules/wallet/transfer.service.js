@@ -3,6 +3,7 @@
  */
 import userRepo from '../users/user.repository.js';
 import walletRepo from './wallet.repository.js';
+import ledgerService from '../finance/ledger.service.js';
 
 async function lookupRecipient(accountNoOrEmail) {
   const input = (accountNoOrEmail || '').trim();
@@ -63,6 +64,12 @@ async function executeInternalTransfer(senderId, recipientId, amount, currency =
   await walletRepo.updateBalance(senderId, currency, -numAmount);
   await walletRepo.updateBalance(recipientId, currency, numAmount);
   const now = new Date();
+  const transferRefId = `transfer-${senderId}-${recipientId}-${Date.now()}`;
+  try {
+    await ledgerService.postTransfer(senderId, recipientId, numAmount, currency, transferRefId);
+  } catch (e) {
+    console.warn('[transfer] Ledger post failed:', e.message);
+  }
   await walletRepo.createTransaction({
     userId: senderId,
     type: 'transfer_out',

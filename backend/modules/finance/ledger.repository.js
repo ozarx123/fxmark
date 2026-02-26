@@ -49,7 +49,8 @@ async function listByEntity(entityId, options = {}) {
 /** Get balance for account + entity (debits - credits for assets/expenses, credits - debits for liabilities/equity/revenue) */
 async function getBalance(entityId, accountCode, asOf = null) {
   const c = await col();
-  const filter = { entityId, accountCode };
+  const uid = entityId != null ? String(entityId) : '';
+  const filter = { entityId: uid, accountCode };
   if (asOf) filter.createdAt = { $lte: new Date(asOf) };
   const pipeline = [
     { $match: filter },

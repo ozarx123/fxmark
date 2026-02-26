@@ -1,6 +1,15 @@
 import { useState, useEffect } from 'react';
 
-const WS_URL = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
+/** WebSocket URL - must point to backend in production (Vercel has no WS) */
+const getWsUrl = () => {
+  const api = import.meta.env.VITE_API_URL;
+  if (api) {
+    const wsBase = api.replace(/^https?/, 'wss').replace(/\/api\/?$/, '');
+    return `${wsBase}/ws`;
+  }
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${proto}//${window.location.host}/ws`;
+};
 
 /** Normalize symbol for matching (EUR/USD -> EURUSD) */
 function toInternal(s) {
@@ -22,7 +31,7 @@ export function useLivePrices() {
     let reconnectFailures = 0;
     const connect = () => {
       if (reconnectFailures >= MAX_RECONNECT_FAILURES) return;
-      ws = new WebSocket(WS_URL);
+      ws = new WebSocket(getWsUrl());
       ws.onmessage = (ev) => {
         try {
           const msg = JSON.parse(ev.data);

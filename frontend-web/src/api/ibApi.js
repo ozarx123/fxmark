@@ -58,6 +58,23 @@ export async function getBalance() {
   return res.json();
 }
 
+/** Get IB stats (referral count, earnings, etc.) */
+export async function getStats() {
+  const res = await fetchWithAuth('/ib/stats');
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to load stats');
+  return res.json();
+}
+
+/** List referral joinings (users who signed up with our ref link) */
+export async function listReferralJoinings(params = {}) {
+  const q = new URLSearchParams();
+  if (params.limit) q.set('limit', params.limit);
+  const url = `/ib/referrals/joinings${q.toString() ? `?${q}` : ''}`;
+  const res = await fetchWithAuth(url);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to load joinings');
+  return res.json();
+}
+
 /** List commissions */
 export async function listCommissions(params = {}) {
   const q = new URLSearchParams();

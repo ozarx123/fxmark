@@ -6,6 +6,8 @@ import tradingAccountRepo from './trading-account.repository.js';
 import ledgerService from '../finance/ledger.service.js';
 import walletRepo from '../wallet/wallet.repository.js';
 import distributionService from '../pamm/distribution.service.js';
+import commissionEngine from '../ib/commission.engine.js';
+import ibRepo from '../ib/ib.repository.js';
 
 function computePnL(pos, closePrice) {
   const open = Number(pos.openPrice) || 0;
@@ -103,6 +105,18 @@ async function closePosition(userId, positionId, options = {}) {
             reference: positionId,
             completedAt: now,
           });
+        }
+        try {
+          const ibIds = await ibRepo.getUplineChainForClient(userId);
+          if (ibIds.length && (Number(pos.volume) || 0) > 0) {
+            await commissionEngine.calculateForHierarchy(
+              { id: positionId, volume: pos.volume, symbol: pos.symbol || null, currency: 'USD' },
+              ibIds,
+              userId
+            );
+          }
+        } catch (e) {
+          console.warn('[positions] IB commission failed:', e.message);
         }
       }
     }

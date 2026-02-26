@@ -182,8 +182,9 @@ export default function Finance() {
 
         <div className="finance-summary-cards">
           <div className="card card-highlight">
-            <h3>Wallet balance</h3>
+            <h3>Trade account equity</h3>
             <p className="card-value">{loading ? '…' : formatCurrency(walletBalance)}</p>
+            <p className="card-label muted" style={{ marginTop: '0.25rem', fontSize: '0.85rem' }}>Available balance · same as Trading & Wallet</p>
             <div className="card-actions">
               <Link to="/wallet" className="btn btn-sm btn-primary">Manage</Link>
             </div>

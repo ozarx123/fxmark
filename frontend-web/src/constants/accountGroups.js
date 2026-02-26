@@ -5,14 +5,15 @@ export const ACCOUNT_GROUPS = [
   {
     id: 'assets',
     label: 'Assets',
-    codes: ['1100', '1200', '1300'],
-    names: { '1100': 'Wallet', '1200': 'Cash/Bank', '1300': 'Receivables' },
+    codes: ['1200', '1300'],
+    names: { '1200': 'Cash/Bank', '1300': 'Receivables' },
   },
   {
     id: 'liabilities',
     label: 'Liabilities',
-    codes: ['2100', '2200', '2300', '2400', '2500', '2600', '2700'],
+    codes: ['2110', '2100', '2200', '2300', '2400', '2500', '2600', '2700'],
     names: {
+      '2110': 'Wallet',
       '2100': 'Client Funds',
       '2200': 'Payables',
       '2300': 'Withdrawals Payable',
@@ -68,6 +69,6 @@ export function groupBalancesByType(balances) {
         const b = balances.find((x) => x.accountCode === code);
         return b ? { ...b, accountName: g.names[code] || b.accountName } : { accountCode: code, accountName: g.names[code], balance: 0 };
       })
-      .filter((a) => Math.abs(a.balance ?? 0) > 0.001 || a.accountCode === '1100'),
+      .filter((a) => Math.abs(a.balance ?? 0) > 0.001 || a.accountCode === '2110'),
   })).filter((g) => g.accounts.length > 0);
 }

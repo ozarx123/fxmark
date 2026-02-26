@@ -123,6 +123,29 @@ async function listReferrals(req, res, next) {
   }
 }
 
+async function listReferralJoinings(req, res, next) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
+    const list = await payoutService.listReferralJoinings(userId, { limit });
+    res.json(list);
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function getStats(req, res, next) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const stats = await payoutService.getStats(userId);
+    res.json(stats);
+  } catch (e) {
+    next(e);
+  }
+}
+
 export default {
   getMyProfile,
   registerAsIb,
@@ -132,4 +155,6 @@ export default {
   listPayouts,
   requestPayout,
   listReferrals,
+  listReferralJoinings,
+  getStats,
 };

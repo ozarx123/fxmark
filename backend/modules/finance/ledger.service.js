@@ -53,6 +53,16 @@ async function postDeposit(userId, amount, currency, referenceId) {
 }
 
 /**
+ * Post internal transfer: Sender Wallet (debit) -> Recipient Wallet (credit)
+ */
+async function postTransfer(senderId, recipientId, amount, currency, referenceId) {
+  return post([
+    { accountCode: ACCOUNTS.WALLET, entityId: senderId, debit: amount, credit: 0, currency, referenceType: 'transfer', referenceId },
+    { accountCode: ACCOUNTS.WALLET, entityId: recipientId, debit: 0, credit: amount, currency, referenceType: 'transfer', referenceId },
+  ]);
+}
+
+/**
  * Post withdrawal: Wallet (debit) -> Cash/Bank (credit)
  */
 async function postWithdrawal(userId, amount, currency, referenceId) {
@@ -63,20 +73,31 @@ async function postWithdrawal(userId, amount, currency, referenceId) {
 }
 
 /**
- * Post trading P&L: Wallet (debit/credit) <-> Trading P&L (credit/debit)
- * profit: Wallet debit, Trading P&L credit
- * loss: Wallet credit, Trading P&L debit (or use TRADING_LOSS)
+ * Post admin credit: Cash/Bank (debit) -> Wallet (credit)
+ * Used when superadmin adds funds to a customer wallet.
+ */
+async function postAdminCredit(userId, amount, currency, referenceId) {
+  return post([
+    { accountCode: ACCOUNTS.CASH_BANK, entityId: 'system', debit: amount, credit: 0, currency, referenceType: 'admin_credit', referenceId },
+    { accountCode: ACCOUNTS.WALLET, entityId: userId, debit: 0, credit: amount, currency, referenceType: 'admin_credit', referenceId },
+  ]);
+}
+
+/**
+ * Post trading P&L: Wallet (liability) <-> Trading P&L
+ * profit: Wallet credit (increase), Trading P&L debit
+ * loss: Wallet debit (decrease), Trading P&L credit
  */
 async function postTradingPnl(userId, amount, currency, referenceId, isProfit = true) {
   if (isProfit) {
     return post([
-      { accountCode: ACCOUNTS.WALLET, entityId: userId, debit: amount, credit: 0, currency, referenceType: 'trade', referenceId },
-      { accountCode: ACCOUNTS.TRADING_PNL, entityId: userId, debit: 0, credit: amount, currency, referenceType: 'trade', referenceId },
+      { accountCode: ACCOUNTS.WALLET, entityId: userId, debit: 0, credit: amount, currency, referenceType: 'trade', referenceId },
+      { accountCode: ACCOUNTS.TRADING_PNL, entityId: userId, debit: amount, credit: 0, currency, referenceType: 'trade', referenceId },
     ]);
   }
   return post([
-    { accountCode: ACCOUNTS.TRADING_PNL, entityId: userId, debit: amount, credit: 0, currency, referenceType: 'trade', referenceId },
-    { accountCode: ACCOUNTS.WALLET, entityId: userId, debit: 0, credit: amount, currency, referenceType: 'trade', referenceId },
+    { accountCode: ACCOUNTS.WALLET, entityId: userId, debit: amount, credit: 0, currency, referenceType: 'trade', referenceId },
+    { accountCode: ACCOUNTS.TRADING_PNL, entityId: userId, debit: 0, credit: amount, currency, referenceType: 'trade', referenceId },
   ]);
 }
 
@@ -91,12 +112,12 @@ async function postCommissionEarned(ibUserId, amount, currency, referenceId, cli
 }
 
 /**
- * Post PAMM performance fee: Manager earns fee (Wallet debit, PAMM_FEES credit)
+ * Post PAMM performance fee: Manager earns fee (Wallet credit = increase, PAMM_FEES credit)
  */
 async function postPammFee(managerId, amount, currency, referenceId) {
   return post([
-    { accountCode: ACCOUNTS.WALLET, entityId: managerId, debit: amount, credit: 0, currency, referenceType: 'pamm_fee', referenceId },
-    { accountCode: ACCOUNTS.PAMM_FEES, entityId: 'system', debit: 0, credit: amount, currency, referenceType: 'pamm_fee', referenceId },
+    { accountCode: ACCOUNTS.WALLET, entityId: managerId, debit: 0, credit: amount, currency, referenceType: 'pamm_fee', referenceId },
+    { accountCode: ACCOUNTS.PAMM_FEES, entityId: 'system', debit: amount, credit: 0, currency, referenceType: 'pamm_fee', referenceId },
   ]);
 }
 
@@ -121,18 +142,20 @@ async function postPammUnallocation(userId, amount, currency, referenceId) {
 }
 
 /**
- * Post PAMM profit distribution to investor (Wallet debit, Client Funds credit)
+ * Post PAMM profit distribution to investor
+ * Profit: Wallet credit (increase), Client Funds debit
+ * Loss: Wallet debit (decrease), Client Funds credit
  */
 async function postPammDistribution(followerId, amount, currency, referenceId, isProfit = true) {
   if (isProfit) {
     return post([
-      { accountCode: ACCOUNTS.WALLET, entityId: followerId, debit: amount, credit: 0, currency, referenceType: 'pamm_dist', referenceId },
-      { accountCode: ACCOUNTS.CLIENT_FUNDS, entityId: 'system', debit: 0, credit: amount, currency, referenceType: 'pamm_dist', referenceId },
+      { accountCode: ACCOUNTS.CLIENT_FUNDS, entityId: 'system', debit: amount, credit: 0, currency, referenceType: 'pamm_dist', referenceId },
+      { accountCode: ACCOUNTS.WALLET, entityId: followerId, debit: 0, credit: amount, currency, referenceType: 'pamm_dist', referenceId },
     ]);
   }
   return post([
-    { accountCode: ACCOUNTS.CLIENT_FUNDS, entityId: 'system', debit: amount, credit: 0, currency, referenceType: 'pamm_dist', referenceId },
-    { accountCode: ACCOUNTS.WALLET, entityId: followerId, debit: 0, credit: amount, currency, referenceType: 'pamm_dist', referenceId },
+    { accountCode: ACCOUNTS.WALLET, entityId: followerId, debit: amount, credit: 0, currency, referenceType: 'pamm_dist', referenceId },
+    { accountCode: ACCOUNTS.CLIENT_FUNDS, entityId: 'system', debit: 0, credit: amount, currency, referenceType: 'pamm_dist', referenceId },
   ]);
 }
 
@@ -165,6 +188,8 @@ export default {
   post,
   postDeposit,
   postWithdrawal,
+  postTransfer,
+  postAdminCredit,
   postTradingPnl,
   postPammFee,
   postPammAllocation,

@@ -1,7 +1,22 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
-const API_BASE = '/api/market';
-const WS_URL = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
+/** API base for market data - use backend URL in production (Vercel → GCP) */
+const API_BASE = (() => {
+  const base = import.meta.env.VITE_API_URL;
+  if (base) return base.replace(/\/api\/?$/, '') + '/api/market';
+  return '/api/market';
+})();
+
+/** WebSocket URL - must point to backend in production (Vercel has no WS) */
+const getWsUrl = () => {
+  const api = import.meta.env.VITE_API_URL;
+  if (api) {
+    const wsBase = api.replace(/^https?/, 'wss').replace(/\/api\/?$/, '');
+    return `${wsBase}/ws`;
+  }
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${proto}//${window.location.host}/ws`;
+};
 
 /** Throttle tick state updates (ms) - 0 = immediate realtime */
 const TICK_THROTTLE_MS = 0;
@@ -67,7 +82,7 @@ export function useMarketData(symbol, timeframe = '1m') {
   useEffect(() => {
     if (!internalSymbol) return;
     fetchCandles();
-    const refetchMs = { '1m': 30000, '5m': 60000, '15m': 90000, '1h': 120000, '1d': 300000 }[timeframe] ?? 30000;
+    const refetchMs = { '1m': 10000, '5m': 30000, '15m': 60000, '1h': 120000, '1d': 300000 }[timeframe] ?? 30000;
     const id = setInterval(fetchCandles, refetchMs);
     return () => clearInterval(id);
   }, [fetchCandles, internalSymbol, timeframe]);
@@ -89,7 +104,7 @@ export function useMarketData(symbol, timeframe = '1m') {
     };
     const connect = () => {
       if (reconnectFailures >= MAX_RECONNECT_FAILURES) return;
-      ws = new WebSocket(WS_URL);
+      ws = new WebSocket(getWsUrl());
       ws.onopen = () => setWsConnected(true);
       ws.onmessage = (ev) => {
         try {

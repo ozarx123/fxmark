@@ -101,9 +101,10 @@ async function distributePammPnl(managerId, positionId, pnl, accountId, position
 
     try {
       const ibIds = await getIbIdsForFollower(alloc.followerId);
-      if (ibIds.length && Math.abs(shareRounded) > 0.001) {
+      const volLots = Number(position?.volume) || 0.01;
+      if (ibIds.length && volLots > 0) {
         await commissionEngine.calculateForHierarchy(
-          { id: positionId, volume: 0.01, symbol: 'PAMM', currency: 'USD' },
+          { id: positionId, volume: volLots, symbol: position?.symbol || 'PAMM', currency: 'USD' },
           ibIds,
           alloc.followerId
         );
@@ -116,13 +117,11 @@ async function distributePammPnl(managerId, positionId, pnl, accountId, position
 
 async function getIbIdsForFollower(followerId) {
   try {
-    const userRepo = (await import('../users/user.repository.js')).default;
-    const user = await userRepo.findById(followerId);
-    if (user?.referrerId) return [user.referrerId];
+    const ibRepo = (await import('../ib/ib.repository.js')).default;
+    return await ibRepo.getUplineChainForClient(followerId);
   } catch {
-    // ignore
+    return [];
   }
-  return [];
 }
 
 export default { distributePammPnl };

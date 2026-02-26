@@ -5,9 +5,14 @@ import walletRepo from '../wallet/wallet.repository.js';
 import ledgerRepo from './ledger.repository.js';
 import { ACCOUNTS } from './chart-of-accounts.js';
 
+function normUserId(id) {
+  return id == null ? '' : String(id);
+}
+
 async function runReconciliation(userId, currency = 'USD') {
-  const wallet = await walletRepo.getOrCreateWallet(userId, currency);
-  const ledgerBalance = await ledgerRepo.getBalance(userId, ACCOUNTS.WALLET, null);
+  const uid = normUserId(userId);
+  const wallet = await walletRepo.getOrCreateWallet(uid, currency);
+  const ledgerBalance = await ledgerRepo.getBalance(uid, ACCOUNTS.WALLET, null);
 
   const walletBal = wallet.balance ?? 0;
   const diff = Math.abs(walletBal - ledgerBalance);

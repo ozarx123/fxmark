@@ -34,4 +34,12 @@ router.post('/pamm-privacy', controller.pammPrivacy);
 router.post('/broadcast', controller.broadcast);
 router.post('/wallets/:userId/add-funds', requireSuperAdmin, controller.addFundsToWallet);
 
+// IB commission (admin)
+router.get('/ib/profiles', controller.getIbProfiles);
+router.get('/ib/commissions', controller.getIbCommissions);
+router.get('/ib/wallets', controller.getIbWallets);
+router.get('/ib/settings', controller.getIbSettings);
+router.put('/ib/settings', controller.updateIbSettings);
+router.post('/ib/:userId/payout', controller.processIbPayout);
+
 export default router;

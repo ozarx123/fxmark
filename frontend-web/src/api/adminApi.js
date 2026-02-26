@@ -71,3 +71,48 @@ export async function addFundsToWallet(userId, { amount, currency = 'USD', refer
   }
   return res.json();
 }
+
+// ---------- IB commission (admin) ----------
+export async function getIbProfiles(params = {}) {
+  const q = new URLSearchParams(params).toString();
+  const res = await fetchWithAuth(`/admin/ib/profiles${q ? `?${q}` : ''}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch IB profiles');
+  return res.json();
+}
+
+export async function getIbCommissions(params = {}) {
+  const q = new URLSearchParams(params).toString();
+  const res = await fetchWithAuth(`/admin/ib/commissions${q ? `?${q}` : ''}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch commissions');
+  return res.json();
+}
+
+export async function getIbWallets() {
+  const res = await fetchWithAuth('/admin/ib/wallets');
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch IB wallets');
+  return res.json();
+}
+
+export async function getIbSettings() {
+  const res = await fetchWithAuth('/admin/ib/settings');
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch IB settings');
+  return res.json();
+}
+
+export async function updateIbSettings(ratePerLotByLevel) {
+  const res = await fetchWithAuth('/admin/ib/settings', {
+    method: 'PUT',
+    body: JSON.stringify({ ratePerLotByLevel }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to update IB settings');
+  return res.json();
+}
+
+export async function processIbPayout(userId) {
+  const res = await fetchWithAuth(`/admin/ib/${userId}/payout`, { method: 'POST' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to process payout');
+  }
+  return res.json();
+}

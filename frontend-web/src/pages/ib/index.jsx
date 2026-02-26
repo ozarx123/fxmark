@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import * as ibApi from '../../api/ibApi';
-import { LinkSimple, Copy, Check } from '@phosphor-icons/react';
+import { LinkSimple, Copy, Check, UserPlus, CurrencyDollar } from '@phosphor-icons/react';
 
 const formatCurrency = (n, currency = 'USD') =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency, minimumFractionDigits: 2 }).format(n ?? 0);
@@ -11,11 +11,47 @@ const formatDate = (d) => {
   return new Date(d).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
 };
 
+/** Build combined referral activity log (joinings + commissions) sorted by date desc */
+function buildReferralLogs(joinings, commissions, referrals, currency) {
+  const clientMap = Object.fromEntries(
+    (referrals || []).map((r) => [r.clientUserId, r.clientEmail || r.clientUserId])
+  );
+  (joinings || []).forEach((j) => {
+    clientMap[j.clientUserId] = j.clientEmail || j.clientName || j.clientUserId;
+  });
+  const logs = [];
+  (joinings || []).forEach((j) => {
+    logs.push({
+      type: 'joined',
+      date: j.joinedAt,
+      client: j.clientEmail || j.clientName || j.clientUserId || '—',
+      clientUserId: j.clientUserId,
+    });
+  });
+  (commissions || []).forEach((c) => {
+    logs.push({
+      type: 'commission',
+      date: c.createdAt,
+      client: clientMap[c.clientUserId] || c.clientUserId || '—',
+      clientUserId: c.clientUserId,
+      amount: c.amount,
+      currency: c.currency || currency,
+      symbol: c.symbol,
+      volume: c.volume,
+      status: c.status,
+    });
+  });
+  logs.sort((a, b) => new Date(b.date) - new Date(a.date));
+  return logs;
+}
+
 export default function Ib() {
   const { user, isAuthenticated } = useAuth();
   const [profile, setProfile] = useState(null);
   const [balance, setBalance] = useState(null);
+  const [stats, setStats] = useState(null);
   const [referrals, setReferrals] = useState([]);
+  const [joinings, setJoinings] = useState([]);
   const [commissions, setCommissions] = useState([]);
   const [payouts, setPayouts] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -52,16 +88,20 @@ export default function Ib() {
     setLoading(true);
     setError('');
     try {
-      const [profRes, balRes, refRes, commRes, payRes] = await Promise.all([
+      const [profRes, balRes, statsRes, refRes, joinRes, commRes, payRes] = await Promise.all([
         ibApi.getMyProfile().catch(() => null),
         ibApi.getBalance().catch(() => null),
+        ibApi.getStats().catch(() => null),
         ibApi.listReferrals().catch(() => []),
+        ibApi.listReferralJoinings().catch(() => []),
         ibApi.listCommissions().catch(() => []),
         ibApi.listPayouts().catch(() => []),
       ]);
       setProfile(profRes);
       setBalance(balRes || { pending: 0, paid: 0, currency: 'USD' });
+      setStats(statsRes || { referralCount: 0, totalEarnings: 0, pending: 0, paid: 0, currency: 'USD' });
       setReferrals(Array.isArray(refRes) ? refRes : []);
+      setJoinings(Array.isArray(joinRes) ? joinRes : []);
       setCommissions(Array.isArray(commRes) ? commRes : []);
       setPayouts(Array.isArray(payRes) ? payRes : []);
     } catch (e) {
@@ -74,6 +114,11 @@ export default function Ib() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  const referralLogs = useMemo(
+    () => buildReferralLogs(joinings, commissions, referrals, balance?.currency ?? 'USD'),
+    [joinings, commissions, referrals, balance?.currency]
+  );
 
   const handleRegister = async (e) => {
     e?.preventDefault();
@@ -158,6 +203,8 @@ export default function Ib() {
   const pending = balance?.pending ?? 0;
   const paid = balance?.paid ?? 0;
   const currency = balance?.currency ?? 'USD';
+  const referralCount = stats?.referralCount ?? 0;
+  const totalEarnings = stats?.totalEarnings ?? (pending + paid);
 
   return (
     <div className="page ib-page">
@@ -196,6 +243,16 @@ export default function Ib() {
         </div>
         <div className="cards-row">
           <div className="card">
+            <h3>Referrals</h3>
+            <p className="card-value">{loading ? '…' : referralCount}</p>
+            <span className="card-label">Total signups</span>
+          </div>
+          <div className="card">
+            <h3>Total earnings</h3>
+            <p className="card-value">{loading ? '…' : formatCurrency(totalEarnings, currency)}</p>
+            <span className="card-label">{currency}</span>
+          </div>
+          <div className="card">
             <h3>Pending commission</h3>
             <p className="card-value">{loading ? '…' : formatCurrency(pending, currency)}</p>
             <span className="card-label">{currency}</span>
@@ -212,25 +269,102 @@ export default function Ib() {
           </div>
         </div>
         <div className="section-block">
-          <h2>Referrals</h2>
-          <p className="muted">Clients referred under your IB link.</p>
+          <h2>Referral logs</h2>
+          <p className="muted">Chronological activity: signups and commission events.</p>
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Event</th>
+                  <th>Client</th>
+                  <th>Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                {referralLogs.length === 0 ? (
+                  <tr><td colSpan={4} className="empty-cell">No referral activity yet</td></tr>
+                ) : (
+                  referralLogs.map((log, i) => (
+                    <tr key={log.type === 'joined' ? `j-${log.clientUserId}` : `c-${log.date}-${i}`}>
+                      <td>{formatDate(log.date)}</td>
+                      <td>
+                        {log.type === 'joined' ? (
+                          <span className="referral-log-badge referral-log-joined">
+                            <UserPlus size={14} /> Joined
+                          </span>
+                        ) : (
+                          <span className="referral-log-badge referral-log-commission">
+                            <CurrencyDollar size={14} /> Commission
+                          </span>
+                        )}
+                      </td>
+                      <td>{log.client}</td>
+                      <td>
+                        {log.type === 'joined' ? '—' : (
+                          <>
+                            {formatCurrency(log.amount, log.currency)}
+                            {log.symbol && ` · ${log.symbol}`}
+                            {log.volume != null && ` · ${log.volume} lots`}
+                            {log.status && <span className={`status-badge status-${log.status}`} style={{ marginLeft: '0.5rem' }}>{log.status}</span>}
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div className="section-block">
+          <h2>Referral joinings</h2>
+          <p className="muted">Users who signed up using your referral link.</p>
           <div className="table-wrap">
             <table className="table">
               <thead>
                 <tr>
                   <th>Client</th>
                   <th>Joined</th>
+                </tr>
+              </thead>
+              <tbody>
+                {joinings.length === 0 ? (
+                  <tr><td colSpan={2} className="empty-cell">No referral joinings yet</td></tr>
+                ) : (
+                  joinings.map((j) => (
+                    <tr key={j.clientUserId}>
+                      <td>{j.clientEmail || j.clientName || j.clientUserId || '—'}</td>
+                      <td>{formatDate(j.joinedAt)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div className="section-block">
+          <h2>Referrals with commission</h2>
+          <p className="muted">Clients who have traded and generated commission for you.</p>
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Client</th>
+                  <th>Joined</th>
+                  <th>Trades</th>
                   <th>Commission</th>
                 </tr>
               </thead>
               <tbody>
                 {referrals.length === 0 ? (
-                  <tr><td colSpan={3} className="empty-cell">No referrals yet</td></tr>
+                  <tr><td colSpan={4} className="empty-cell">No commissions from referrals yet</td></tr>
                 ) : (
                   referrals.map((r) => (
                     <tr key={r.clientUserId}>
                       <td>{r.clientEmail || r.clientUserId || '—'}</td>
-                      <td>{formatDate(r.firstCommissionAt)}</td>
+                      <td>{formatDate(r.joinedAt || r.firstCommissionAt)}</td>
+                      <td>{r.tradeCount ?? 0}</td>
                       <td>{formatCurrency(r.totalCommission, currency)}</td>
                     </tr>
                   ))

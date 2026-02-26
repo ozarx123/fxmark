@@ -12,9 +12,11 @@ router.get('/profile', controller.getMyProfile);
 router.post('/register', controller.registerAsIb);
 router.patch('/profile', controller.updateProfile);
 router.get('/balance', controller.getBalance);
+router.get('/stats', controller.getStats);
 router.get('/commissions', controller.listCommissions);
 router.get('/payouts', controller.listPayouts);
 router.get('/referrals', controller.listReferrals);
+router.get('/referrals/joinings', controller.listReferralJoinings);
 router.post('/payouts', controller.requestPayout);
 
 export default router;

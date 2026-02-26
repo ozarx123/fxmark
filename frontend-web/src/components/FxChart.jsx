@@ -62,6 +62,7 @@ function FxChart({
   loading = false,
   error = null,
   wsConnected = false,
+  marketPrice = null,
 }) {
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
@@ -219,7 +220,7 @@ function FxChart({
     };
   }, [tick, showCandles, data]);
 
-  const displayPrice = tick?.close ?? tick?.price ?? (data.length ? data[data.length - 1]?.close : null);
+  const displayPrice = tick?.close ?? tick?.price ?? marketPrice ?? (data.length ? data[data.length - 1]?.close : null);
   const isDelayed = error != null;
 
   return (
