@@ -3,7 +3,8 @@
 
 param(
     [string]$ConnectionString = "",
-    [string]$JwtSecret = ""
+    [string]$JwtSecret = "",
+    [string]$TwelveDataApiKey = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -52,6 +53,21 @@ if ($jwtExists) {
 } else {
     $JwtSecret | gcloud secrets create jwt-secret --data-file=-
     Write-Host "Created jwt-secret" -ForegroundColor Green
+}
+
+# Twelve Data API key (optional, for market data / candles)
+if ($TwelveDataApiKey) {
+    $ErrorActionPreference = "SilentlyContinue"
+    gcloud secrets describe twelve-data-api-key 2>$null | Out-Null
+    $tdExists = $LASTEXITCODE -eq 0
+    $ErrorActionPreference = $prevErr
+    if ($tdExists) {
+        $TwelveDataApiKey | gcloud secrets versions add twelve-data-api-key --data-file=-
+        Write-Host "Updated twelve-data-api-key" -ForegroundColor Green
+    } else {
+        $TwelveDataApiKey | gcloud secrets create twelve-data-api-key --data-file=-
+        Write-Host "Created twelve-data-api-key" -ForegroundColor Green
+    }
 }
 
 Write-Host ""

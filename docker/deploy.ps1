@@ -75,7 +75,7 @@ $deployArgs = @(
     "--platform=managed",
     "--allow-unauthenticated",
     "--port=8080",
-    "--set-env-vars=NODE_ENV=production",
+    "--set-env-vars=NODE_ENV=production,TWELVE_DATA_WS=false",
     "--timeout=300",
     "--cpu-boost",
     "--memory=512Mi"
@@ -88,9 +88,12 @@ gcloud secrets describe mongo-uri 2>$null | Out-Null
 $hasMongo = $LASTEXITCODE -eq 0
 gcloud secrets describe jwt-secret 2>$null | Out-Null
 $hasJwt = $LASTEXITCODE -eq 0
+gcloud secrets describe twelve-data-api-key 2>$null | Out-Null
+$hasTwelveData = $LASTEXITCODE -eq 0
 $ErrorActionPreference = $prevErr
 if ($hasMongo) { $deployArgs += "--set-secrets=CONNECTION_STRING=mongo-uri:latest" }
 if ($hasJwt) { $deployArgs += "--set-secrets=JWT_SECRET=jwt-secret:latest" }
+if ($hasTwelveData) { $deployArgs += "--set-secrets=TWELVE_DATA_API_KEY=twelve-data-api-key:latest" }
 
 & gcloud @deployArgs
 if ($LASTEXITCODE -ne 0) { exit 1 }
@@ -100,6 +103,6 @@ Write-Host "=== Deployment complete ===" -ForegroundColor Green
 $url = gcloud run services describe $ServiceName --region=$Region --format="value(status.url)" 2>$null
 if ($url) { Write-Host "Service URL: $url" -ForegroundColor Cyan }
 Write-Host ""
-Write-Host "If CONNECTION_STRING/JWT_SECRET are not set, add them via:"
-Write-Host "  gcloud run services update $ServiceName --region=$Region --set-env-vars=CONNECTION_STRING=...,JWT_SECRET=..."
+Write-Host "If CONNECTION_STRING/JWT_SECRET/TWELVE_DATA_API_KEY are not set, add them via:"
+Write-Host "  gcloud run services update $ServiceName --region=$Region --set-env-vars=CONNECTION_STRING=...,JWT_SECRET=...,TWELVE_DATA_API_KEY=..."
 Write-Host "  Or use Secret Manager: scripts/setup-secrets.ps1"

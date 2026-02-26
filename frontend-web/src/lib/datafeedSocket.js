@@ -13,6 +13,7 @@ function getDatafeedSocketUrl() {
     const base = api.replace(/\/api\/?$/, '');
     return base.startsWith('https') ? base : base.replace(/^http/, 'http');
   }
+  if (import.meta.env.PROD) return 'https://fxmark-backend-541368249845.us-central1.run.app';
   return window.location.origin;
 }
 
@@ -25,8 +26,13 @@ export function getDatafeedSocket() {
   const url = getDatafeedSocketUrl();
   socket = io(url, {
     path: '/socket.io',
-    transports: ['polling', 'websocket'], // polling first; WebSocket upgrade can fail on some Windows setups
+    transports: ['polling', 'websocket'],
     autoConnect: true,
+    reconnection: true,
+    reconnectionAttempts: 10,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 10000,
+    timeout: 20000,
   });
   return socket;
 }

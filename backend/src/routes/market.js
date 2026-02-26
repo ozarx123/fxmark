@@ -9,6 +9,20 @@ const router = Router();
 /** Cache TTL for candles (seconds) */
 const CANDLES_TTL = 30;
 
+/** Map common tf variants to valid format (e.g. 1min -> 1m, 1D -> 1d) */
+const TF_ALIASES = {
+  '1min': '1m', '1minute': '1m', '1': '1m',
+  '5min': '5m', '5minute': '5m', '5': '5m',
+  '15min': '15m', '15minute': '15m', '15': '15m',
+  '60': '1h', '60min': '1h', '1hour': '1h',
+  '1day': '1d', 'd': '1d',
+};
+
+function normalizeTf(tf) {
+  const raw = String(tf || '').trim().toLowerCase();
+  return TF_ALIASES[raw] ?? TF_ALIASES[String(tf || '').trim()] ?? raw;
+}
+
 /**
  * GET /api/market/candles?symbol=EURUSD&tf=1m&from=&to=
  * Returns normalized OHLCV candles in UTC.
@@ -24,13 +38,14 @@ router.get('/candles', async (req, res) => {
     if (!apiKey) {
       return res.status(500).json({ error: 'TWELVE_DATA_API_KEY not configured' });
     }
-    if (!VALID_TIMEFRAMES.includes(tf)) {
+    const normalizedTf = normalizeTf(tf);
+    if (!VALID_TIMEFRAMES.includes(normalizedTf)) {
       return res.status(400).json({
         error: `Invalid tf. Use: ${VALID_TIMEFRAMES.join(', ')}`,
       });
     }
 
-    const cacheKey = `candles:${symbol}:${tf}:${from || ''}:${to || ''}`;
+    const cacheKey = `candles:${symbol}:${normalizedTf}:${from || ''}:${to || ''}`;
     const cached = cache.get(cacheKey);
     if (cached) {
       return res.json(cached);
@@ -38,7 +53,7 @@ router.get('/candles', async (req, res) => {
 
     const candles = await fetchCandles({
       symbol,
-      tf,
+      tf: normalizedTf,
       from: from || undefined,
       to: to || undefined,
       apiKey,

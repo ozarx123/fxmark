@@ -14,4 +14,5 @@ RUN chown -R nodejs:nodejs /app
 USER nodejs
 EXPOSE 3000
 ENV NODE_ENV=production
-CMD ["node", "core/server.js"]
+# Use src/index.js for full app (market data, Socket.IO, candles). core/server.js is API-only.
+CMD ["node", "src/index.js"]

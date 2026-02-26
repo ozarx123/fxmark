@@ -1,15 +1,33 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { subscribeTick, getDatafeedSocket } from '../lib/datafeedSocket.js';
 
-/** API base for market data - use backend URL in production (Vercel → GCP) */
+/** API base for market data - use backend URL in production */
 const API_BASE = (() => {
   const base = import.meta.env.VITE_API_URL;
   if (base) return base.replace(/\/api\/?$/, '') + '/api/market';
+  if (import.meta.env.PROD) return 'https://fxmark-backend-541368249845.us-central1.run.app/api/market';
   return '/api/market';
 })();
 
+/** Production: longer timeout for Cloud Run cold starts; retries for resilience */
+const FETCH_TIMEOUT_MS = import.meta.env.PROD ? 20000 : 10000;
+const FETCH_RETRIES = import.meta.env.PROD ? 3 : 1;
+
 /** Throttle tick state updates (ms) - 0 = immediate realtime */
 const TICK_THROTTLE_MS = 0;
+
+async function fetchWithTimeout(url, opts = {}) {
+  const ctrl = new AbortController();
+  const id = setTimeout(() => ctrl.abort(), opts.timeout ?? FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { ...opts, signal: ctrl.signal });
+    clearTimeout(id);
+    return res;
+  } catch (e) {
+    clearTimeout(id);
+    throw e;
+  }
+}
 
 /**
  * Convert display symbol (EUR/USD) to internal (EURUSD)
@@ -36,33 +54,44 @@ export function useMarketData(symbol, timeframe = '1m') {
   const fetchCandles = useCallback(async () => {
     setLoading(true);
     setError(null);
+    let lastErr = null;
     try {
-      const params = new URLSearchParams({ symbol: internalSymbol, tf: timeframe });
-      const res = await fetch(`${API_BASE}/candles?${params}`);
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || res.statusText || 'Failed to fetch candles');
-      }
-      const data = await res.json();
-      const arr = Array.isArray(data) ? data : [];
-      setCandles(arr);
-      if (arr.length > 0) {
-        const last = arr[arr.length - 1];
-        const lastClose = last.close != null ? Number(last.close) : null;
-        if (lastClose != null) {
-          setTick((prev) => prev && (prev.close != null || prev.price != null) ? prev : {
-            symbol: internalSymbol,
-            close: lastClose,
-            price: lastClose,
-            open: last.open,
-            high: last.high,
-            low: last.low,
-            datetime: last.time || new Date().toISOString(),
-          });
+      for (let attempt = 0; attempt <= FETCH_RETRIES; attempt++) {
+        try {
+          const params = new URLSearchParams({ symbol: internalSymbol, tf: timeframe });
+          const res = await fetchWithTimeout(`${API_BASE}/candles?${params}`);
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || res.statusText || 'Failed to fetch candles');
+          }
+          const data = await res.json();
+          const arr = Array.isArray(data) ? data : [];
+          setCandles(arr);
+          if (arr.length > 0) {
+            const last = arr[arr.length - 1];
+            const lastClose = last.close != null ? Number(last.close) : null;
+            if (lastClose != null) {
+              setTick((prev) => prev && (prev.close != null || prev.price != null) ? prev : {
+                symbol: internalSymbol,
+                close: lastClose,
+                price: lastClose,
+                open: last.open,
+                high: last.high,
+                low: last.low,
+                datetime: last.time || new Date().toISOString(),
+              });
+            }
+          }
+          setError(null);
+          return;
+        } catch (e) {
+          lastErr = e;
+          if (attempt < FETCH_RETRIES) {
+            await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+          }
         }
       }
-    } catch (e) {
-      setError(e.message);
+      setError(lastErr?.message || 'Failed to fetch candles');
       setCandles([]);
     } finally {
       setLoading(false);
