@@ -1,8 +1,14 @@
 import { WebSocketServer } from 'ws';
 import { Server as SocketIOServer } from 'socket.io';
+import jwtStrategy from '../modules/auth/jwt.strategy.js';
 
 let wss = null;
 let io = null;
+
+/** Get Socket.IO instance for trade events (user-specific emit) */
+export function getTradeIo() {
+  return io;
+}
 
 /**
  * Initialize WebSocket and Socket.IO servers for datafeed (tick + candle broadcasts)
@@ -30,8 +36,34 @@ export function initWebSocket(server) {
     transports: ['websocket', 'polling'],
   });
 
-  io.on('connection', (socket) => {
+  // Auth: verify JWT, join user to room for trade updates
+  io.use((socket, next) => {
+    const token = socket.handshake.auth?.token || socket.handshake.headers?.authorization?.replace('Bearer ', '');
+    if (!token) {
+      socket.auth = false;
+      return next();
+    }
+    const payload = jwtStrategy.decode(token);
+    if (!payload?.id) {
+      socket.auth = false;
+      return next();
+    }
+    socket.userId = payload.id;
+    socket.auth = true;
+    next();
+  });
+
+  io.on('connection', async (socket) => {
     socket.on('ping', () => socket.emit('pong'));
+    if (socket.auth && socket.userId) {
+      socket.join(`user:${socket.userId}`);
+      try {
+        const { emitTradeUpdate } = await import('./services/tradeEvents.js');
+        emitTradeUpdate(socket.userId, null);
+      } catch (e) {
+        console.warn('[ws] Initial trade emit failed:', e.message);
+      }
+    }
   });
 
   return { wss, io };

@@ -76,7 +76,8 @@ $deployArgs = @(
     "--allow-unauthenticated",
     "--port=8080",
     "--set-env-vars=NODE_ENV=production,TWELVE_DATA_WS=false",
-    "--timeout=300",
+    "--timeout=3600",
+    "--no-use-http2",
     "--cpu-boost",
     "--memory=512Mi"
 )

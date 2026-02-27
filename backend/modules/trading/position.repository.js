@@ -56,6 +56,20 @@ async function listClosed(userId, options = {}) {
   return list.map((p) => ({ id: p._id.toString(), ...p, _id: undefined }));
 }
 
+/** Top users by open position count (for admin dashboard) */
+async function listTopUsersByOpenPositions(limit = 10) {
+  const c = await col();
+  const pipeline = [
+    { $match: { closedAt: null } },
+    { $group: { _id: '$userId', count: { $sum: 1 }, totalVolume: { $sum: { $ifNull: ['$volume', 0] } } } },
+    { $sort: { count: -1, totalVolume: -1 } },
+    { $limit: limit },
+    { $project: { userId: '$_id', count: 1, totalVolume: 1, _id: 0 } },
+  ];
+  const list = await c.aggregate(pipeline).toArray();
+  return list.map((x) => ({ userId: x.userId, count: x.count || 0, totalVolume: x.totalVolume || 0 }));
+}
+
 async function update(id, userId, update, accountId = null) {
   if (!ObjectId.isValid(id)) return null;
   const c = await col();
@@ -69,4 +83,4 @@ async function update(id, userId, update, accountId = null) {
   return result ? { id: result._id.toString(), ...result, _id: undefined } : null;
 }
 
-export default { create, findById, listOpen, listClosed, update };
+export default { create, findById, listOpen, listClosed, listTopUsersByOpenPositions, update };

@@ -73,7 +73,7 @@ const USE_TWELVE_WS = process.env.TWELVE_DATA_WS === 'true';
  * Falls back to REST poller on failure.
  */
 function runTwelveDataWebSocket() {
-  const apiKey = process.env.TWELVE_DATA_API_KEY;
+  const apiKey = (process.env.TWELVE_DATA_API_KEY || '').trim();
   if (!apiKey) {
     console.warn('[twelveDataWS] TWELVE_DATA_API_KEY not set');
     return runQuotePoller();
@@ -101,7 +101,7 @@ function runTwelveDataWebSocket() {
  * Used when TWELVE_DATA_WS is false or WebSocket fails.
  */
 async function runQuotePoller() {
-  const apiKey = process.env.TWELVE_DATA_API_KEY;
+  const apiKey = (process.env.TWELVE_DATA_API_KEY || '').trim();
   if (!apiKey) {
     console.warn('[poller] TWELVE_DATA_API_KEY not set, quote poller disabled');
     return;

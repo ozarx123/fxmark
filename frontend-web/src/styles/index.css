@@ -5725,6 +5725,18 @@ body {
 .positive { color: #6bcf7f; }
 .negative { color: #ff6464; }
 
+/* Admin trading monitor: ensure balance, P&L and KPI values are visible */
+.admin-trading-monitor .kpi-card .kpi-value {
+  color: rgba(255, 255, 255, 0.95) !important;
+  min-height: 1.5em;
+}
+.admin-trading-monitor .table td.positive {
+  color: #6bcf7f !important;
+}
+.admin-trading-monitor .table td.negative {
+  color: #ff6464 !important;
+}
+
 .account-picker {
   display: flex;
   flex-wrap: wrap;

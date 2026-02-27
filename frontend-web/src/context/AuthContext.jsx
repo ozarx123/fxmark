@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
 import { ensureUserRole } from '../utils/authHelpers';
+import { reconnectWithAuth } from '../lib/datafeedSocket.js';
 
 const AuthContext = createContext(null);
 const TOKEN_KEY = 'fxmark_token';
@@ -28,6 +29,7 @@ export function AuthProvider({ children }) {
       } catch (e) {
         console.warn('localStorage setItem failed', e);
       }
+      reconnectWithAuth();
     }
     try {
       localStorage.setItem('fxmark_user', JSON.stringify(safeUser));
@@ -45,6 +47,7 @@ export function AuthProvider({ children }) {
     } catch (e) {
       console.warn('localStorage removeItem failed', e);
     }
+    reconnectWithAuth();
   }, []);
 
   const value = { user, token, login, logout, isAuthenticated: !!user };

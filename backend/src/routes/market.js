@@ -19,7 +19,9 @@ const TF_ALIASES = {
 };
 
 function normalizeTf(tf) {
-  const raw = String(tf || '').trim().toLowerCase();
+  let raw = String(tf || '').trim().toLowerCase();
+  // Strip TradingView-style suffix (e.g. 1m:1 -> 1m)
+  if (raw.includes(':')) raw = raw.split(':')[0];
   return TF_ALIASES[raw] ?? TF_ALIASES[String(tf || '').trim()] ?? raw;
 }
 
@@ -30,13 +32,16 @@ function normalizeTf(tf) {
 router.get('/candles', async (req, res) => {
   try {
     const { symbol, tf, from, to } = req.query;
-    const apiKey = process.env.TWELVE_DATA_API_KEY;
+    const apiKey = (process.env.TWELVE_DATA_API_KEY || '').trim();
 
     if (!symbol || !tf) {
       return res.status(400).json({ error: 'symbol and tf are required' });
     }
     if (!apiKey) {
-      return res.status(500).json({ error: 'TWELVE_DATA_API_KEY not configured' });
+      return res.status(500).json({
+        error: 'TWELVE_DATA_API_KEY not configured',
+        hint: 'Ensure twelve-data-api-key exists in GCP Secret Manager and the Cloud Run service account has roles/secretmanager.secretAccessor',
+      });
     }
     const normalizedTf = normalizeTf(tf);
     if (!VALID_TIMEFRAMES.includes(normalizedTf)) {

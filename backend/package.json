@@ -19,6 +19,7 @@
     "check-mongo": "node scripts/check-mongo.js",
     "setup-db": "node scripts/setup-database.js",
     "create-superadmin": "node scripts/create-superadmin.js",
+    "change-password": "node scripts/change-password.js",
     "seed-pamm": "node scripts/seed-pamm-manager.js",
     "drop-pamm-userid-unique": "node scripts/drop-pamm-userid-unique.js"
   },

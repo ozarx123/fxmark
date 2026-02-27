@@ -1,7 +1,7 @@
 import WebSocket from 'ws';
 import { SYMBOL_MAP } from '../config/symbolMap.js';
 
-/** Phase 1: URL options to try */
+/** Twelve Data WebSocket URLs (docs: wss://ws.twelvedata.com). Pro plan required for WebSocket. */
 const WS_URL_OPTIONS = [
   'wss://ws.twelvedata.com/v1/quotes',
   'wss://ws.twelvedata.com/v1',
@@ -83,9 +83,12 @@ export function createTwelveDataWebSocket({ apiKey, symbols, onTick, onError }) 
       let body = '';
       res.on('data', (chunk) => { body += chunk; });
       res.on('end', () => {
-        console.error(`[twelveDataWS] Unexpected response ${res.statusCode} from ${safeUrl}`);
-        console.error(`[twelveDataWS] Headers: ${JSON.stringify(res.headers)}`);
-        if (body) console.error(`[twelveDataWS] Body: ${body.slice(0, 500)}`);
+        if (res.statusCode === 404) {
+          console.warn(`[twelveDataWS] 404 from ${safeUrl} — WebSocket may require Twelve Data Pro plan. Falling back to REST poller.`);
+        } else {
+          console.error(`[twelveDataWS] Unexpected response ${res.statusCode} from ${safeUrl}`);
+          if (body) console.error(`[twelveDataWS] Body: ${body.slice(0, 200)}`);
+        }
         urlIndex++;
         ws.removeAllListeners();
         ws = null;

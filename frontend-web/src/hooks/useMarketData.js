@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { subscribeTick, getDatafeedSocket } from '../lib/datafeedSocket.js';
+import { useState, useEffect, useCallback } from 'react';
+import { useMarketDataContext } from '../context/MarketDataContext.jsx';
 
 /** API base for market data - use backend URL in production */
 const API_BASE = (() => {
@@ -12,9 +12,6 @@ const API_BASE = (() => {
 /** Production: longer timeout for Cloud Run cold starts; retries for resilience */
 const FETCH_TIMEOUT_MS = import.meta.env.PROD ? 20000 : 10000;
 const FETCH_RETRIES = import.meta.env.PROD ? 3 : 1;
-
-/** Throttle tick state updates (ms) - 0 = immediate realtime */
-const TICK_THROTTLE_MS = 0;
 
 async function fetchWithTimeout(url, opts = {}) {
   const ctrl = new AbortController();
@@ -106,48 +103,17 @@ export function useMarketData(symbol, timeframe = '1m') {
     return () => clearInterval(id);
   }, [fetchCandles, internalSymbol, timeframe]);
 
-  const tickThrottleRef = useRef(null);
-  const lastTickRef = useRef(null);
-
-  // Socket.IO datafeed for live ticks
+  // Consume tick from central market data pool
+  const { ticks, connected } = useMarketDataContext();
+  const poolTick = ticks[internalSymbol];
   useEffect(() => {
     if (!internalSymbol) return;
-    const flushTick = () => {
-      tickThrottleRef.current = null;
-      if (lastTickRef.current) {
-        setTick(lastTickRef.current);
-        lastTickRef.current = null;
-      }
-    };
-    const unsubTick = subscribeTick((tickData) => {
-      if (!tickData || typeof tickData !== 'object') return;
-      const price = tickData.close ?? tickData.price;
-      if (tickData.symbol !== internalSymbol || (price != null && !Number.isFinite(Number(price)))) return;
-      lastTickRef.current = tickData;
-      if (TICK_THROTTLE_MS <= 0) {
-        setTick(tickData);
-      } else if (!tickThrottleRef.current) {
-        setTick(tickData);
-        tickThrottleRef.current = setTimeout(flushTick, TICK_THROTTLE_MS);
-      }
-    });
-    const socket = getDatafeedSocket();
-    setWsConnected(socket.connected);
-    const onConnect = () => setWsConnected(true);
-    const onDisconnect = () => setWsConnected(false);
-    socket.on('connect', onConnect);
-    socket.on('disconnect', onDisconnect);
-
-    return () => {
-      socket.off('connect', onConnect);
-      socket.off('disconnect', onDisconnect);
-      unsubTick();
-      setWsConnected(false);
-      if (tickThrottleRef.current) clearTimeout(tickThrottleRef.current);
-      tickThrottleRef.current = null;
-      lastTickRef.current = null;
-    };
-  }, [internalSymbol]);
+    if (poolTick) {
+      const price = poolTick.close ?? poolTick.price;
+      if (Number.isFinite(Number(price))) setTick(poolTick);
+    }
+  }, [internalSymbol, poolTick]);
+  useEffect(() => setWsConnected(connected), [connected]);
 
   return { candles, tick, loading, error, wsConnected, refetch: fetchCandles };
 }

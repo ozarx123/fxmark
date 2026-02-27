@@ -6,6 +6,7 @@ import ActiveTradesModal from '../../components/ActiveTradesModal';
 import HistoryModal from '../../components/HistoryModal';
 import { useMarketData } from '../../hooks/useMarketData';
 import { useLivePrices, getPriceForSymbol, computePnL } from '../../hooks/useLivePrices';
+import { useTradeSnapshot } from '../../context/MarketDataContext.jsx';
 import { useAccount } from '../../context/AccountContext';
 import { useAuth } from '../../context/AuthContext';
 import { useFinance } from '../../hooks/useFinance';
@@ -195,6 +196,8 @@ export default function Trading() {
     : effectiveActiveAccount?.type === 'demo'
       ? (effectiveActiveAccount?.balance ?? 10000)
       : balance;
+  const tradeSnapshot = useTradeSnapshot();
+
   const loadTradingData = useCallback(async (silent = false) => {
     if (!isAuthenticated) return;
     if (!silent) setTradingLoading(true);
@@ -226,20 +229,17 @@ export default function Trading() {
     loadTradingData();
   }, [loadTradingData]);
 
-  // Poll for real-time updates when page is visible (positions, orders, P&L)
-  // Stops polling after 5 consecutive failures
-  const MAX_POLL_FAILURES = 5;
+  // Apply trade updates from WebSocket pool (replaces REST polling)
   useEffect(() => {
-    if (!isAuthenticated) return;
-    let consecutiveFailures = 0;
-    const interval = setInterval(async () => {
-      if (document.visibilityState !== 'visible' || consecutiveFailures >= MAX_POLL_FAILURES) return;
-      const ok = await loadTradingData(true);
-      if (ok) consecutiveFailures = 0;
-      else consecutiveFailures++;
-    }, 3000);
-    return () => clearInterval(interval);
-  }, [isAuthenticated, loadTradingData]);
+    if (!tradeSnapshot || !isAuthenticated) return;
+    const aid = accountOpts.accountId;
+    const filterByAccount = (arr) =>
+      Array.isArray(arr)
+        ? aid ? arr.filter((x) => !x.accountId || x.accountId === aid) : arr
+        : [];
+    setPositions(filterByAccount(tradeSnapshot.positions));
+    setOrders(filterByAccount(tradeSnapshot.orders));
+  }, [tradeSnapshot, isAuthenticated, accountOpts.accountId]);
 
   // Refresh when user returns to tab (e.g. after placing order in another window)
   useEffect(() => {

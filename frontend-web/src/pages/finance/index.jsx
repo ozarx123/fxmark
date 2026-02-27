@@ -9,6 +9,7 @@ import ActiveTradesModal from '../../components/ActiveTradesModal';
 import HistoryModal from '../../components/HistoryModal';
 import { useMarketData } from '../../hooks/useMarketData';
 import { useLivePrices, getPriceForSymbol } from '../../hooks/useLivePrices';
+import { useTradeSnapshot } from '../../context/MarketDataContext.jsx';
 import * as financeApi from '../../api/financeApi';
 import * as tradingApi from '../../api/tradingApi';
 import * as walletApi from '../../api/walletApi';
@@ -39,6 +40,7 @@ export default function Finance() {
   const [historyItems, setHistoryItems] = useState([]);
   const [reconciliation, setReconciliation] = useState(null);
 
+  const tradeSnapshot = useTradeSnapshot();
   const accountOpts = activeAccount ? { accountId: activeAccount.id, accountNumber: activeAccount.accountNumber } : {};
   const loadTradingData = useCallback(async () => {
     if (!isAuthenticated) return;
@@ -81,6 +83,15 @@ export default function Finance() {
   useEffect(() => {
     loadTradingData();
   }, [loadTradingData]);
+
+  // Apply trade updates from WebSocket pool
+  useEffect(() => {
+    if (!tradeSnapshot || !isAuthenticated) return;
+    const aid = accountOpts.accountId;
+    const arr = Array.isArray(tradeSnapshot.positions) ? tradeSnapshot.positions : [];
+    const filtered = aid ? arr.filter((x) => !x.accountId || x.accountId === aid) : arr;
+    setPositions(filtered.map((p) => ({ id: p.id, symbol: p.symbol, type: p.side, lots: p.volume, entryPrice: p.openPrice, currentPrice: p.currentPrice ?? p.openPrice, pnl: p.pnl ?? 0 })));
+  }, [tradeSnapshot, isAuthenticated, accountOpts.accountId]);
 
   const loadMonthlyReport = useCallback(async () => {
     if (!isAuthenticated) return;

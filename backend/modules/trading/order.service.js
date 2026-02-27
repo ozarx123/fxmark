@@ -4,6 +4,7 @@
  */
 import orderRepo from './order.repository.js';
 import positionsService from './positions.service.js';
+import { checkTradingAllowed } from '../admin/trading-limits.service.js';
 
 const SIDES = ['buy', 'sell'];
 const TYPES = ['market', 'limit'];
@@ -44,6 +45,7 @@ function validatePlace(symbol, side, volume, type, price) {
 }
 
 async function placeOrder(userId, body, accountId = null) {
+  await checkTradingAllowed(userId);
   const { symbol, side, volume, type, price } = validatePlace(
     body.symbol,
     body.side,

@@ -116,3 +116,87 @@ export async function processIbPayout(userId) {
   }
   return res.json();
 }
+
+// ---------- Trading monitor (admin view user trading activity) ----------
+export async function getAdminTopTraders(limit = 10) {
+  const res = await fetchWithAuth(`/admin/trading/top-traders?limit=${limit}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch top traders');
+  return res.json();
+}
+
+export async function getAdminTradingUserSummary(userId) {
+  const res = await fetchWithAuth(`/admin/trading/users/${userId}/summary`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch user');
+  return res.json();
+}
+
+export async function getAdminTradingAccounts(userId) {
+  const res = await fetchWithAuth(`/admin/trading/users/${userId}/accounts`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch accounts');
+  return res.json();
+}
+
+export async function getAdminTradingWallet(userId) {
+  const res = await fetchWithAuth(`/admin/trading/users/${userId}/wallet`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch wallet');
+  return res.json();
+}
+
+export async function getAdminTradingPositions(userId, params = {}) {
+  const defaults = { limit: 200 };
+  const merged = { ...defaults, ...params };
+  const q = new URLSearchParams(merged).toString();
+  const res = await fetchWithAuth(`/admin/trading/users/${userId}/positions${q ? `?${q}` : ''}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch positions');
+  return res.json();
+}
+
+export async function getAdminTradingClosedPositions(userId, params = {}) {
+  const q = new URLSearchParams(params).toString();
+  const res = await fetchWithAuth(`/admin/trading/users/${userId}/positions/closed${q ? `?${q}` : ''}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch trade history');
+  return res.json();
+}
+
+export async function getAdminTradingOrders(userId, params = {}) {
+  const q = new URLSearchParams(params).toString();
+  const res = await fetchWithAuth(`/admin/trading/users/${userId}/orders${q ? `?${q}` : ''}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch orders');
+  return res.json();
+}
+
+export async function adminClosePosition(userId, positionId, body = {}) {
+  const res = await fetchWithAuth(`/admin/trading/users/${userId}/positions/${positionId}/close`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to close position');
+  return res.json();
+}
+
+export async function adminCancelOrder(userId, orderId) {
+  const res = await fetchWithAuth(`/admin/trading/users/${userId}/orders/${orderId}/cancel`, {
+    method: 'POST',
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to cancel order');
+  return res.json();
+}
+
+export async function getAdminTradingLimits(userId) {
+  const res = await fetchWithAuth(`/admin/trading/users/${userId}/limits`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch limits');
+  return res.json();
+}
+
+export async function updateAdminTradingLimits(userId, { blocked, maxDrawdownPercent, maxDailyLoss }) {
+  const body = {};
+  if (blocked !== undefined) body.blocked = blocked;
+  if (maxDrawdownPercent !== undefined) body.maxDrawdownPercent = maxDrawdownPercent;
+  if (maxDailyLoss !== undefined) body.maxDailyLoss = maxDailyLoss;
+  const res = await fetchWithAuth(`/admin/trading/users/${userId}/limits`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to update limits');
+  return res.json();
+}

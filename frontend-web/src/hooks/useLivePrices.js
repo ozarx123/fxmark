@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { subscribeTick } from '../lib/datafeedSocket.js';
+import { useMemo } from 'react';
+import { useMarketDataContext } from '../context/MarketDataContext.jsx';
 
 /** Normalize symbol for matching (EUR/USD -> EURUSD) */
 function toInternal(s) {
@@ -7,28 +7,21 @@ function toInternal(s) {
 }
 
 /**
- * useLivePrices — subscribe to Socket.IO datafeed ticks and store latest price per symbol.
+ * useLivePrices — consume prices from the central market data pool.
  * Used for real-time P&L on open positions.
- * @returns {{ prices: Record<string, number>, lastUpdate: Date|null }}
+ * @returns {{ prices: Record<string, number>, lastUpdate: Date|null, connected: boolean }}
  */
 export function useLivePrices() {
-  const [prices, setPrices] = useState({});
-  const [lastUpdate, setLastUpdate] = useState(null);
-
-  useEffect(() => {
-    const unsubTick = subscribeTick((tickData) => {
-      if (!tickData || typeof tickData !== 'object') return;
-      const { symbol, close, price } = tickData;
-      const p = close ?? price;
-      if (symbol && Number.isFinite(Number(p))) {
-        setPrices((prev) => ({ ...prev, [symbol]: Number(p) }));
-        setLastUpdate(new Date());
-      }
-    });
-    return () => unsubTick();
-  }, []);
-
-  return { prices, lastUpdate };
+  const { ticks, lastUpdate, connected } = useMarketDataContext();
+  const prices = useMemo(() => {
+    const out = {};
+    for (const [sym, t] of Object.entries(ticks)) {
+      const p = t?.close ?? t?.price;
+      if (Number.isFinite(p)) out[sym] = p;
+    }
+    return out;
+  }, [ticks]);
+  return { prices, lastUpdate, connected };
 }
 
 /**

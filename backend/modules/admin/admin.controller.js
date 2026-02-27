@@ -1,14 +1,18 @@
 /**
  * Admin controller
- * Leads, tickets, KYC override, PAMM privacy, broadcast, users, PAMM approval, IB commission
+ * Leads, tickets, KYC override, PAMM privacy, broadcast, users, PAMM approval, IB commission, trading monitor
  */
 import userRepo from '../users/user.repository.js';
+import tradingAccountRepo from '../trading/trading-account.repository.js';
+import positionsService from '../trading/positions.service.js';
+import orderService from '../trading/order.service.js';
 import userService from '../users/user.service.js';
 import walletRepo from '../wallet/wallet.repository.js';
 import ledgerService from '../finance/ledger.service.js';
 import pammRepo from '../pamm/pamm.repository.js';
 import ibRepo from '../ib/ib.repository.js';
 import payoutService from '../ib/payout.service.js';
+import tradingLimitsRepo from './trading-limits.repository.js';
 
 async function getLeads(req, res, next) {
   try {
@@ -218,6 +222,208 @@ async function processIbPayout(req, res, next) {
   }
 }
 
+// ---------- Trading monitor (admin view user trading activity) ----------
+async function getTopTraders(req, res, next) {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 10, 20);
+    const top = await positionsService.getTopTradersWithPositions(limit);
+    const result = [];
+    for (const { userId, count, totalVolume, positions } of top) {
+      const user = await userRepo.findById(userId);
+      if (!user) continue;
+      result.push({
+        id: user.id,
+        email: user.email,
+        name: user.name || user.email?.split('@')[0] || '—',
+        positionCount: count,
+        totalVolume,
+        positions,
+      });
+    }
+    res.json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function getTradingUserSummary(req, res, next) {
+  try {
+    const { userId } = req.params;
+    if (!userId) return res.status(400).json({ error: 'userId required' });
+    const user = await userRepo.findById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json({
+      id: user.id,
+      email: user.email ?? '—',
+      name: user.name || user.email?.split('@')[0] || '—',
+    });
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function getTradingAccounts(req, res, next) {
+  try {
+    const { userId } = req.params;
+    if (!userId) return res.status(400).json({ error: 'userId required' });
+    const user = await userRepo.findById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const accounts = await tradingAccountRepo.listByUser(userId);
+    res.json(accounts);
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function getTradingWallet(req, res, next) {
+  try {
+    const { userId } = req.params;
+    if (!userId) return res.status(400).json({ error: 'userId required' });
+    const user = await userRepo.findById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const wallet = await walletRepo.getOrCreateWallet(userId, 'USD');
+    res.json({
+      balance: wallet?.balance ?? 0,
+      locked: wallet?.locked ?? 0,
+      currency: wallet?.currency ?? 'USD',
+    });
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function getTradingPositions(req, res, next) {
+  try {
+    const { userId } = req.params;
+    const accountId = req.query.accountId || null;
+    const limit = Math.min(parseInt(req.query.limit, 10) || 200, 500);
+    if (!userId) return res.status(400).json({ error: 'userId required' });
+    const user = await userRepo.findById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const list = await positionsService.getOpenPositions(userId, {
+      limit,
+      accountId: accountId || undefined,
+    });
+    res.json(list);
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function getTradingClosedPositions(req, res, next) {
+  try {
+    const { userId } = req.params;
+    const { accountId, limit } = req.query;
+    if (!userId) return res.status(400).json({ error: 'userId required' });
+    const user = await userRepo.findById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const list = await positionsService.getClosedPositions(userId, {
+      limit: Math.min(parseInt(limit, 10) || 50, 100),
+      accountId: accountId || undefined,
+    });
+    res.json(list);
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function getTradingOrders(req, res, next) {
+  try {
+    const { userId } = req.params;
+    const { status, accountId, limit } = req.query;
+    if (!userId) return res.status(400).json({ error: 'userId required' });
+    const user = await userRepo.findById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const list = await orderService.listOrders(userId, {
+      status: status || undefined,
+      limit: Math.min(parseInt(limit, 10) || 50, 100),
+      accountId: accountId || undefined,
+    });
+    res.json(list);
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function adminClosePosition(req, res, next) {
+  try {
+    const { userId, positionId } = req.params;
+    const { volume, closePrice } = req.body;
+    if (!userId || !positionId) return res.status(400).json({ error: 'userId and positionId required' });
+    const user = await userRepo.findById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const result = await positionsService.closePosition(userId, positionId, {
+      volume: volume ? Number(volume) : undefined,
+      closePrice: closePrice ? Number(closePrice) : undefined,
+      bypassAdmin: true,
+    });
+    res.json(result);
+  } catch (e) {
+    if (e.statusCode === 404) return res.status(404).json({ error: e.message });
+    if (e.statusCode === 400) return res.status(400).json({ error: e.message });
+    next(e);
+  }
+}
+
+async function adminCancelOrder(req, res, next) {
+  try {
+    const { userId, orderId } = req.params;
+    if (!userId || !orderId) return res.status(400).json({ error: 'userId and orderId required' });
+    const user = await userRepo.findById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const result = await orderService.cancelOrder(userId, orderId);
+    res.json(result);
+  } catch (e) {
+    if (e.statusCode === 404) return res.status(404).json({ error: e.message });
+    if (e.statusCode === 400) return res.status(400).json({ error: e.message });
+    next(e);
+  }
+}
+
+/** Get trading limits (block status, drawdown limits) for a user */
+async function getTradingLimits(req, res, next) {
+  try {
+    const { userId } = req.params;
+    if (!userId) return res.status(400).json({ error: 'userId required' });
+    const user = await userRepo.findById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const limits = await tradingLimitsRepo.getByUserId(userId);
+    res.json({
+      blocked: limits?.blocked ?? false,
+      maxDrawdownPercent: limits?.maxDrawdownPercent ?? null,
+      maxDailyLoss: limits?.maxDailyLoss ?? null,
+    });
+  } catch (e) {
+    next(e);
+  }
+}
+
+/** Update trading limits (block, drawdown limits) for a user */
+async function updateTradingLimits(req, res, next) {
+  try {
+    const { userId } = req.params;
+    const { blocked, maxDrawdownPercent, maxDailyLoss } = req.body || {};
+    if (!userId) return res.status(400).json({ error: 'userId required' });
+    const user = await userRepo.findById(userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const data = {};
+    if (blocked !== undefined) data.blocked = !!blocked;
+    if (maxDrawdownPercent !== undefined) data.maxDrawdownPercent = maxDrawdownPercent;
+    if (maxDailyLoss !== undefined) data.maxDailyLoss = maxDailyLoss;
+    if (Object.keys(data).length === 0) {
+      return res.status(400).json({ error: 'Provide blocked, maxDrawdownPercent, or maxDailyLoss' });
+    }
+    const limits = await tradingLimitsRepo.upsert(userId, data);
+    res.json({
+      blocked: limits?.blocked ?? false,
+      maxDrawdownPercent: limits?.maxDrawdownPercent ?? null,
+      maxDailyLoss: limits?.maxDailyLoss ?? null,
+    });
+  } catch (e) {
+    next(e);
+  }
+}
+
 /** Superadmin only: add funds to a customer wallet */
 async function addFundsToWallet(req, res, next) {
   try {
@@ -270,4 +476,15 @@ export default {
   getIbSettings,
   updateIbSettings,
   processIbPayout,
+  getTopTraders,
+  getTradingUserSummary,
+  getTradingAccounts,
+  getTradingWallet,
+  getTradingPositions,
+  getTradingClosedPositions,
+  getTradingOrders,
+  adminClosePosition,
+  adminCancelOrder,
+  getTradingLimits,
+  updateTradingLimits,
 };

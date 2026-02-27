@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext.jsx';
+import { MarketDataProvider } from './context/MarketDataContext.jsx';
 import { AccountProvider } from './context/AccountContext.jsx';
 import { FinanceProvider } from './context/FinanceContext.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
@@ -33,6 +34,7 @@ import AdminUsers from './pages/admin/AdminUsers.jsx';
 import AdminLiquidity from './pages/admin/AdminLiquidity.jsx';
 import AdminSettings from './pages/admin/AdminSettings.jsx';
 import AdminTradingMonitor from './pages/admin/AdminTradingMonitor.jsx';
+import AdminTraderDetail from './pages/admin/AdminTraderDetail.jsx';
 import AdminAuditLog from './pages/admin/AdminAuditLog.jsx';
 import AdminIbCommission from './pages/admin/AdminIbCommission.jsx';
 import AdminPamm from './pages/admin/AdminPamm.jsx';
@@ -43,6 +45,7 @@ function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
+        <MarketDataProvider>
         <Routes>
           <Route path="/" element={<Landing />} />
           <Route path="/auth" element={<Auth />} />
@@ -67,6 +70,7 @@ function App() {
           <Route index element={<AdminDashboard />} />
           <Route path="financials" element={<AdminFinancials />} />
           <Route path="trading-monitor" element={<AdminTradingMonitor />} />
+          <Route path="trading-monitor/:userId" element={<AdminTraderDetail />} />
           <Route path="users" element={<AdminUsers />} />
           <Route path="ib-commission" element={<AdminIbCommission />} />
           <Route path="audit" element={<AdminAuditLog />} />
@@ -81,6 +85,7 @@ function App() {
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </MarketDataProvider>
       </BrowserRouter>
     </AuthProvider>
   );

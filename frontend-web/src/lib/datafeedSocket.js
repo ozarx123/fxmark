@@ -1,6 +1,6 @@
 /**
- * Socket.IO datafeed — single connection for tick/candle streams.
- * Used by useMarketData and useLivePrices when Socket.IO is enabled.
+ * Socket.IO datafeed — low-level connection for tick/candle streams.
+ * MarketDataProvider subscribes here; consumers read from context.
  */
 import { io } from 'socket.io-client';
 
@@ -17,23 +17,41 @@ function getDatafeedSocketUrl() {
   return window.location.origin;
 }
 
+function getAuthToken() {
+  try {
+    return localStorage.getItem('fxmark_token') || null;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Get or create the shared Socket.IO client for datafeed
+ * Get or create the shared Socket.IO client for datafeed + trade updates
  */
 export function getDatafeedSocket() {
   if (socket?.connected) return socket;
   if (socket && !socket.connected) return socket;
   const url = getDatafeedSocketUrl();
+  const isCloudRun = url.includes('run.app');
+  const transports = isCloudRun ? ['polling'] : ['polling', 'websocket'];
+  const isDev = import.meta.env.DEV;
+  const token = getAuthToken();
   socket = io(url, {
     path: '/socket.io',
-    transports: ['polling', 'websocket'],
+    transports,
     autoConnect: true,
     reconnection: true,
     reconnectionAttempts: 10,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 10000,
     timeout: 20000,
+    auth: token ? { token } : {},
   });
+  if (isDev) {
+    socket.on('connect', () => console.log('[datafeed] Socket.IO connected'));
+    socket.on('disconnect', (reason) => console.log('[datafeed] Socket.IO disconnected:', reason));
+    socket.on('connect_error', (err) => console.error('[datafeed] Socket.IO connect_error:', err.message));
+  }
   return socket;
 }
 
@@ -90,4 +108,15 @@ export function subscribeCandle(callback) {
  */
 export function isDatafeedConnected() {
   return socket?.connected ?? false;
+}
+
+/**
+ * Reconnect with fresh auth token (call after login)
+ */
+export function reconnectWithAuth() {
+  if (socket) {
+    socket.disconnect();
+    socket = null;
+  }
+  connectCount = 0;
 }

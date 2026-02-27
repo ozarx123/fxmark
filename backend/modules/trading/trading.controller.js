@@ -3,6 +3,7 @@
  */
 import orderService from './order.service.js';
 import positionsService from './positions.service.js';
+import { emitTradeUpdate } from '../../src/services/tradeEvents.js';
 
 // ---------- Orders ----------
 async function placeOrder(req, res, next) {
@@ -11,6 +12,7 @@ async function placeOrder(req, res, next) {
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
     const accountId = req.activeAccount?.id ?? req.body.accountId;
     const result = await orderService.placeOrder(userId, req.body, accountId);
+    emitTradeUpdate(userId, null).catch(() => {});
     res.status(201).json(result);
   } catch (e) {
     if (e.statusCode) return next(e);
@@ -28,6 +30,7 @@ async function cancelOrder(req, res, next) {
     const { orderId } = req.params;
     const accountId = req.activeAccount?.id;
     const result = await orderService.cancelOrder(userId, orderId, accountId);
+    emitTradeUpdate(userId, null).catch(() => {});
     res.json(result);
   } catch (e) {
     next(e);
@@ -119,6 +122,7 @@ async function closePosition(req, res, next) {
     const { volume, pnl, closePrice } = req.body;
     const accountId = req.activeAccount?.id;
     const result = await positionsService.closePosition(userId, positionId, { volume, pnl, closePrice, accountId });
+    emitTradeUpdate(userId, null).catch(() => {});
     res.json(result);
   } catch (e) {
     next(e);

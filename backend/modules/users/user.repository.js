@@ -111,7 +111,13 @@ async function list(options = {}) {
   if (options.role) filter.role = options.role;
   if (options.kycStatus) filter.kycStatus = options.kycStatus;
   if (options.search) {
-    filter.email = { $regex: options.search, $options: 'i' };
+    const s = options.search.trim();
+    if (s) {
+      filter.$or = [
+        { email: { $regex: s, $options: 'i' } },
+        { name: { $regex: s, $options: 'i' } },
+      ];
+    }
   }
   const cursor = col.find(filter, { projection: { passwordHash: 0 } }).sort({ createdAt: -1 });
   const limit = Math.min(options.limit || 200, 500);

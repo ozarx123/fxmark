@@ -42,4 +42,17 @@ router.get('/ib/settings', controller.getIbSettings);
 router.put('/ib/settings', controller.updateIbSettings);
 router.post('/ib/:userId/payout', controller.processIbPayout);
 
+// Trading monitor — admin views user trading activity
+router.get('/trading/top-traders', controller.getTopTraders);
+router.get('/trading/users/:userId/summary', controller.getTradingUserSummary);
+router.get('/trading/users/:userId/accounts', controller.getTradingAccounts);
+router.get('/trading/users/:userId/wallet', controller.getTradingWallet);
+router.get('/trading/users/:userId/positions', controller.getTradingPositions);
+router.get('/trading/users/:userId/positions/closed', controller.getTradingClosedPositions);
+router.get('/trading/users/:userId/orders', controller.getTradingOrders);
+router.post('/trading/users/:userId/positions/:positionId/close', controller.adminClosePosition);
+router.post('/trading/users/:userId/orders/:orderId/cancel', controller.adminCancelOrder);
+router.get('/trading/users/:userId/limits', controller.getTradingLimits);
+router.put('/trading/users/:userId/limits', controller.updateTradingLimits);
+
 export default router;
