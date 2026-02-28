@@ -30,8 +30,12 @@ export default function Finance() {
   const [selectedSymbol, setSelectedSymbol] = useState('XAU/USD');
   const [tab, setTab] = useState('overview');
   const [monthlyReport, setMonthlyReport] = useState(null);
+  const [dailyReport, setDailyReport] = useState(null);
+  const [statement, setStatement] = useState(null);
   const [reportMonth, setReportMonth] = useState(new Date().getMonth() + 1);
   const [reportYear, setReportYear] = useState(new Date().getFullYear());
+  const [statementFrom, setStatementFrom] = useState(() => new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
+  const [statementTo, setStatementTo] = useState(() => new Date().toISOString().slice(0, 10));
   const { candles, tick } = useMarketData(selectedSymbol, '1m');
   const { prices: livePrices } = useLivePrices();
   const marketPrice = tick?.close ?? tick?.price ?? (candles?.length ? candles[candles.length - 1]?.close : null);
@@ -103,9 +107,33 @@ export default function Finance() {
     }
   }, [isAuthenticated, reportYear, reportMonth]);
 
+  const loadDailyReport = useCallback(async () => {
+    if (!isAuthenticated) return;
+    try {
+      const res = await financeApi.getDailyReport();
+      setDailyReport(res);
+    } catch (_) {
+      setDailyReport(null);
+    }
+  }, [isAuthenticated]);
+
+  const loadStatement = useCallback(async () => {
+    if (!isAuthenticated) return;
+    try {
+      const res = await financeApi.getStatement({ from: statementFrom, to: statementTo });
+      setStatement(res);
+    } catch (_) {
+      setStatement(null);
+    }
+  }, [isAuthenticated, statementFrom, statementTo]);
+
   useEffect(() => {
-    if (tab === 'reports') loadMonthlyReport();
-  }, [tab, loadMonthlyReport]);
+    if (tab === 'reports') {
+      loadMonthlyReport();
+      loadDailyReport();
+      loadStatement();
+    }
+  }, [tab, loadMonthlyReport, loadDailyReport, loadStatement]);
 
   const handleOrderConfirm = async (order) => {
     setModal(null);
@@ -329,6 +357,16 @@ export default function Finance() {
                     ))
                   )}
                 </tbody>
+                {entries.length > 0 && (
+                  <tfoot>
+                    <tr className="table-total-row">
+                      <td colSpan={3}><strong>Total</strong></td>
+                      <td><strong>{formatCurrency(entries.reduce((s, e) => s + (e.debit || 0), 0))}</strong></td>
+                      <td><strong>{formatCurrency(entries.reduce((s, e) => s + (e.credit || 0), 0))}</strong></td>
+                      <td />
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
           </div>
@@ -336,7 +374,40 @@ export default function Finance() {
 
         {tab === 'reports' && (
           <div className="section-block">
-            <h2>Monthly report</h2>
+            <h2>Reports</h2>
+
+            <h3 style={{ marginTop: '1.5rem' }}>Daily report</h3>
+            <p className="muted">Today’s ledger activity and totals.</p>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={loadDailyReport} style={{ marginBottom: '0.75rem' }}>Load daily</button>
+            {dailyReport && (
+              <div className="report-content">
+                <p className="muted">Date: {dailyReport.date}</p>
+                <div className="cards-row" style={{ marginTop: '0.5rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  <div className="card">
+                    <h3>Entries</h3>
+                    <p className="card-value">{dailyReport.totals?.entryCount ?? dailyReport.entries?.length ?? 0}</p>
+                  </div>
+                  <div className="card">
+                    <h3>Total debits</h3>
+                    <p className="card-value">{formatCurrency(dailyReport.totals?.totalDebits ?? 0)}</p>
+                  </div>
+                  <div className="card">
+                    <h3>Total credits</h3>
+                    <p className="card-value">{formatCurrency(dailyReport.totals?.totalCredits ?? 0)}</p>
+                  </div>
+                  <div className="card">
+                    <h3>Wallet balance</h3>
+                    <p className={`card-value ${(dailyReport.totals?.walletBalance ?? 0) >= 0 ? 'positive' : 'negative'}`}>{formatCurrency(dailyReport.totals?.walletBalance ?? 0)}</p>
+                  </div>
+                  <div className="card">
+                    <h3>Realized P&L</h3>
+                    <p className={`card-value ${(dailyReport.pnl?.realized ?? 0) >= 0 ? 'positive' : 'negative'}`}>{formatCurrency(dailyReport.pnl?.realized ?? 0)}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <h3 style={{ marginTop: '1.5rem' }}>Monthly report</h3>
             <div className="report-filters">
               <select value={reportMonth} onChange={(e) => setReportMonth(Number(e.target.value))} className="form-input form-input-sm">
                 {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => (
@@ -353,10 +424,22 @@ export default function Finance() {
             {monthlyReport && (
               <div className="report-content">
                 <p className="muted">Period: {monthlyReport.from} to {monthlyReport.to}</p>
-                <div className="cards-row" style={{ marginTop: '1rem' }}>
+                <div className="cards-row" style={{ marginTop: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
                   <div className="card">
                     <h3>Entries</h3>
-                    <p className="card-value">{monthlyReport.entries?.length ?? 0}</p>
+                    <p className="card-value">{monthlyReport.totals?.entryCount ?? monthlyReport.entries?.length ?? 0}</p>
+                  </div>
+                  <div className="card">
+                    <h3>Total debits</h3>
+                    <p className="card-value">{formatCurrency(monthlyReport.totals?.totalDebits ?? 0)}</p>
+                  </div>
+                  <div className="card">
+                    <h3>Total credits</h3>
+                    <p className="card-value">{formatCurrency(monthlyReport.totals?.totalCredits ?? 0)}</p>
+                  </div>
+                  <div className="card">
+                    <h3>Wallet balance</h3>
+                    <p className={`card-value ${(monthlyReport.totals?.walletBalance ?? 0) >= 0 ? 'positive' : 'negative'}`}>{formatCurrency(monthlyReport.totals?.walletBalance ?? 0)}</p>
                   </div>
                   <div className="card">
                     <h3>Realized P&L</h3>
@@ -380,6 +463,75 @@ export default function Finance() {
                           </tr>
                         ))}
                       </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <h3 style={{ marginTop: '1.5rem' }}>Statement</h3>
+            <p className="muted">Custom date range.</p>
+            <div className="report-filters" style={{ marginBottom: '0.75rem' }}>
+              <input type="date" value={statementFrom} onChange={(e) => setStatementFrom(e.target.value)} className="form-input form-input-sm" />
+              <input type="date" value={statementTo} onChange={(e) => setStatementTo(e.target.value)} className="form-input form-input-sm" />
+              <button type="button" className="btn btn-secondary btn-sm" onClick={loadStatement}>Load statement</button>
+            </div>
+            {statement && (
+              <div className="report-content">
+                <p className="muted">From {statement.from} to {statement.to}</p>
+                <div className="cards-row" style={{ marginTop: '0.5rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  <div className="card">
+                    <h3>Entries</h3>
+                    <p className="card-value">{statement.totals?.entryCount ?? statement.entries?.length ?? 0}</p>
+                  </div>
+                  <div className="card">
+                    <h3>Total debits</h3>
+                    <p className="card-value">{formatCurrency(statement.totals?.totalDebits ?? 0)}</p>
+                  </div>
+                  <div className="card">
+                    <h3>Total credits</h3>
+                    <p className="card-value">{formatCurrency(statement.totals?.totalCredits ?? 0)}</p>
+                  </div>
+                  <div className="card">
+                    <h3>Wallet balance</h3>
+                    <p className={`card-value ${(statement.totals?.walletBalance ?? 0) >= 0 ? 'positive' : 'negative'}`}>{formatCurrency(statement.totals?.walletBalance ?? 0)}</p>
+                  </div>
+                  <div className="card">
+                    <h3>Realized P&L</h3>
+                    <p className={`card-value ${(statement.pnl?.realized ?? 0) >= 0 ? 'positive' : 'negative'}`}>{formatCurrency(statement.pnl?.realized ?? 0)}</p>
+                  </div>
+                </div>
+                {statement.entries?.length > 0 && (
+                  <div className="table-wrap" style={{ marginTop: '1rem' }}>
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          <th>Date</th>
+                          <th>Account</th>
+                          <th>Debit</th>
+                          <th>Credit</th>
+                          <th>Reference</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {statement.entries.slice(0, 50).map((e) => (
+                          <tr key={e.id}>
+                            <td>{formatDate(e.createdAt)}</td>
+                            <td>{e.accountName || e.accountCode}</td>
+                            <td>{e.debit > 0 ? formatCurrency(e.debit) : '—'}</td>
+                            <td>{e.credit > 0 ? formatCurrency(e.credit) : '—'}</td>
+                            <td>{e.referenceType || e.referenceId || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="table-total-row">
+                          <td colSpan={2}><strong>Total</strong></td>
+                          <td><strong>{formatCurrency(statement.totals?.totalDebits ?? 0)}</strong></td>
+                          <td><strong>{formatCurrency(statement.totals?.totalCredits ?? 0)}</strong></td>
+                          <td />
+                        </tr>
+                      </tfoot>
                     </table>
                   </div>
                 )}

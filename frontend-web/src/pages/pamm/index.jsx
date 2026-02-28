@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { useAuth } from '../../context/AuthContext';
 import { useAccount } from '../../context/AccountContext';
+import { usePammUpdate } from '../../context/MarketDataContext';
 import * as pammApi from '../../api/pammApi';
 import { equityCurveData } from './pammMockData';
 import { ProfileAvatar } from '../../components/ui';
@@ -11,8 +12,8 @@ import PammAddFundsModal from './PammAddFundsModal';
 import PammWithdrawModal from './PammWithdrawModal';
 import PammUnfollowModal from './PammUnfollowModal';
 
-const formatCurrency = (n) =>
-  new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
+const formatCurrency = (n, decimals = 0) =>
+  new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: decimals, maximumFractionDigits: decimals }).format(n);
 const formatPercent = (n) => `${n >= 0 ? '+' : ''}${Number(n).toFixed(1)}%`;
 
 function RiskBadge({ profile }) {
@@ -34,6 +35,7 @@ export default function Pamm() {
   const [withdrawModal, setWithdrawModal] = useState(null);
   const [unfollowModal, setUnfollowModal] = useState(null);
 
+  const { pammUpdateAt } = usePammUpdate();
   const loadData = useCallback(async () => {
     setLoading(true);
     setError('');
@@ -59,27 +61,34 @@ export default function Pamm() {
     loadData();
   }, [loadData]);
 
+  // Real-time profit/earnings: refetch when backend emits pamm:allocation_update
+  useEffect(() => {
+    if (pammUpdateAt) loadData();
+  }, [pammUpdateAt, loadData]);
+
   const activeAllocationManagerIds = new Set(
     allocations.filter((a) => a.status === 'active').map((a) => a.managerId)
   );
 
-  const totalInvested = allocations
-    .filter((a) => a.status === 'active')
-    .reduce((s, a) => s + (a.allocatedBalance || 0), 0);
+  const activeAllocs = allocations.filter((a) => a.status === 'active' || a.status === 'withdrawing');
+  const totalInvested = activeAllocs.reduce((s, a) => s + (a.allocatedBalance || 0), 0);
+  const totalRealizedPnl = activeAllocs.reduce((s, a) => s + (a.realizedPnl ?? 0), 0);
+  const currentValue = totalInvested + totalRealizedPnl;
+  const pnlPercent = totalInvested ? (totalRealizedPnl / totalInvested) * 100 : 0;
 
   const pammSummary = {
     totalInvested,
-    currentValue: totalInvested,
-    totalPnl: 0,
-    pnlPercent: 0,
-    growthYtd: 0,
-    growthMtd: 0,
+    currentValue,
+    totalPnl: totalRealizedPnl,
+    pnlPercent,
+    growthYtd: totalInvested ? (totalRealizedPnl / totalInvested) * 100 : 0,
+    growthMtd: totalInvested ? (totalRealizedPnl / totalInvested) * 100 : 0,
     riskScore: '-',
     riskProfile: '-',
     currentDrawdown: 0,
     maxDrawdown: 0,
     openPnl: 0,
-    closedPnl: 0,
+    closedPnl: totalRealizedPnl,
   };
 
   const handleFollow = async (managerId, amount) => {
@@ -124,8 +133,8 @@ export default function Pamm() {
           <section className="pamm-summary-cards">
             <div className="pamm-card">
               <h3>Total P&L</h3>
-              <p className="pamm-value">{formatCurrency(pammSummary.totalPnl)}</p>
-              <span className="pamm-meta">{formatPercent(pammSummary.pnlPercent)}</span>
+              <p className={`pamm-value ${pammSummary.totalPnl > 0 ? 'positive' : pammSummary.totalPnl < 0 ? 'negative' : ''}`}>{formatCurrency(pammSummary.totalPnl, 2)}</p>
+              <span className={`pamm-meta ${pammSummary.pnlPercent > 0 ? 'positive' : pammSummary.pnlPercent < 0 ? 'negative' : ''}`}>{formatPercent(pammSummary.pnlPercent)}</span>
             </div>
             <div className="pamm-card">
               <h3>Current value</h3>
@@ -154,15 +163,15 @@ export default function Pamm() {
             <div className="pamm-pl-block">
               <div className="pamm-pl-row">
                 <span>Open P&L</span>
-                <span className={pammSummary.openPnl >= 0 ? 'positive' : 'negative'}>{formatCurrency(pammSummary.openPnl)}</span>
+                <span className={pammSummary.openPnl > 0 ? 'positive' : pammSummary.openPnl < 0 ? 'negative' : ''}>{formatCurrency(pammSummary.openPnl, 2)}</span>
               </div>
               <div className="pamm-pl-row">
                 <span>Closed P&L</span>
-                <span className="positive">{formatCurrency(pammSummary.closedPnl)}</span>
+                <span className={pammSummary.closedPnl > 0 ? 'positive' : pammSummary.closedPnl < 0 ? 'negative' : ''}>{formatCurrency(pammSummary.closedPnl, 2)}</span>
               </div>
               <div className="pamm-pl-row pamm-pl-total">
                 <span>Total P&L</span>
-                <span className={pammSummary.totalPnl >= 0 ? 'positive' : 'negative'}>{formatCurrency(pammSummary.totalPnl)} ({formatPercent(pammSummary.pnlPercent)})</span>
+                <span className={pammSummary.totalPnl > 0 ? 'positive' : pammSummary.totalPnl < 0 ? 'negative' : ''}>{formatCurrency(pammSummary.totalPnl, 2)} ({formatPercent(pammSummary.pnlPercent)})</span>
               </div>
             </div>
           </section>
@@ -242,15 +251,18 @@ export default function Pamm() {
                       <div><span className="label">Investors</span><span>{m.investors ?? 0}</span></div>
                     </div>
                     <p className="pamm-manager-meta">AUM {formatCurrency(m.aum || 0)} · {m.investors ?? 0} investors</p>
-                    {!isAuthenticated ? (
-                      <Link to="/login" className="btn btn-sm btn-primary">Sign in to follow</Link>
-                    ) : alreadyFollowing ? (
-                      <span className="btn btn-sm btn-secondary" style={{ cursor: 'default', opacity: 0.8 }}>Following</span>
-                    ) : (
-                      <button type="button" className="btn btn-sm btn-primary" onClick={() => setFollowModal({ managerId: fundId, name: m.name })}>
-                        Follow
-                      </button>
-                    )}
+                    <div className="pamm-manager-card-actions">
+                      <Link to={`/pamm/fund/${fundId}`} className="btn btn-sm btn-secondary">View fund</Link>
+                      {!isAuthenticated ? (
+                        <Link to="/auth" className="btn btn-sm btn-primary">Sign in to follow</Link>
+                      ) : alreadyFollowing ? (
+                        <Link to={`/pamm/fund/${fundId}`} className="btn btn-sm btn-primary">Open</Link>
+                      ) : (
+                        <button type="button" className="btn btn-sm btn-primary" onClick={() => setFollowModal({ managerId: fundId, name: m.name })}>
+                          Follow
+                        </button>
+                      )}
+                    </div>
                   </div>
                 );
               })}
@@ -306,6 +318,9 @@ export default function Pamm() {
                     <tr>
                       <th>Manager</th>
                       <th>Amount</th>
+                      <th>Your share %</th>
+                      <th>P&L</th>
+                      <th>Fund growth</th>
                       <th>Allocation ID</th>
                       <th>Status</th>
                       <th>Actions</th>
@@ -314,7 +329,7 @@ export default function Pamm() {
                   <tbody>
                     {allocations.filter((a) => a.status === 'active' || a.status === 'withdrawing').length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="empty-cell">No active allocations</td>
+                        <td colSpan={8} className="empty-cell">No active allocations</td>
                       </tr>
                     ) : (
                       allocations
@@ -324,10 +339,21 @@ export default function Pamm() {
                             <td>
                               <div className="pamm-allocation-manager-cell">
                                 <ProfileAvatar name={a.managerName} size={36} />
-                                <strong>{a.managerName}</strong>
+                                <Link to={`/pamm/fund/${a.managerId}`} className="pamm-fund-link"><strong>{a.managerName}</strong></Link>
                               </div>
                             </td>
                             <td>{formatCurrency(a.allocatedBalance)}</td>
+                            <td>{typeof a.allocationPercent === 'number' ? `${Number(a.allocationPercent).toFixed(1)}%` : '—'}</td>
+                            <td>
+                              <span className={typeof a.realizedPnl === 'number' ? (a.realizedPnl > 0 ? 'positive' : a.realizedPnl < 0 ? 'negative' : '') : ''}>
+                                {formatCurrency(a.realizedPnl ?? 0, 2)}
+                              </span>
+                            </td>
+                            <td>
+                              <span className={typeof a.fundGrowthRate === 'number' && a.fundGrowthRate !== 0 ? (a.fundGrowthRate >= 0 ? 'positive' : 'negative') : ''}>
+                                {typeof a.fundGrowthRate === 'number' ? formatPercent(a.fundGrowthRate) : '—'}
+                              </span>
+                            </td>
                             <td><code className="allocation-id">{a.id}</code></td>
                             <td>
                               <span className={`status-badge status-${a.status === 'active' ? 'approved' : 'pending'}`}>
@@ -350,6 +376,22 @@ export default function Pamm() {
                         ))
                     )}
                   </tbody>
+                  {activeAllocs.length > 0 && (
+                    <tfoot>
+                      <tr className="table-total-row">
+                        <td><strong>Total</strong></td>
+                        <td><strong>{formatCurrency(totalInvested)}</strong></td>
+                        <td>—</td>
+                        <td>
+                          <strong className={totalRealizedPnl > 0 ? 'positive' : totalRealizedPnl < 0 ? 'negative' : ''}>
+                            {formatCurrency(totalRealizedPnl, 2)}
+                          </strong>
+                        </td>
+                        <td>—</td>
+                        <td colSpan={3} />
+                      </tr>
+                    </tfoot>
+                  )}
                 </table>
               </div>
             )}

@@ -155,6 +155,14 @@ export async function getManager(managerId) {
   return res.json();
 }
 
+/** Get fund detail (for investor view): fund, stats, recent trades, and current user's allocation if following */
+export async function getFundDetail(fundId) {
+  const res = await fetchWithAuth(`/pamm/funds/${encodeURIComponent(fundId)}`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to load fund');
+  return res.json();
+}
+
 /** Follow a manager (investor allocates balance) */
 export async function follow(managerId, allocatedBalance = 0) {
   const res = await fetchWithAuth('/pamm/follow', {

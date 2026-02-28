@@ -13,6 +13,8 @@ export function MarketDataProvider({ children }) {
   const [lastUpdate, setLastUpdate] = useState(null);
   const [connected, setConnected] = useState(false);
   const [tradeSnapshot, setTradeSnapshot] = useState(null);
+  const [pammUpdateAt, setPammUpdateAt] = useState(null);
+  const [pammUpdateFundId, setPammUpdateFundId] = useState(null);
 
   useEffect(() => {
     const socket = getDatafeedSocket();
@@ -43,16 +45,25 @@ export function MarketDataProvider({ children }) {
     };
     socket.on('trade:update', onTradeUpdate);
 
+    const onPammAllocationUpdate = (payload) => {
+      if (payload && typeof payload === 'object') {
+        setPammUpdateAt(payload.at || new Date().toISOString());
+        setPammUpdateFundId(payload.fundId ?? null);
+      }
+    };
+    socket.on('pamm:allocation_update', onPammAllocationUpdate);
+
     return () => {
       socket.off('connect', onConnect);
       socket.off('disconnect', onDisconnect);
       socket.off('trade:update', onTradeUpdate);
+      socket.off('pamm:allocation_update', onPammAllocationUpdate);
       unsubTick();
       setConnected(false);
     };
   }, []);
 
-  const value = { ticks, lastUpdate, connected, tradeSnapshot };
+  const value = { ticks, lastUpdate, connected, tradeSnapshot, pammUpdateAt, pammUpdateFundId };
   return <MarketDataContext.Provider value={value}>{children}</MarketDataContext.Provider>;
 }
 
@@ -66,4 +77,10 @@ export function useMarketDataContext() {
 export function useTradeSnapshot() {
   const { tradeSnapshot } = useMarketDataContext();
   return tradeSnapshot;
+}
+
+/** Consume PAMM allocation update timestamp; when it changes, refetch allocations/fund detail for real-time profit/earnings. */
+export function usePammUpdate() {
+  const { pammUpdateAt, pammUpdateFundId } = useMarketDataContext();
+  return { pammUpdateAt, pammUpdateFundId };
 }

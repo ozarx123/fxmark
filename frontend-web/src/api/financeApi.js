@@ -15,10 +15,11 @@ async function fetchWithAuth(url, options = {}) {
   return res;
 }
 
-/** Get ledger entries */
+/** Get ledger entries (optionally filter by referenceType e.g. 'pamm_dist' for PAMM profit allocations) */
 export async function getLedgerEntries(params = {}) {
   const q = new URLSearchParams();
   if (params.accountCode) q.set('accountCode', params.accountCode);
+  if (params.referenceType) q.set('referenceType', params.referenceType);
   if (params.from) q.set('from', params.from);
   if (params.to) q.set('to', params.to);
   if (params.limit) q.set('limit', params.limit);
@@ -71,5 +72,18 @@ export async function getMonthlyReport(year, month) {
   const url = `/finance/reports/monthly${q.toString() ? `?${q}` : ''}`;
   const res = await fetchWithAuth(url);
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to load report');
+  return res.json();
+}
+
+/** Get statement (custom date range) */
+export async function getStatement(params = {}) {
+  const q = new URLSearchParams();
+  if (params.from) q.set('from', params.from);
+  if (params.to) q.set('to', params.to);
+  if (params.accountCode) q.set('accountCode', params.accountCode);
+  if (params.limit) q.set('limit', params.limit);
+  const url = `/finance/statements${q.toString() ? `?${q}` : ''}`;
+  const res = await fetchWithAuth(url);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to load statement');
   return res.json();
 }

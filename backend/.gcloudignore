@@ -1,0 +1,8 @@
+# Keep source deploy upload small – only code and package.json
+node_modules/
+.env
+.env.*
+*.log
+logs/
+.git/
+.gitignore

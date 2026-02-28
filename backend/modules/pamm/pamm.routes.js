@@ -4,7 +4,7 @@
  */
 import express from 'express';
 import controller from './pamm.controller.js';
-import { authenticate } from '../../core/middleware.js';
+import { authenticate, optionalAuthenticate } from '../../core/middleware.js';
 
 const router = express.Router();
 
@@ -18,6 +18,7 @@ router.get('/managers/me/trades', authenticate, controller.getMyTrades);
 router.get('/managers', controller.listManagers);
 router.get('/managers/:managerId', controller.getManager);
 router.get('/managers/:managerId/trades', controller.getTrades);
+router.get('/funds/:fundId', optionalAuthenticate, controller.getFundDetail);
 
 router.use(authenticate);
 router.post('/managers', controller.registerAsManager);

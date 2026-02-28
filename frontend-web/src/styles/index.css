@@ -1285,6 +1285,84 @@ body {
   margin: 0 0 0.75rem 0;
 }
 
+.pamm-manager-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.pamm-fund-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.pamm-fund-link:hover {
+  text-decoration: underline;
+}
+
+.pamm-fund-detail-header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.pamm-fund-detail-page .back-link {
+  display: inline-block;
+}
+
+.pamm-fund-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+/* Fund detail: colours for figures */
+.pamm-fund-detail-page .pamm-value.positive,
+.pamm-fund-detail-page .card-value.positive {
+  color: var(--fxmark-green, #22c55e);
+}
+
+.pamm-fund-detail-page .pamm-value.negative,
+.pamm-fund-detail-page .card-value.negative {
+  color: var(--fxmark-red, #ef4444);
+}
+
+.pamm-fund-detail-page .pamm-value--amount,
+.pamm-fund-detail-page .pamm-value--count,
+.pamm-fund-detail-page .pamm-value--share,
+.pamm-fund-detail-page .pamm-value--fee {
+  color: var(--fxmark-text, inherit);
+}
+
+.app .pamm-fund-detail-page .pamm-value.positive,
+.app .pamm-fund-detail-page .card-value.positive {
+  color: var(--theme-profit, #6bcf7f);
+}
+
+.app .pamm-fund-detail-page .pamm-value.negative,
+.app .pamm-fund-detail-page .card-value.negative {
+  color: var(--theme-loss, #ff6464);
+}
+
+.pamm-fund-detail-header h1 {
+  margin: 0 0 0.25rem 0;
+}
+
+.pamm-fund-params {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 1rem;
+}
+
+.pamm-fund-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
 .pamm-table {
   font-size: 0.9rem;
 }

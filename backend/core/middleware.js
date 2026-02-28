@@ -63,6 +63,24 @@ export const authenticate = async (req, res, next) => {
   }
 };
 
+/** Like authenticate but does not require a token; sets req.user only when token is valid. */
+export const optionalAuthenticate = async (req, res, next) => {
+  try {
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (!token) return next();
+    const payload = jwtStrategy.decode(token);
+    if (!payload) return next();
+    req.user = payload;
+    if (!payload.role && payload.id) {
+      const user = await userRepo.findById(payload.id);
+      if (user) req.user.role = user.role || 'user';
+    }
+    next();
+  } catch (e) {
+    next(e);
+  }
+};
+
 function isDbError(err) {
   const m = (err.message || '').toLowerCase();
   return (

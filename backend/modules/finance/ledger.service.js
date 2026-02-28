@@ -21,7 +21,7 @@ async function post(entries) {
     const credit = Number(e.credit) || 0;
     totalDebit += debit;
     totalCredit += credit;
-    return {
+    const doc = {
       accountCode: e.accountCode,
       entityId: e.entityId,
       debit,
@@ -32,6 +32,8 @@ async function post(entries) {
       referenceId: e.referenceId || null,
       description: e.description || null,
     };
+    if (e.pammFundId != null) doc.pammFundId = String(e.pammFundId);
+    return doc;
   });
   if (Math.abs(totalDebit - totalCredit) > 0.001) {
     const err = new Error(`Journal does not balance: debits=${totalDebit} credits=${totalCredit}`);
@@ -112,33 +114,37 @@ async function postCommissionEarned(ibUserId, amount, currency, referenceId, cli
 }
 
 /**
- * Post PAMM performance fee: Manager earns fee (Wallet credit = increase, PAMM_FEES credit)
+ * Post PAMM performance fee: fee paid from pool (Client Funds) to manager (Wallet).
+ * Also record platform revenue: PAMM_FEES credit.
  */
-async function postPammFee(managerId, amount, currency, referenceId) {
-  return post([
-    { accountCode: ACCOUNTS.WALLET, entityId: managerId, debit: 0, credit: amount, currency, referenceType: 'pamm_fee', referenceId },
-    { accountCode: ACCOUNTS.PAMM_FEES, entityId: 'system', debit: amount, credit: 0, currency, referenceType: 'pamm_fee', referenceId },
-  ]);
+async function postPammFee(managerId, amount, currency, referenceId, pammFundId = null) {
+  const entries = [
+    { accountCode: ACCOUNTS.CLIENT_FUNDS, entityId: 'system', debit: amount, credit: 0, currency, referenceType: 'pamm_fee', referenceId, pammFundId },
+    { accountCode: ACCOUNTS.WALLET, entityId: managerId, debit: 0, credit: amount, currency, referenceType: 'pamm_fee', referenceId, pammFundId },
+  ];
+  return post(entries);
 }
 
 /**
  * Post PAMM allocation: Wallet debit (user pays) -> Client Funds credit (held in PAMM)
  */
-async function postPammAllocation(userId, amount, currency, referenceId) {
-  return post([
-    { accountCode: ACCOUNTS.WALLET, entityId: userId, debit: amount, credit: 0, currency, referenceType: 'pamm_alloc', referenceId },
-    { accountCode: ACCOUNTS.CLIENT_FUNDS, entityId: 'system', debit: 0, credit: amount, currency, referenceType: 'pamm_alloc', referenceId },
-  ]);
+async function postPammAllocation(userId, amount, currency, referenceId, pammFundId = null) {
+  const entries = [
+    { accountCode: ACCOUNTS.WALLET, entityId: userId, debit: amount, credit: 0, currency, referenceType: 'pamm_alloc', referenceId, pammFundId },
+    { accountCode: ACCOUNTS.CLIENT_FUNDS, entityId: 'system', debit: 0, credit: amount, currency, referenceType: 'pamm_alloc', referenceId, pammFundId },
+  ];
+  return post(entries);
 }
 
 /**
  * Post PAMM unallocation: Client Funds debit -> Wallet credit (return to user)
  */
-async function postPammUnallocation(userId, amount, currency, referenceId) {
-  return post([
-    { accountCode: ACCOUNTS.CLIENT_FUNDS, entityId: 'system', debit: amount, credit: 0, currency, referenceType: 'pamm_unalloc', referenceId },
-    { accountCode: ACCOUNTS.WALLET, entityId: userId, debit: 0, credit: amount, currency, referenceType: 'pamm_unalloc', referenceId },
-  ]);
+async function postPammUnallocation(userId, amount, currency, referenceId, pammFundId = null) {
+  const entries = [
+    { accountCode: ACCOUNTS.CLIENT_FUNDS, entityId: 'system', debit: amount, credit: 0, currency, referenceType: 'pamm_unalloc', referenceId, pammFundId },
+    { accountCode: ACCOUNTS.WALLET, entityId: userId, debit: 0, credit: amount, currency, referenceType: 'pamm_unalloc', referenceId, pammFundId },
+  ];
+  return post(entries);
 }
 
 /**
@@ -146,17 +152,42 @@ async function postPammUnallocation(userId, amount, currency, referenceId) {
  * Profit: Wallet credit (increase), Client Funds debit
  * Loss: Wallet debit (decrease), Client Funds credit
  */
-async function postPammDistribution(followerId, amount, currency, referenceId, isProfit = true) {
+async function postPammDistribution(followerId, amount, currency, referenceId, isProfit = true, pammFundId = null) {
+  const common = { currency, referenceType: 'pamm_dist', referenceId, pammFundId };
   if (isProfit) {
     return post([
-      { accountCode: ACCOUNTS.CLIENT_FUNDS, entityId: 'system', debit: amount, credit: 0, currency, referenceType: 'pamm_dist', referenceId },
-      { accountCode: ACCOUNTS.WALLET, entityId: followerId, debit: 0, credit: amount, currency, referenceType: 'pamm_dist', referenceId },
+      { accountCode: ACCOUNTS.CLIENT_FUNDS, entityId: 'system', debit: amount, credit: 0, ...common },
+      { accountCode: ACCOUNTS.WALLET, entityId: followerId, debit: 0, credit: amount, ...common },
     ]);
   }
   return post([
-    { accountCode: ACCOUNTS.WALLET, entityId: followerId, debit: amount, credit: 0, currency, referenceType: 'pamm_dist', referenceId },
-    { accountCode: ACCOUNTS.CLIENT_FUNDS, entityId: 'system', debit: 0, credit: amount, currency, referenceType: 'pamm_dist', referenceId },
+    { accountCode: ACCOUNTS.WALLET, entityId: followerId, debit: amount, credit: 0, ...common },
+    { accountCode: ACCOUNTS.CLIENT_FUNDS, entityId: 'system', debit: 0, credit: amount, ...common },
   ]);
+}
+
+/**
+ * Post PAMM manager capital added: Wallet (manager) debit -> Client Funds credit
+ */
+async function postPammManagerCapitalAdd(managerId, amount, currency, fundId, referenceId = null) {
+  const refId = referenceId || fundId;
+  const entries = [
+    { accountCode: ACCOUNTS.WALLET, entityId: managerId, debit: amount, credit: 0, currency, referenceType: 'pamm_manager_cap_in', referenceId: refId, pammFundId: fundId },
+    { accountCode: ACCOUNTS.CLIENT_FUNDS, entityId: 'system', debit: 0, credit: amount, currency, referenceType: 'pamm_manager_cap_in', referenceId: refId, pammFundId: fundId },
+  ];
+  return post(entries);
+}
+
+/**
+ * Post PAMM manager capital withdrawn: Client Funds debit -> Wallet (manager) credit
+ */
+async function postPammManagerCapitalWithdraw(managerId, amount, currency, fundId, referenceId = null) {
+  const refId = referenceId || fundId;
+  const entries = [
+    { accountCode: ACCOUNTS.CLIENT_FUNDS, entityId: 'system', debit: amount, credit: 0, currency, referenceType: 'pamm_manager_cap_out', referenceId: refId, pammFundId: fundId },
+    { accountCode: ACCOUNTS.WALLET, entityId: managerId, debit: 0, credit: amount, currency, referenceType: 'pamm_manager_cap_out', referenceId: refId, pammFundId: fundId },
+  ];
+  return post(entries);
 }
 
 /**
@@ -184,6 +215,11 @@ async function getBalances(entityId, asOf = null) {
   return ledgerRepo.getBalancesByEntity(entityId, asOf);
 }
 
+/** List ledger entries for a PAMM fund (for financial reporting) */
+async function listLedgerEntriesByPammFund(pammFundId, options = {}) {
+  return ledgerRepo.listByPammFund(pammFundId, options);
+}
+
 export default {
   post,
   postDeposit,
@@ -195,9 +231,12 @@ export default {
   postPammAllocation,
   postPammUnallocation,
   postPammDistribution,
+  postPammManagerCapitalAdd,
+  postPammManagerCapitalWithdraw,
   postCommissionEarned,
   postCommissionPaid,
   listEntries,
   getBalance,
   getBalances,
+  listLedgerEntriesByPammFund,
 };

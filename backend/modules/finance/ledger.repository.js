@@ -34,9 +34,10 @@ async function insertMany(docs) {
 /** List entries for entity, optional filters */
 async function listByEntity(entityId, options = {}) {
   const c = await col();
-  const { accountCode, from, to, limit = 100 } = options;
+  const { accountCode, from, to, limit = 100, referenceType } = options;
   const filter = { entityId };
   if (accountCode) filter.accountCode = accountCode;
+  if (referenceType) filter.referenceType = referenceType;
   if (from || to) {
     filter.createdAt = {};
     if (from) filter.createdAt.$gte = new Date(from);
@@ -92,6 +93,21 @@ async function listByReference(referenceType, referenceId) {
   return list.map((e) => ({ id: e._id.toString(), ...e, _id: undefined }));
 }
 
+/** List ledger entries for a PAMM fund (allocation, fee, distribution, manager capital) */
+async function listByPammFund(pammFundId, options = {}) {
+  const c = await col();
+  const { from, to, limit = 200, referenceType } = options;
+  const filter = { pammFundId: String(pammFundId) };
+  if (from || to) {
+    filter.createdAt = {};
+    if (from) filter.createdAt.$gte = new Date(from);
+    if (to) filter.createdAt.$lte = new Date(to);
+  }
+  if (referenceType) filter.referenceType = referenceType;
+  const list = await c.find(filter).sort({ createdAt: -1 }).limit(limit).toArray();
+  return list.map((e) => ({ id: e._id.toString(), ...e, _id: undefined }));
+}
+
 export default {
   insert,
   insertMany,
@@ -99,4 +115,5 @@ export default {
   getBalance,
   getBalancesByEntity,
   listByReference,
+  listByPammFund,
 };

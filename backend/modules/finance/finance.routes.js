@@ -15,6 +15,7 @@ router.get('/ledger/entries', ledgerController.getEntries);
 router.get('/ledger/balances', ledgerController.getBalances);
 router.get('/ledger/pnl', ledgerController.getPnl);
 router.get('/ledger/reconciliation', ledgerController.getReconciliation);
+router.get('/ledger/pamm/:fundId', ledgerController.getPammFundLedger);
 
 // Chart of accounts
 router.get('/chart-of-accounts', chartOfAccountsController.getChartOfAccounts);

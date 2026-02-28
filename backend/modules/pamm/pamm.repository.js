@@ -112,6 +112,7 @@ async function createAllocation(followerId, managerId, allocatedBalance = 0) {
     followerId,
     managerId,
     allocatedBalance: Number(allocatedBalance),
+    realizedPnl: 0,
     status: 'active',
     createdAt: now,
     updatedAt: now,
@@ -123,13 +124,13 @@ async function getAllocationById(id, followerId) {
   if (!ObjectId.isValid(id)) return null;
   const col = await allocationsCol();
   const a = await col.findOne({ _id: new ObjectId(id), followerId });
-  return a ? { id: a._id.toString(), ...a, _id: undefined } : null;
+  return a ? { id: a._id.toString(), ...a, _id: undefined, realizedPnl: a.realizedPnl != null ? Number(a.realizedPnl) : 0 } : null;
 }
 
 async function getActiveAllocation(followerId, managerId) {
   const col = await allocationsCol();
   const a = await col.findOne({ followerId, managerId, status: 'active' });
-  return a ? { id: a._id.toString(), ...a, _id: undefined } : null;
+  return a ? { id: a._id.toString(), ...a, _id: undefined, realizedPnl: a.realizedPnl != null ? Number(a.realizedPnl) : 0 } : null;
 }
 
 async function listAllocationsByFollower(followerId, options = {}) {
@@ -138,7 +139,12 @@ async function listAllocationsByFollower(followerId, options = {}) {
   const filter = { followerId };
   if (status) filter.status = status;
   const list = await col.find(filter).sort({ createdAt: -1 }).limit(limit).toArray();
-  return list.map((a) => ({ id: a._id.toString(), ...a, _id: undefined }));
+  return list.map((a) => ({
+    id: a._id.toString(),
+    ...a,
+    _id: undefined,
+    realizedPnl: a.realizedPnl != null ? Number(a.realizedPnl) : 0,
+  }));
 }
 
 async function listAllocationsByManager(managerId, options = {}) {
@@ -147,7 +153,12 @@ async function listAllocationsByManager(managerId, options = {}) {
   const filter = { managerId };
   if (status) filter.status = status;
   const list = await col.find(filter).sort({ createdAt: -1 }).limit(limit).toArray();
-  return list.map((a) => ({ id: a._id.toString(), ...a, _id: undefined }));
+  return list.map((a) => ({
+    id: a._id.toString(),
+    ...a,
+    _id: undefined,
+    realizedPnl: a.realizedPnl != null ? Number(a.realizedPnl) : 0,
+  }));
 }
 
 async function updateAllocation(id, update) {
@@ -156,6 +167,18 @@ async function updateAllocation(id, update) {
   const result = await col.findOneAndUpdate(
     { _id: new ObjectId(id) },
     { $set: { ...update, updatedAt: new Date() } },
+    { returnDocument: 'after' }
+  );
+  return result ? { id: result._id.toString(), ...result, _id: undefined } : null;
+}
+
+/** Increment realized P&L on an allocation (when PAMM distributes P&L to investor) */
+async function incrementAllocationRealizedPnl(allocationId, amount) {
+  if (!ObjectId.isValid(allocationId)) return null;
+  const col = await allocationsCol();
+  const result = await col.findOneAndUpdate(
+    { _id: new ObjectId(allocationId) },
+    { $inc: { realizedPnl: Number(amount) || 0 }, $set: { updatedAt: new Date() } },
     { returnDocument: 'after' }
   );
   return result ? { id: result._id.toString(), ...result, _id: undefined } : null;
@@ -178,6 +201,24 @@ async function listTradesByManager(managerId, options = {}) {
   return list.map((t) => ({ id: t._id.toString(), ...t, _id: undefined }));
 }
 
+/** Sum of realized P&L for a fund (all manager_trades). Used for fund growth rate. */
+async function getFundCumulativePnl(fundId) {
+  const col = await tradesCol();
+  const result = await col.aggregate([
+    { $match: { managerId: fundId } },
+    { $group: { _id: null, total: { $sum: '$pnl' } } },
+  ]).next();
+  return result ? (result.total || 0) : 0;
+}
+
+/** Resolve PAMM fund id from a closed position id (manager_trades stores positionId). */
+async function getFundIdByPositionId(positionId) {
+  if (!positionId) return null;
+  const col = await tradesCol();
+  const t = await col.findOne({ positionId: String(positionId) });
+  return t?.managerId ?? null;
+}
+
 export default {
   createManager,
   getManagerByUserId,
@@ -194,6 +235,9 @@ export default {
   listAllocationsByFollower,
   listAllocationsByManager,
   updateAllocation,
+  incrementAllocationRealizedPnl,
   createTrade,
   listTradesByManager,
+  getFundCumulativePnl,
+  getFundIdByPositionId,
 };

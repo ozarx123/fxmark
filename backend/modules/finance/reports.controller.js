@@ -3,7 +3,24 @@
  */
 import ledgerService from './ledger.service.js';
 import pnlService from './pnl.service.js';
-import { ACCOUNT_NAMES } from './chart-of-accounts.js';
+import { ACCOUNT_NAMES, ACCOUNTS } from './chart-of-accounts.js';
+
+function computeEntryTotals(entries) {
+  let totalDebits = 0;
+  let totalCredits = 0;
+  for (const e of entries) {
+    totalDebits += Number(e.debit) || 0;
+    totalCredits += Number(e.credit) || 0;
+  }
+  return { totalDebits, totalCredits, entryCount: entries.length };
+}
+
+function computeBalanceTotals(balances) {
+  const wallet = balances[ACCOUNTS.WALLET] ?? 0;
+  const totalAssets = (balances[ACCOUNTS.CASH_BANK] ?? 0) + (balances[ACCOUNTS.RECEIVABLES] ?? 0);
+  const totalLiabilities = Math.abs((balances[ACCOUNTS.WALLET] ?? 0) + (balances[ACCOUNTS.CLIENT_FUNDS] ?? 0) + (balances[ACCOUNTS.PAYABLES] ?? 0));
+  return { walletBalance: wallet, totalAssets, totalLiabilities };
+}
 
 async function dailyReport(req, res, next) {
   try {
@@ -20,12 +37,16 @@ async function dailyReport(req, res, next) {
     });
     const balances = await ledgerService.getBalances(userId, tomorrow.toISOString());
     const pnl = await pnlService.getPnlForPeriod(userId, today.toISOString(), tomorrow.toISOString());
+    const withNames = entries.map((e) => ({ ...e, accountName: ACCOUNT_NAMES[e.accountCode] || e.accountCode }));
+    const totals = computeEntryTotals(entries);
+    const balanceTotals = computeBalanceTotals(balances);
     res.json({
       period: 'daily',
       date: today.toISOString().slice(0, 10),
-      entries: entries.map((e) => ({ ...e, accountName: ACCOUNT_NAMES[e.accountCode] || e.accountCode })),
+      entries: withNames,
       balances: Object.entries(balances).map(([code, bal]) => ({ accountCode: code, accountName: ACCOUNT_NAMES[code] || code, balance: bal })),
       pnl,
+      totals: { ...totals, ...balanceTotals },
     });
   } catch (e) {
     next(e);
@@ -48,15 +69,19 @@ async function monthlyReport(req, res, next) {
     });
     const balances = await ledgerService.getBalances(userId, to.toISOString());
     const pnl = await pnlService.getPnlForPeriod(userId, from.toISOString(), to.toISOString());
+    const withNames = entries.map((e) => ({ ...e, accountName: ACCOUNT_NAMES[e.accountCode] || e.accountCode }));
+    const totals = computeEntryTotals(entries);
+    const balanceTotals = computeBalanceTotals(balances);
     res.json({
       period: 'monthly',
       year: y,
       month: m,
       from: from.toISOString().slice(0, 10),
       to: to.toISOString().slice(0, 10),
-      entries: entries.map((e) => ({ ...e, accountName: ACCOUNT_NAMES[e.accountCode] || e.accountCode })),
+      entries: withNames,
       balances: Object.entries(balances).map(([code, bal]) => ({ accountCode: code, accountName: ACCOUNT_NAMES[code] || code, balance: bal })),
       pnl,
+      totals: { ...totals, ...balanceTotals },
     });
   } catch (e) {
     next(e);
@@ -81,12 +106,15 @@ async function statement(req, res, next) {
     const balances = await ledgerService.getBalances(userId, toDate.toISOString());
     const pnl = await pnlService.getPnlForPeriod(userId, fromDate.toISOString(), toDate.toISOString());
     const withNames = entries.map((e) => ({ ...e, accountName: ACCOUNT_NAMES[e.accountCode] || e.accountCode }));
+    const totals = computeEntryTotals(entries);
+    const balanceTotals = computeBalanceTotals(balances);
     res.json({
       from: fromDate.toISOString().slice(0, 10),
       to: toDate.toISOString().slice(0, 10),
       entries: withNames,
       balances: Object.entries(balances).map(([code, bal]) => ({ accountCode: code, accountName: ACCOUNT_NAMES[code] || code, balance: bal })),
       pnl,
+      totals: { ...totals, ...balanceTotals },
     });
   } catch (e) {
     next(e);

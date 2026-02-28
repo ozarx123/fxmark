@@ -4,6 +4,9 @@
 /FXMARK_FULL_SYSTEM_CODE.zip
 /infrastructure
 
+# Docker backups (image tarballs)
+docker/backups/
+
 # Dependencies and build
 node_modules/
 **/node_modules/

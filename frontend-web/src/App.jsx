@@ -17,6 +17,7 @@ import Wallet from './pages/wallet/index.jsx';
 import Trading from './pages/trading/index.jsx';
 import Pamm from './pages/pamm/index.jsx';
 import PammManager from './pages/pamm/PammManager.jsx';
+import PammFundDetail from './pages/pamm/PammFundDetail.jsx';
 import CopyHub from './pages/copy/index.jsx';
 import CopyFollowing from './pages/copy/CopyFollowing.jsx';
 import CopyManager from './pages/copy/CopyManager.jsx';
@@ -57,6 +58,7 @@ function App() {
           <Route path="gateway-redirect" element={<GatewayRedirect />} />
           <Route path="trading" element={<Trading />} />
           <Route path="pamm" element={<Pamm />} />
+          <Route path="pamm/fund/:fundId" element={<PammFundDetail />} />
           <Route path="pamm/manager" element={<ProtectedRoute allowedRoles={PAMM_MANAGER_ROLES}><PammManager /></ProtectedRoute>} />
           <Route path="copy" element={<CopyHub />} />
           <Route path="copy/following" element={<CopyFollowing />} />

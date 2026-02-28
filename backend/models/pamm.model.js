@@ -19,6 +19,7 @@ const allocationSchema = {
   followerId: { type: 'string', required: true },
   managerId: { type: 'string', required: true },
   allocatedBalance: { type: 'number', default: 0 },
+  realizedPnl: { type: 'number', default: 0 }, // cumulative P&L from PAMM distributions (investor account)
   status: { type: 'string', required: true },
   withdrawRequested: { type: 'number' },
   withdrawRequestedAt: { type: 'Date' },

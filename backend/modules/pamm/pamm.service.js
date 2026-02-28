@@ -23,6 +23,68 @@ async function getManager(managerId) {
   return pammRepo.getManagerByUserId(managerId);
 }
 
+/**
+ * Fund detail for investor: fund info, stats (AUM, followers, growth), recent trades, and current user's allocation if any.
+ */
+async function getFundDetail(fundId, followerId = null) {
+  const fund = await pammRepo.getManagerById(fundId) || await pammRepo.getManagerByUserId(fundId);
+  if (!fund) return null;
+
+  const allocations = await pammRepo.listAllocationsByManager(fund.id, { status: 'active' });
+  const managerCapital = Number(fund.currentDeposit) || 0;
+  const investorCapital = allocations.reduce((s, a) => s + (a.allocatedBalance || 0), 0);
+  const aum = managerCapital + investorCapital;
+  const cumulativePnl = await pammRepo.getFundCumulativePnl(fund.id);
+  const fundGrowthRate = aum > 0 ? (cumulativePnl / aum) * 100 : 0;
+
+  const stats = {
+    aum,
+    investors: allocations.length,
+    fundGrowthRate,
+    cumulativePnl,
+    managerCapital,
+    investorCapital,
+    performanceFeePercent: Number(fund.performanceFeePercent) || 0,
+  };
+
+  const recentTrades = await pammRepo.listTradesByManager(fund.id, { limit: 30 });
+
+  let myAllocation = null;
+  if (followerId) {
+    const myAllocations = await pammRepo.listAllocationsByFollower(followerId, { status: 'active' });
+    const alloc = myAllocations.find((a) => a.managerId === fund.id);
+    if (alloc) {
+      const realizedPnl = Number(alloc.realizedPnl);
+      myAllocation = {
+        id: alloc.id,
+        allocatedBalance: alloc.allocatedBalance,
+        realizedPnl: Number.isFinite(realizedPnl) ? realizedPnl : 0,
+        allocationPercent: aum > 0 ? ((alloc.allocatedBalance || 0) / aum) * 100 : 0,
+        status: alloc.status,
+        createdAt: alloc.createdAt,
+      };
+    }
+  }
+
+  return {
+    fund: {
+      id: fund.id,
+      userId: fund.userId,
+      name: fund.name,
+      strategy: fund.strategy,
+      fundType: fund.fundType,
+      isPublic: fund.isPublic,
+      allocationPercent: fund.allocationPercent,
+      performanceFeePercent: fund.performanceFeePercent,
+      cutoffWithdrawEnabled: fund.cutoffWithdrawEnabled,
+      createdAt: fund.createdAt,
+    },
+    stats,
+    recentTrades,
+    myAllocation,
+  };
+}
+
 async function registerAsManager(userId, payload) {
   let id;
   try {
@@ -47,14 +109,32 @@ async function registerAsManager(userId, payload) {
     throw e;
   }
   const fundName = payload.name || 'My Strategy';
+  const initialDeposit = Number(payload.currentDeposit) || 0;
   const tradingAccountId = await tradingAccountRepo.create({
     userId,
     type: 'pamm',
     pammManagerId: userId,
     name: `PAMM: ${fundName}`,
-    balance: Number(payload.currentDeposit) || 0,
+    balance: initialDeposit,
   });
   await pammRepo.updateManagerById(id, { tradingAccountId });
+  if (initialDeposit > 0) {
+    const wallet = await walletRepo.getOrCreateWallet(userId, 'USD');
+    if ((wallet.balance ?? 0) >= initialDeposit) {
+      await walletRepo.updateBalance(userId, 'USD', -initialDeposit);
+      await walletRepo.createTransaction({
+        userId,
+        type: 'pamm_manager_cap_in',
+        amount: -initialDeposit,
+        currency: 'USD',
+        status: 'completed',
+        reference: id,
+        destination: `pamm:${id}`,
+        completedAt: new Date(),
+      });
+      await ledgerService.postPammManagerCapitalAdd(userId, initialDeposit, 'USD', id, id);
+    }
+  }
   const manager = await pammRepo.getManagerById(id);
   return { ...manager, tradingAccountId };
 }
@@ -144,6 +224,49 @@ async function updateManagerProfile(userId, payload) {
   if (payload.performanceFeePercent !== undefined) update.performanceFeePercent = Number(payload.performanceFeePercent);
   if (payload.fundSize !== undefined) update.fundSize = Number(payload.fundSize);
   if (payload.currentDeposit !== undefined) update.currentDeposit = Number(payload.currentDeposit);
+
+  if (payload.currentDeposit !== undefined) {
+    const current = await pammRepo.getManagerByUserId(userId);
+    if (current?.tradingAccountId) {
+      const oldDeposit = Number(current.currentDeposit) || 0;
+      const newDeposit = Number(payload.currentDeposit) || 0;
+      const delta = newDeposit - oldDeposit;
+      const uid = String(userId);
+      if (delta > 0) {
+        const wallet = await walletRepo.getOrCreateWallet(uid, 'USD');
+        if ((wallet.balance ?? 0) >= delta) {
+          await walletRepo.updateBalance(uid, 'USD', -delta);
+          await walletRepo.createTransaction({
+            userId: uid,
+            type: 'pamm_manager_cap_in',
+            amount: -delta,
+            currency: 'USD',
+            status: 'completed',
+            reference: current.id,
+            destination: `pamm:${current.id}`,
+            completedAt: new Date(),
+          });
+          await ledgerService.postPammManagerCapitalAdd(userId, delta, 'USD', current.id, current.id);
+          await tradingAccountRepo.updateBalance(current.tradingAccountId, userId, delta);
+        }
+      } else if (delta < 0) {
+        const withdrawAmount = -delta;
+        await ledgerService.postPammManagerCapitalWithdraw(userId, withdrawAmount, 'USD', current.id, current.id);
+        await walletRepo.updateBalance(uid, 'USD', withdrawAmount);
+        await walletRepo.createTransaction({
+          userId: uid,
+          type: 'pamm_manager_cap_out',
+          amount: withdrawAmount,
+          currency: 'USD',
+          status: 'completed',
+          reference: current.id,
+          completedAt: new Date(),
+        });
+        await tradingAccountRepo.updateBalance(current.tradingAccountId, userId, -withdrawAmount);
+      }
+    }
+  }
+
   if (Object.keys(update).length === 0) return pammRepo.getManagerByUserId(userId);
   return pammRepo.updateManager(userId, update);
 }
@@ -211,7 +334,7 @@ async function follow(followerId, managerId, allocatedBalance = 0) {
     destination: `pamm:${fundId}`,
     completedAt: new Date(),
   });
-  await ledgerService.postPammAllocation(followerId, amount, 'USD', fundId);
+  await ledgerService.postPammAllocation(followerId, amount, 'USD', fundId, fundId);
   const managerUserId = manager.userId;
   await tradingAccountRepo.updateBalance(manager.tradingAccountId, managerUserId, amount);
   const id = await pammRepo.createAllocation(followerId, fundId, amount);
@@ -246,7 +369,7 @@ async function unfollow(followerId, allocationId) {
         reference: allocationId,
         completedAt: new Date(),
       });
-      await ledgerService.postPammUnallocation(followerId, amount, 'USD', allocationId);
+      await ledgerService.postPammUnallocation(followerId, amount, 'USD', allocationId, allocation.managerId);
       await tradingAccountRepo.updateBalance(manager.tradingAccountId, managerUserId, -amount);
     }
   }
@@ -299,7 +422,7 @@ async function addFunds(followerId, allocationId, amount) {
     destination: `pamm:${allocation.managerId}`,
     completedAt: new Date(),
   });
-  await ledgerService.postPammAllocation(followerId, addAmount, 'USD', allocationId);
+  await ledgerService.postPammAllocation(followerId, addAmount, 'USD', allocationId, allocation.managerId);
   await tradingAccountRepo.updateBalance(manager.tradingAccountId, manager.userId, addAmount);
   const newBalance = (allocation.allocatedBalance || 0) + addAmount;
   await pammRepo.updateAllocation(allocationId, { allocatedBalance: newBalance });
@@ -341,7 +464,7 @@ async function requestWithdraw(followerId, allocationId, amount) {
     reference: allocationId,
     completedAt: new Date(),
   });
-  await ledgerService.postPammUnallocation(followerId, withdrawAmount, 'USD', allocationId);
+  await ledgerService.postPammUnallocation(followerId, withdrawAmount, 'USD', allocationId, allocation.managerId);
   await tradingAccountRepo.updateBalance(manager.tradingAccountId, manager.userId, -withdrawAmount);
   const newBalance = (allocation.allocatedBalance || 0) - withdrawAmount;
   if (newBalance <= 0) {
@@ -361,6 +484,22 @@ async function getMyAllocations(followerId, options = {}) {
   for (const a of list) {
     const m = await pammRepo.getManagerById(a.managerId) || await pammRepo.getManagerByUserId(a.managerId);
     a.managerName = m?.name || 'Unknown';
+    if (m?.id) {
+      const fundAllocations = await pammRepo.listAllocationsByManager(m.id, { status: 'active' });
+      const managerCapital = Number(m.currentDeposit) || 0;
+      const investorCapital = fundAllocations.reduce((s, x) => s + (x.allocatedBalance || 0), 0);
+      const fundAum = managerCapital + investorCapital;
+      a.fundAum = fundAum;
+      a.allocationPercent = fundAum > 0 ? ((a.allocatedBalance || 0) / fundAum) * 100 : 0;
+      const cumulativePnl = await pammRepo.getFundCumulativePnl(m.id);
+      a.fundGrowthRate = fundAum > 0 ? (cumulativePnl / fundAum) * 100 : 0;
+      a.fundCumulativePnl = cumulativePnl;
+    } else {
+      a.fundAum = 0;
+      a.allocationPercent = 0;
+      a.fundGrowthRate = 0;
+      a.fundCumulativePnl = 0;
+    }
   }
   return list;
 }
@@ -393,6 +532,7 @@ async function getTrades(managerIdOrFundId, options = {}) {
 export default {
   listManagers,
   getManager,
+  getFundDetail,
   getManagerStats,
   listMyFunds,
   registerAsManager,

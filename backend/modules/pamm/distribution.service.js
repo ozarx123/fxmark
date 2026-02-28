@@ -6,6 +6,7 @@ import tradingAccountRepo from '../trading/trading-account.repository.js';
 import ledgerService from '../finance/ledger.service.js';
 import walletRepo from '../wallet/wallet.repository.js';
 import commissionEngine from '../ib/commission.engine.js';
+import { emitPammAllocationUpdate } from './pamm.events.js';
 
 /**
  * Distribute PAMM trade P&L to participants (manager + investors) and post to financial modules
@@ -49,7 +50,7 @@ async function distributePammPnl(managerId, positionId, pnl, accountId, position
     const feeAmount = Math.round((pnl * performanceFeePercent / 100) * 100) / 100;
     if (feeAmount > 0.001) {
       try {
-        await ledgerService.postPammFee(managerId, feeAmount, 'USD', positionId);
+        await ledgerService.postPammFee(managerId, feeAmount, 'USD', positionId, fundId);
         await walletRepo.updateBalance(managerId, 'USD', feeAmount);
         await walletRepo.createTransaction({
           userId: managerId,
@@ -67,6 +68,7 @@ async function distributePammPnl(managerId, positionId, pnl, accountId, position
   }
 
   const remainingPnl = isProfit ? pnl - (pnl * performanceFeePercent / 100) : pnl;
+  // Each participant's share = their % of total fund capital × remaining P&L
   const managerShare = totalCapital > 0 ? (managerCapital / totalCapital) * remainingPnl : 0;
   const managerShareRounded = Math.round(managerShare * 100) / 100;
 
@@ -78,13 +80,16 @@ async function distributePammPnl(managerId, positionId, pnl, accountId, position
     }
   }
 
+  const updatedFollowerIds = [];
   for (const alloc of allocations) {
-    const share = totalCapital > 0 ? ((alloc.allocatedBalance || 0) / totalCapital) * remainingPnl : 0;
+    // Investor share = (investor's allocation / total fund capital) × remaining P&L
+    const allocationShareOfFund = totalCapital > 0 ? (alloc.allocatedBalance || 0) / totalCapital : 0;
+    const share = allocationShareOfFund * remainingPnl;
     const shareRounded = Math.round(share * 100) / 100;
     if (Math.abs(shareRounded) <= 0.001) continue;
 
     try {
-      await ledgerService.postPammDistribution(alloc.followerId, Math.abs(shareRounded), 'USD', positionId, isProfit);
+      await ledgerService.postPammDistribution(alloc.followerId, Math.abs(shareRounded), 'USD', positionId, isProfit, fundId);
       await walletRepo.updateBalance(alloc.followerId, 'USD', shareRounded);
       await walletRepo.createTransaction({
         userId: alloc.followerId,
@@ -95,6 +100,8 @@ async function distributePammPnl(managerId, positionId, pnl, accountId, position
         reference: positionId,
         completedAt: new Date(),
       });
+      await pammRepo.incrementAllocationRealizedPnl(alloc.id, shareRounded);
+      updatedFollowerIds.push(alloc.followerId);
     } catch (e) {
       console.warn('[pamm] Ledger/wallet post dist for', alloc.followerId, 'failed:', e.message);
     }
@@ -111,6 +118,14 @@ async function distributePammPnl(managerId, positionId, pnl, accountId, position
       }
     } catch (e) {
       console.warn('[pamm] IB commission for follower failed:', e.message);
+    }
+  }
+
+  if (updatedFollowerIds.length > 0 || Math.abs(managerShareRounded) > 0.001) {
+    try {
+      await emitPammAllocationUpdate(fundId, updatedFollowerIds, managerId);
+    } catch (e) {
+      console.warn('[pamm] emitPammAllocationUpdate failed:', e.message);
     }
   }
 }

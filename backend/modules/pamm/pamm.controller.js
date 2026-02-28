@@ -50,6 +50,20 @@ async function getManager(req, res, next) {
   }
 }
 
+async function getFundDetail(req, res, next) {
+  try {
+    const { fundId } = req.params;
+    const userId = req.user?.id || null;
+    const detail = await pammService.getFundDetail(fundId, userId);
+    if (!detail) {
+      return res.status(404).json({ error: 'Fund not found' });
+    }
+    res.json(detail);
+  } catch (e) {
+    next(e);
+  }
+}
+
 async function registerAsManager(req, res, next) {
   try {
     const userId = req.user?.id;
@@ -233,6 +247,7 @@ async function getTrades(req, res, next) {
 export default {
   listManagers,
   getManager,
+  getFundDetail,
   getMyManager,
   getMyFunds,
   registerAsManager,
