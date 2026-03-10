@@ -2,22 +2,22 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import FxmarkLogo from '../../components/FxmarkLogo';
 import {
-  ChartLineUp,
-  ShieldCheck,
-  Lightning,
-  Headset,
-  TrendUp,
-  Copy,
-  Plugs,
-  Cpu,
-  Robot,
-  Quotes,
-  CurrencyDollar,
-  Bank,
-  ClockCounterClockwise,
-  List,
-  X,
-} from '@phosphor-icons/react';
+  ChartLineUpIcon,
+  ShieldCheckIcon,
+  LightningIcon,
+  HeadsetIcon,
+  TrendUpIcon,
+  CopyIcon,
+  PlugsIcon,
+  CpuIcon,
+  RobotIcon,
+  QuotesIcon,
+  CurrencyDollarIcon,
+  BankIcon,
+  ClockCounterClockwiseIcon,
+  ListIcon,
+  XIcon,
+} from '../../components/Icons.jsx';
 import {
   LineChart,
   Line,
@@ -42,38 +42,38 @@ const samplePrices = [
 
 const CORE_FEATURES = [
   {
-    icon: Lightning,
+    icon: LightningIcon,
     title: 'Fast execution',
     description: 'Institutional-grade order execution with minimal latency. Trade when it matters.',
   },
   {
-    icon: ChartLineUp,
+    icon: ChartLineUpIcon,
     title: 'Live charts & analysis',
     description: 'Real-time data, advanced charting, and tools to support your strategy across 50+ pairs.',
   },
   {
-    icon: ShieldCheck,
+    icon: ShieldCheckIcon,
     title: 'Regulated & secure',
     description: 'UK-regulated platform. Your funds and data protected to the highest standards.',
   },
   {
-    icon: Headset,
+    icon: HeadsetIcon,
     title: '24/5 support',
     description: 'Dedicated support from London. Get help when you need it, in your timezone.',
   },
 ];
 
 const BENEFITS = [
-  { icon: CurrencyDollar, label: 'Tight spreads', detail: 'Competitive pricing on majors and minors' },
-  { icon: Bank, label: 'Segregated funds', detail: 'Client money held in top-tier banks' },
-  { icon: ClockCounterClockwise, label: 'Transparent history', detail: 'Full audit trail and reporting' },
-  { icon: TrendUp, label: 'Scale with you', detail: 'From retail to professional accounts' },
+  { icon: CurrencyDollarIcon, label: 'Tight spreads', detail: 'Competitive pricing on majors and minors' },
+  { icon: BankIcon, label: 'Segregated funds', detail: 'Client money held in top-tier banks' },
+  { icon: ClockCounterClockwiseIcon, label: 'Transparent history', detail: 'Full audit trail and reporting' },
+  { icon: TrendUpIcon, label: 'Scale with you', detail: 'From retail to professional accounts' },
 ];
 
 const ADVANCED = [
-  { icon: Copy, title: 'Copy trading', description: 'Follow proven strategies. Automate your portfolio with top traders.' },
-  { icon: Cpu, title: 'PAMM accounts', description: 'Manage investor capital or invest in professional managers.' },
-  { icon: Plugs, title: 'API & integration', description: 'Connect your systems. Build algos and dashboards with our API.' },
+  { icon: CopyIcon, title: 'Copy trading', description: 'Follow proven strategies. Automate your portfolio with top traders.' },
+  { icon: CpuIcon, title: 'PAMM accounts', description: 'Manage investor capital or invest in professional managers.' },
+  { icon: PlugsIcon, title: 'API & integration', description: 'Connect your systems. Build algos and dashboards with our API.' },
 ];
 
 const TESTIMONIALS = [
@@ -113,7 +113,7 @@ export default function Landing() {
           aria-expanded={navOpen}
           aria-label={navOpen ? 'Close menu' : 'Open menu'}
         >
-          {navOpen ? <X weight="bold" size={24} /> : <List weight="bold" size={24} />}
+          {navOpen ? <XIcon size={24} /> : <ListIcon size={24} />}
         </button>
         <nav className={`landing-nav ${navOpen ? 'nav-open' : ''}`}>
           <a href="#features" onClick={closeNav}>Features</a>
@@ -156,7 +156,7 @@ export default function Landing() {
           {CORE_FEATURES.map((f) => (
             <div key={f.title} className="feature-card feature-card-icon">
               <span className="feature-icon-wrap">
-                <f.icon weight="duotone" size={32} />
+                <f.icon size={32} />
               </span>
               <h3>{f.title}</h3>
               <p>{f.description}</p>
@@ -172,7 +172,7 @@ export default function Landing() {
           {BENEFITS.map((b) => (
             <div key={b.label} className="benefit-card">
               <span className="benefit-icon">
-                <b.icon weight="duotone" size={28} />
+                <b.icon size={28} />
               </span>
               <div className="benefit-text">
                 <strong>{b.label}</strong>
@@ -190,7 +190,7 @@ export default function Landing() {
           {ADVANCED.map((a) => (
             <div key={a.title} className="advanced-card">
               <span className="advanced-icon">
-                <a.icon weight="duotone" size={36} />
+                <a.icon size={36} />
               </span>
               <h3>{a.title}</h3>
               <p>{a.description}</p>
@@ -217,7 +217,7 @@ export default function Landing() {
           </div>
           <div className="ai-visual">
             <span className="ai-visual-icon" aria-hidden>
-              <Robot weight="duotone" size={120} />
+              <RobotIcon size={120} />
             </span>
           </div>
         </div>
@@ -229,7 +229,7 @@ export default function Landing() {
         <div className="testimonials-grid">
           {TESTIMONIALS.map((t, i) => (
             <blockquote key={i} className="testimonial-card">
-              <Quotes weight="duotone" size={28} className="testimonial-quote-icon" />
+              <QuotesIcon size={28} className="testimonial-quote-icon" />
               <p className="testimonial-quote">"{t.quote}"</p>
               <footer className="testimonial-footer">
                 <span className="testimonial-name">{t.name}</span>

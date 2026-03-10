@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import * as ibApi from '../../api/ibApi';
-import { LinkSimple, Copy, Check, UserPlus, CurrencyDollar } from '@phosphor-icons/react';
+import { LinkSimpleIcon, CopyIcon, CheckIcon, UserPlusIcon, CurrencyDollarIcon } from '../../components/Icons.jsx';
 
 const formatCurrency = (n, currency = 'USD') =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency, minimumFractionDigits: 2 }).format(n ?? 0);
@@ -61,9 +61,12 @@ export default function Ib() {
   const [payouting, setPayouting] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  const referralLink = typeof window !== 'undefined' && user?.id
-    ? `${window.location.origin}/auth?ref=${encodeURIComponent(user.id)}`
-    : '';
+  // Use only IB referral code (never user id) so URL is correct and backend resolves via getProfileByReferralCode
+  const referralCode = profile?.referralCode?.trim() || '';
+  const referralLink =
+    typeof window !== 'undefined' && referralCode
+      ? `${window.location.origin}/auth?ref=${encodeURIComponent(referralCode)}&redirect=${encodeURIComponent('/pamm-ai')}`
+      : '';
 
   const handleCopyLink = useCallback(async () => {
     if (!referralLink) return;
@@ -216,7 +219,7 @@ export default function Ib() {
         {error && <p className="form-error">{error}</p>}
         <div className="ib-referral-generator section-block">
           <h2 className="ib-referral-title">
-            <LinkSimple size={22} weight="duotone" />
+            <LinkSimpleIcon size={22} />
             Referral link
           </h2>
           <p className="ib-referral-desc">Share this link with clients. When they sign up and trade, you earn commission.</p>
@@ -235,7 +238,7 @@ export default function Ib() {
               disabled={!referralLink}
               title="Copy link"
             >
-              {copied ? <Check size={20} weight="bold" /> : <Copy size={20} weight="regular" />}
+              {copied ? <CheckIcon size={20} /> : <CopyIcon size={20} />}
               {copied ? 'Copied' : 'Copy'}
             </button>
           </div>
@@ -291,11 +294,11 @@ export default function Ib() {
                       <td>
                         {log.type === 'joined' ? (
                           <span className="referral-log-badge referral-log-joined">
-                            <UserPlus size={14} /> Joined
+                            <UserPlusIcon size={14} /> Joined
                           </span>
                         ) : (
                           <span className="referral-log-badge referral-log-commission">
-                            <CurrencyDollar size={14} /> Commission
+                            <CurrencyDollarIcon size={14} /> Commission
                           </span>
                         )}
                       </td>

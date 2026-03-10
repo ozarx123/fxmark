@@ -3,7 +3,7 @@
  * Neon ring, glass effect, optional verified badge
  */
 import React from 'react';
-import { CheckCircle } from '@phosphor-icons/react';
+import { CheckCircleIcon } from './Icons.jsx';
 
 function getInitials(name) {
   if (!name || typeof name !== 'string') return '?';
@@ -43,7 +43,7 @@ export default function ProfileAvatar({ name, src, size = 48, verified, classNam
       </div>
       {verified && (
         <span className="profile-avatar-verified" title="Verified">
-          <CheckCircle size={sizePx * 0.35} weight="fill" />
+          <CheckCircleIcon size={sizePx * 0.35} />
         </span>
       )}
     </div>

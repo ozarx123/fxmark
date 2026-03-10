@@ -101,8 +101,8 @@ if ($LASTEXITCODE -ne 0) { exit 1 }
 
 Write-Host ""
 Write-Host "=== Deployment complete ===" -ForegroundColor Green
-$url = gcloud run services describe $ServiceName --region=$Region --format="value(status.url)" 2>$null
-if ($url) { Write-Host "Service URL: $url" -ForegroundColor Cyan }
+$url = gcloud run services describe $ServiceName --region=$Region --format='value(status.url)' 2>$null
+if ($url) { Write-Host ('Service URL: ' + $url) -ForegroundColor Cyan }
 Write-Host ""
 Write-Host "If CONNECTION_STRING/JWT_SECRET/TWELVE_DATA_API_KEY are not set, add them via:"
 Write-Host "  gcloud run services update $ServiceName --region=$Region --set-env-vars=CONNECTION_STRING=...,JWT_SECRET=...,TWELVE_DATA_API_KEY=..."

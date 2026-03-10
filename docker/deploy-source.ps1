@@ -19,21 +19,44 @@ if (-not $ProjectId) {
 }
 
 $repoRoot = Join-Path $PSScriptRoot ".."
-$dockerfilePath = Join-Path $PSScriptRoot "Dockerfile.backend.prod"
-if (-not (Test-Path $dockerfilePath)) {
-    Write-Error "Dockerfile not found: $dockerfilePath"
+$cloudbuildPath = Join-Path $PSScriptRoot "cloudbuild-backend.yaml"
+if (-not (Test-Path $cloudbuildPath)) {
+    Write-Error "Cloud Build config not found: $cloudbuildPath"
     exit 1
 }
 
-Write-Host "=== FXMARK – Deploy latest (build in GCP, same Dockerfile) ===" -ForegroundColor Cyan
+$ImageName = "$Region-docker.pkg.dev/$ProjectId/fxmark/backend:latest"
+$RepoName = "fxmark"
+
+Write-Host '=== FXMARK - Deploy latest (build in GCP, same Dockerfile) ===' -ForegroundColor Cyan
 Write-Host "Project: $ProjectId | Region: $Region | Service: $ServiceName"
-Write-Host "Source: repo root | Dockerfile: docker/Dockerfile.backend.prod"
-Write-Host ""
+Write-Host ''
+
+# Ensure Artifact Registry repo exists
+$prevErr = $ErrorActionPreference
+$ErrorActionPreference = "SilentlyContinue"
+gcloud artifacts repositories describe $RepoName --location=$Region 2>$null | Out-Null
+$repoExists = $LASTEXITCODE -eq 0
+$ErrorActionPreference = $prevErr
+if (-not $repoExists) {
+    Write-Host "Creating Artifact Registry repository: $RepoName ..." -ForegroundColor Yellow
+    gcloud artifacts repositories create $RepoName --repository-format=docker --location=$Region --description="FXMARK container images"
+    if ($LASTEXITCODE -ne 0) { exit 1 }
+}
+
+Write-Host "Building image in Cloud Build..." -ForegroundColor Yellow
+Push-Location $repoRoot
+try {
+    gcloud builds submit --config=docker/cloudbuild-backend.yaml --substitutions="_REGION=$Region" .
+    if ($LASTEXITCODE -ne 0) { exit 1 }
+} finally {
+    Pop-Location
+}
+Write-Host "Build OK" -ForegroundColor Green
 
 $deployArgs = @(
     "run", "deploy", $ServiceName,
-    "--source=$repoRoot",
-    "--dockerfile=docker/Dockerfile.backend.prod",
+    "--image=$ImageName",
     "--region=$Region",
     "--platform=managed",
     "--allow-unauthenticated",
@@ -61,7 +84,7 @@ if ($hasTwelveData) { $deployArgs += "--set-secrets=TWELVE_DATA_API_KEY=twelve-d
 & gcloud @deployArgs
 if ($LASTEXITCODE -ne 0) { exit 1 }
 
-Write-Host ""
-Write-Host "=== Deployment complete ===" -ForegroundColor Green
-$url = gcloud run services describe $ServiceName --region=$Region --format="value(status.url)" 2>$null
-if ($url) { Write-Host "Service URL: $url" -ForegroundColor Cyan }
+Write-Host ''
+Write-Host '=== Deployment complete ===' -ForegroundColor Green
+$url = gcloud run services describe $ServiceName --region=$Region --format='value(status.url)' 2>$null
+if ($url) { Write-Host ('Service URL: ' + $url) -ForegroundColor Cyan }

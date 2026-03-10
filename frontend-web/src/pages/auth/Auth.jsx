@@ -31,6 +31,8 @@ export default function Auth() {
   const [searchParams] = useSearchParams();
   const { login } = useAuth();
   const refParam = searchParams.get('ref') || '';
+  const redirectTo = searchParams.get('redirect') || '';
+  const safeRedirect = redirectTo && redirectTo.startsWith('/') && !redirectTo.includes('//') ? redirectTo : '';
   const [tab, setTab] = useState(refParam ? 'signup' : 'login'); // 'login' | 'signup'
 
   useEffect(() => {
@@ -66,12 +68,13 @@ export default function Auth() {
       if (res.ok) {
         const u = ensureUserRole(data.user || { email: loginEmail, name: loginEmail.split('@')[0] }, loginEmail);
         login(u, data.accessToken);
-        navigate(u.profileComplete ? '/dashboard' : '/auth/profile-setup', { replace: true });
+        const target = safeRedirect || (u.profileComplete ? '/dashboard' : '/auth/profile-setup');
+        navigate(target, { replace: true });
         return;
       }
       if (res.status === 404 || res.status === 502) {
         login(ensureUserRole({ email: loginEmail, name: loginEmail.split('@')[0] }, loginEmail), null);
-        navigate('/auth/profile-setup', { replace: true });
+        navigate(safeRedirect || '/auth/profile-setup', { replace: true });
         return;
       }
       throw new Error(data.error || data.message || 'Login failed');
@@ -80,7 +83,7 @@ export default function Auth() {
         setError(err.message);
       } else {
         login(ensureUserRole({ email: loginEmail, name: loginEmail.split('@')[0] }, loginEmail), null);
-        navigate('/auth/profile-setup', { replace: true });
+        navigate(safeRedirect || '/auth/profile-setup', { replace: true });
       }
     } finally {
       setLoading(false);
@@ -112,12 +115,13 @@ export default function Auth() {
       if (res.ok) {
         const u = ensureUserRole(data.user || { email: signupEmail, name: signupName || signupEmail.split('@')[0] }, signupEmail);
         login(u, data.accessToken);
-        navigate('/auth/profile-setup', { replace: true });
+        const target = safeRedirect || (u.profileComplete ? '/dashboard' : '/auth/profile-setup');
+        navigate(target, { replace: true });
         return;
       }
       if (res.status === 404 || res.status === 502) {
         login(ensureUserRole({ email: signupEmail, name: signupName || signupEmail.split('@')[0] }, signupEmail), null);
-        navigate('/auth/profile-setup', { replace: true });
+        navigate(safeRedirect || '/auth/profile-setup', { replace: true });
         return;
       }
       throw new Error(data.error || data.message || 'Signup failed');
@@ -126,7 +130,7 @@ export default function Auth() {
         setError(err.message);
       } else {
         login(ensureUserRole({ email: signupEmail, name: signupName || signupEmail.split('@')[0] }, signupEmail), null);
-        navigate('/auth/profile-setup', { replace: true });
+        navigate(safeRedirect || '/auth/profile-setup', { replace: true });
       }
     } finally {
       setLoading(false);

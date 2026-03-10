@@ -4,15 +4,9 @@ import { useAccount } from '../../context/AccountContext';
 import { useAuth } from '../../context/AuthContext';
 import { useFinance } from '../../hooks/useFinance';
 import { formatCurrency } from '../../constants/finance';
-import { ChartBar, Newspaper, GraduationCap, Phone, User, ArrowRight, ShareNetwork } from '@phosphor-icons/react';
+import { ChartBarIcon, GraduationCapIcon, PhoneIcon, UserIcon, ArrowRightIcon, ShareNetworkIcon } from '../../components/Icons.jsx';
 
 const SUPPORT_PHONE = '+1 (800) 123-4567';
-
-const DASHBOARD_NEWS = [
-  { id: 1, title: 'New XAU/USD spread improvements', excerpt: 'Tighter spreads on gold pairs for better execution.', time: '2h ago' },
-  { id: 2, title: 'PAMM performance update', excerpt: 'Top managers show 12% avg monthly returns.', time: '5h ago' },
-  { id: 3, title: 'Weekend trading hours extended', excerpt: 'Trade forex 24/5 with extended session coverage.', time: '1d ago' },
-];
 
 const PAMM_OPPORTUNITIES = [
   { id: 1, name: 'Alpha Fund', roi: '+8.2%', risk: 'Medium', link: '/pamm' },
@@ -45,7 +39,7 @@ export default function Dashboard() {
         </div>
         <div className="page-header-actions flex flex-wrap gap-2">
           <Link to="/settings/profile" className="btn btn-secondary btn-sm dashboard-quick-link">
-            <User size={18} weight="regular" />
+            <UserIcon size={18} />
             Profile settings
           </Link>
           <Link to="/finance" className="btn btn-secondary btn-sm">Finance</Link>
@@ -81,25 +75,7 @@ export default function Dashboard() {
         <div className="dashboard-grid mt-8">
           <div className="dashboard-section section-block rounded-xl p-6">
             <h2 className="dashboard-section-title">
-              <Newspaper size={22} weight="duotone" />
-              Latest updates
-            </h2>
-            <ul className="dashboard-news-list">
-              {DASHBOARD_NEWS.map((n) => (
-                <li key={n.id} className="dashboard-news-item">
-                  <div>
-                    <span className="dashboard-news-title">{n.title}</span>
-                    <p className="dashboard-news-excerpt">{n.excerpt}</p>
-                  </div>
-                  <span className="dashboard-news-time">{n.time}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="dashboard-section section-block rounded-xl p-6">
-            <h2 className="dashboard-section-title">
-              <ChartBar size={22} weight="duotone" />
+              <ChartBarIcon size={22} />
               Analytics
             </h2>
             <div className="dashboard-analytics">
@@ -117,13 +93,13 @@ export default function Dashboard() {
               </div>
             </div>
             <Link to="/trading" className="dashboard-section-link">
-              View trading analytics <ArrowRight size={16} />
+              View trading analytics <ArrowRightIcon size={16} />
             </Link>
           </div>
 
           <div className="dashboard-section section-block rounded-xl p-6">
             <h2 className="dashboard-section-title">
-              <ShareNetwork size={22} weight="duotone" />
+              <ShareNetworkIcon size={22} />
               PAMM opportunities
             </h2>
             <ul className="dashboard-pamm-list">
@@ -138,13 +114,13 @@ export default function Dashboard() {
               ))}
             </ul>
             <Link to="/pamm" className="dashboard-section-link">
-              Explore all PAMM funds <ArrowRight size={16} />
+              Explore all PAMM funds <ArrowRightIcon size={16} />
             </Link>
           </div>
 
           <div className="dashboard-section section-block rounded-xl p-6">
             <h2 className="dashboard-section-title">
-              <GraduationCap size={22} weight="duotone" />
+              <GraduationCapIcon size={22} />
               Learning center
             </h2>
             <ul className="dashboard-learning-list">
@@ -161,7 +137,7 @@ export default function Dashboard() {
 
           <div className="dashboard-section section-block rounded-xl p-6 dashboard-support-card">
             <h2 className="dashboard-section-title">
-              <Phone size={22} weight="duotone" />
+              <PhoneIcon size={22} />
               Customer support
             </h2>
             <a href={`tel:${SUPPORT_PHONE.replace(/\D/g, '')}`} className="dashboard-support-phone">

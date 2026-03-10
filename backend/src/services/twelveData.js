@@ -43,22 +43,23 @@ export async function fetchCandles({ symbol, tf, from, to, apiKey }) {
     throw new Error(data.message || 'Twelve Data API error');
   }
 
-  const values = data.values ?? [];
+  // Twelve Data can return time series in "values" or "data"
+  const values = data.values ?? data.data ?? [];
   // Twelve Data returns newest first; Lightweight Charts requires oldest first (ascending)
   const mapped = values.map((v) => {
-    const dt = v.datetime;
+    const dt = v.datetime ?? v.date ?? v.time;
     let timeSec = 0;
     if (dt) {
-      const iso = dt.includes('T') ? dt : dt.replace(' ', 'T') + (dt.includes('Z') ? '' : 'Z');
+      const iso = String(dt).includes('T') ? dt : String(dt).replace(' ', 'T') + (String(dt).includes('Z') ? '' : 'Z');
       timeSec = Math.floor(new Date(iso).getTime() / 1000);
     }
     return {
       time: timeSec,
-      open: parseFloat(v.open),
-      high: parseFloat(v.high),
-      low: parseFloat(v.low),
-      close: parseFloat(v.close),
-      volume: parseFloat(v.volume || 0),
+      open: parseFloat(v.open ?? v.o),
+      high: parseFloat(v.high ?? v.h),
+      low: parseFloat(v.low ?? v.l),
+      close: parseFloat(v.close ?? v.c),
+      volume: parseFloat(v.volume ?? v.v ?? 0),
     };
   });
   return mapped.reverse();

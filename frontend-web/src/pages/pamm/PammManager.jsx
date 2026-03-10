@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { TwitterLogo, LinkedinLogo, FacebookLogo, Copy, ChartLine } from '@phosphor-icons/react';
+import { TwitterLogoIcon, LinkedinLogoIcon, FacebookLogoIcon, CopyIcon, ChartLineIcon } from '../../components/Icons.jsx';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { ProfileAvatar } from '../../components/ui';
 import {
@@ -141,17 +141,17 @@ export default function PammManager() {
     {
       name: 'Twitter',
       href: `https://twitter.com/intent/tweet?text=${encodeURIComponent(SHARE_TEXT)}&url=${encodeURIComponent(SHARE_URL)}`,
-      icon: TwitterLogo,
+      icon: TwitterLogoIcon,
     },
     {
       name: 'LinkedIn',
       href: `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(SHARE_URL)}`,
-      icon: LinkedinLogo,
+      icon: LinkedinLogoIcon,
     },
     {
       name: 'Facebook',
       href: `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(SHARE_URL)}`,
-      icon: FacebookLogo,
+      icon: FacebookLogoIcon,
     },
   ];
 
@@ -324,7 +324,7 @@ export default function PammManager() {
                 <span className="pamm-trading-account-balance">{formatCurrency(pammAccount.balance ?? 0)}</span>
               </div>
               <a href="/trading" className="btn btn-primary">
-                <ChartLine weight="bold" size={18} />
+                <ChartLineIcon size={18} />
                 Trade
               </a>
             </div>
@@ -547,7 +547,7 @@ export default function PammManager() {
               className="btn btn-secondary pamm-manager-share-copy"
               onClick={handleCopyLink}
             >
-              <Copy weight="bold" size={18} />
+              <CopyIcon size={18} />
               {copyDone ? ' Copied!' : ' Copy link'}
             </button>
           </div>
@@ -564,7 +564,7 @@ export default function PammManager() {
                   aria-label={`Share on ${s.name}`}
                   title={`Share on ${s.name}`}
                 >
-                  <s.icon weight="fill" size={24} />
+                  <s.icon size={24} />
                 </a>
               ))}
             </div>

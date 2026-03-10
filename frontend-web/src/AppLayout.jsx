@@ -8,7 +8,7 @@ import FxmarkIcon from './components/FxmarkIcon';
 import AccountTypeToggle from './components/AccountTypeToggle';
 import WalletBalanceSync from './components/WalletBalanceSync';
 import { formatCurrency } from './constants/finance';
-import { List, X } from '@phosphor-icons/react';
+import { ListIcon, XIcon } from './components/Icons.jsx';
 
 export default function AppLayout() {
   const navigate = useNavigate();
@@ -40,7 +40,7 @@ export default function AppLayout() {
           aria-expanded={navOpen}
           aria-label={navOpen ? 'Close menu' : 'Open menu'}
         >
-          {navOpen ? <X weight="bold" size={24} /> : <List weight="bold" size={24} />}
+          {navOpen ? <XIcon size={24} /> : <ListIcon size={24} />}
         </button>
         <nav className={`nav ${navOpen ? 'nav-open' : ''}`}>
         <div className="nav-account-toggle">
@@ -80,6 +80,14 @@ export default function AppLayout() {
             <>
               <FxmarkIcon name="analytics" weight={isActive ? 'bold' : 'regular'} size={20} />
               <span>PAMM</span>
+            </>
+          )}
+        </NavLink>
+        <NavLink to="/pamm-ai" className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')} onClick={closeNav}>
+          {({ isActive }) => (
+            <>
+              <FxmarkIcon name="analytics" weight={isActive ? 'bold' : 'regular'} size={20} />
+              <span>PAMM AI</span>
             </>
           )}
         </NavLink>

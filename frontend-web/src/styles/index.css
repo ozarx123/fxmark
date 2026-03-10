@@ -27,6 +27,9 @@
   --fxmark-text-muted: #666666;
   --fxmark-card-bg: #FFFFFF;
   --fxmark-border-light: #E8E8E8;
+  /* PAMM AI accents (can be overridden per theme) */
+  --fxmark-ai-accent1: rgba(225, 6, 0, 0.18);
+  --fxmark-ai-accent2: rgba(255, 106, 0, 0.18);
   /* Buttons */
   --fxmark-btn-primary: #E10600;
   --fxmark-btn-primary-hover: #FF6A00;
@@ -961,6 +964,134 @@ body {
 
 .pamm-section {
   margin-bottom: 1.75rem;
+}
+
+/* PAMM AI hero */
+.pamm-ai-hero {
+  margin-bottom: 2rem;
+}
+
+.pamm-ai-hero .pamm-ai-profile {
+  position: relative;
+  padding: 1.5rem 1.75rem;
+  border-radius: 16px;
+  background: radial-gradient(circle at top left, var(--fxmark-ai-accent1), transparent 55%),
+              radial-gradient(circle at bottom right, var(--fxmark-ai-accent2), transparent 60%),
+              var(--theme-card);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.pamm-ai-hero .pamm-ai-profile::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.08), transparent 40%);
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.pamm-ai-profile-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  position: relative;
+  z-index: 1;
+}
+
+.pamm-ai-hero-stats {
+  margin-top: 1.25rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.pamm-ai-hero-stat {
+  flex: 1 1 120px;
+  min-width: 120px;
+  padding: 0.75rem 0.9rem;
+  border-radius: 10px;
+  background: rgba(5, 5, 10, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(10px);
+}
+
+.pamm-ai-hero-stat .label {
+  display: block;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fxmark-text-muted);
+  margin-bottom: 0.25rem;
+}
+
+.pamm-ai-hero-stat .value {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.pamm-ai-hero-stat .value.positive {
+  color: var(--fxmark-green);
+}
+
+.pamm-ai-hero-stat .value.negative {
+  color: var(--fxmark-red);
+}
+
+.pamm-ai-hero-actions {
+  margin-top: 1.25rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  position: relative;
+  z-index: 1;
+}
+
+.pamm-ai-hero-actions .btn-primary {
+  box-shadow: 0 10px 30px rgba(225, 6, 0, 0.55);
+}
+
+.pamm-ai-share-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.pamm-ai-share-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.pamm-ai-share-social {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.pamm-ai-share-social-label {
+  font-size: 0.85rem;
+  color: var(--fxmark-text-muted, #888);
+  margin-right: 0.15rem;
+}
+
+.pamm-ai-share-social-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--theme-bg-muted, rgba(255,255,255,0.08));
+  color: var(--fxmark-text, inherit);
+  transition: background 0.2s, color 0.2s;
+}
+
+.pamm-ai-share-social-btn:hover {
+  background: var(--fxmark-ai-accent1, rgba(225, 6, 0, 0.25));
+  color: var(--fxmark-ai-accent2, #e10600);
 }
 
 .pamm-section-desc {

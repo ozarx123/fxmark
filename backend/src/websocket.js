@@ -33,7 +33,10 @@ export function initWebSocket(server) {
   io = new SocketIOServer(server, {
     path: '/socket.io',
     cors: { origin: '*' },
-    transports: ['websocket', 'polling'],
+    transports: ['polling', 'websocket'],
+    allowEIO3: true,
+    pingTimeout: 20000,
+    pingInterval: 25000,
   });
 
   // Auth: verify JWT, join user to room for trade updates

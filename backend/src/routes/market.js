@@ -3,11 +3,22 @@ import { fetchCandles } from '../services/twelveData.js';
 import { getRecentLog, readLogFile } from '../services/marketDataLogger.js';
 import * as cache from '../services/cache.js';
 import { VALID_TIMEFRAMES } from '../config/symbolMap.js';
+import { getCurrentBarStart } from '../config/candleTime.js';
 
 const router = Router();
 
-/** Cache TTL for candles (seconds) */
-const CANDLES_TTL = 30;
+/** Cache TTL by timeframe (seconds) — longer for higher TFs since bars change less often */
+const CANDLES_TTL_BY_TF = {
+  '1m': 30,
+  '5m': 60,
+  '15m': 120,
+  '1h': 300,
+  '1d': 600,
+};
+/** Historical range (from+to in the past) is immutable: cache 24h */
+const CANDLES_TTL_HISTORICAL = 86400;
+/** Stale-while-revalidate: serve this long after main TTL while revalidating in background */
+const CANDLES_STALE_TTL = 300;
 
 /** Map common tf variants to valid format (e.g. 1min -> 1m, 1D -> 1d) */
 const TF_ALIASES = {
@@ -23,6 +34,24 @@ function normalizeTf(tf) {
   // Strip TradingView-style suffix (e.g. 1m:1 -> 1m)
   if (raw.includes(':')) raw = raw.split(':')[0];
   return TF_ALIASES[raw] ?? TF_ALIASES[String(tf || '').trim()] ?? raw;
+}
+
+/**
+ * TTL for candle cache: longer for higher timeframes; 24h for historical ranges.
+ * @param {string} normalizedTf - 1m, 5m, 15m, 1h, 1d
+ * @param {string} [from] - ISO start
+ * @param {string} [to] - ISO end
+ */
+function getCandleCacheTTL(normalizedTf, from, to) {
+  if (from && to) {
+    const endMs = Date.parse(to);
+    if (Number.isFinite(endMs)) {
+      const barStart = getCurrentBarStart(normalizedTf, new Date());
+      const barStartMs = barStart * 1000;
+      if (endMs < barStartMs) return CANDLES_TTL_HISTORICAL;
+    }
+  }
+  return CANDLES_TTL_BY_TF[normalizedTf] ?? 60;
 }
 
 /**
@@ -50,21 +79,60 @@ router.get('/candles', async (req, res) => {
       });
     }
 
-    const cacheKey = `candles:${symbol}:${normalizedTf}:${from || ''}:${to || ''}`;
-    const cached = cache.get(cacheKey);
+    // Normalize symbol to internal format (EUR/USD -> EURUSD) for lookup
+    const internalSymbol = String(symbol || '').replace(/\//g, '').toUpperCase();
+
+    const cacheKey = `candles:${internalSymbol}:${normalizedTf}:${from || ''}:${to || ''}`;
+    const ttl = getCandleCacheTTL(normalizedTf, from, to);
+    const useStaleKey = ttl < CANDLES_TTL_HISTORICAL;
+
+    let cached = null;
+    let staleCached = null;
+    if (useStaleKey) {
+      const [main, stale] = await cache.getMany([cacheKey, `${cacheKey}:swr`]);
+      cached = main;
+      staleCached = stale;
+    } else {
+      cached = await cache.get(cacheKey);
+    }
+
     if (cached) {
       return res.json(cached);
     }
+    if (staleCached) {
+      setImmediate(() => {
+        fetchCandles({
+          symbol: internalSymbol,
+          tf: normalizedTf,
+          from: from || undefined,
+          to: to || undefined,
+          apiKey,
+        })
+          .then((fresh) => Promise.all([
+            cache.set(cacheKey, fresh, ttl),
+            cache.set(`${cacheKey}:swr`, fresh, CANDLES_STALE_TTL),
+          ]))
+          .catch(() => {});
+      });
+      return res.json(staleCached);
+    }
 
     const candles = await fetchCandles({
-      symbol,
+      symbol: internalSymbol,
       tf: normalizedTf,
       from: from || undefined,
       to: to || undefined,
       apiKey,
     });
 
-    cache.set(cacheKey, candles, CANDLES_TTL);
+    if (useStaleKey) {
+      await Promise.all([
+        cache.set(cacheKey, candles, ttl),
+        cache.set(`${cacheKey}:swr`, candles, CANDLES_STALE_TTL),
+      ]);
+    } else {
+      await cache.set(cacheKey, candles, ttl);
+    }
 
     res.json(candles);
   } catch (err) {

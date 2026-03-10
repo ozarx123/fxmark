@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { InstagramLogo, TwitterLogo, TelegramLogo, YoutubeLogo } from '@phosphor-icons/react';
+import { InstagramLogoIcon, TwitterLogoIcon, TelegramLogoIcon, YoutubeLogoIcon } from '../../components/Icons.jsx';
 import { discoverMasters } from './copyMockData';
 import FollowModal from './FollowModal';
 
@@ -9,10 +9,10 @@ const formatCurrency = (n) =>
 const formatPercent = (n) => `${n >= 0 ? '+' : ''}${Number(n).toFixed(1)}%`;
 
 const socialIcons = [
-  { key: 'instagram', Icon: InstagramLogo, label: 'Instagram' },
-  { key: 'x', Icon: TwitterLogo, label: 'X' },
-  { key: 'telegram', Icon: TelegramLogo, label: 'Telegram' },
-  { key: 'youtube', Icon: YoutubeLogo, label: 'YouTube' },
+  { key: 'instagram', Icon: InstagramLogoIcon, label: 'Instagram' },
+  { key: 'x', Icon: TwitterLogoIcon, label: 'X' },
+  { key: 'telegram', Icon: TelegramLogoIcon, label: 'Telegram' },
+  { key: 'youtube', Icon: YoutubeLogoIcon, label: 'YouTube' },
 ];
 
 export default function MasterProfile() {

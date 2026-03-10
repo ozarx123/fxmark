@@ -1,5 +1,7 @@
-import React, { useEffect, useRef, useMemo } from 'react';
+import React, { useEffect, useRef, useMemo, useState } from 'react';
 import { createChart } from 'lightweight-charts';
+import { getDatafeedSocket } from '../lib/datafeedSocket.js';
+import { getCurrentBarStart } from '../lib/candleTime.js';
 
 /** Throttle interval for tick updates (ms) - 0 = immediate realtime */
 const TICK_THROTTLE_MS = 0;
@@ -16,6 +18,11 @@ function getSamplePriceParams(symbol) {
 function isGoldSymbol(symbol) {
   const s = String(symbol || '').toUpperCase();
   return s.includes('XAU') || s.includes('GOLD');
+}
+
+/** Normalize symbol for comparison (EUR/USD → EURUSD) */
+function toInternalSymbol(s) {
+  return String(s || '').replace(/\//g, '').toUpperCase();
 }
 
 /**
@@ -69,6 +76,13 @@ function FxChart({
   const seriesRef = useRef(null);
   const tickThrottleRef = useRef(null);
   const lastTickRef = useRef(null);
+  const dataRef = useRef([]);
+  const symbolRef = useRef(symbol);
+  const showCandlesRef = useRef(showCandles);
+  const pendingTickRef = useRef(null);
+  const rafScheduledRef = useRef(false);
+  const timeframeRef = useRef(timeframe);
+  const [containerReady, setContainerReady] = useState(false);
 
   const data = useMemo(() => {
     let     arr = externalData && externalData.length > 0
@@ -86,9 +100,16 @@ function FxChart({
     }));
   }, [externalData, symbol]);
 
-  // Create chart once on mount; do not recreate on data change
   useEffect(() => {
-    if (!chartContainerRef.current) return;
+    dataRef.current = data;
+    symbolRef.current = symbol;
+    showCandlesRef.current = showCandles;
+    timeframeRef.current = timeframe;
+  }, [data, symbol, showCandles, timeframe]);
+
+  // Create chart when container is in DOM (callback ref ensures we run when div mounts)
+  useEffect(() => {
+    if (!containerReady || !chartContainerRef.current) return;
 
     const chart = createChart(chartContainerRef.current, {
       layout: {
@@ -116,6 +137,18 @@ function FxChart({
       crosshair: {
         vertLine: { labelBackgroundColor: '#de1414' },
         horzLine: { labelBackgroundColor: '#de1414' },
+      },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: true,
+      },
+      handleScale: {
+        mouseWheel: true,
+        pinch: true,
+        axisPressedMouseMove: true,
+        axisDoubleClickReset: true,
       },
       width: chartContainerRef.current.clientWidth,
       height,
@@ -154,7 +187,7 @@ function FxChart({
       chartRef.current = null;
       seriesRef.current = null;
     };
-  }, [height, showCandles, symbol]);
+  }, [containerReady, height, showCandles, symbol]);
 
   // Update series data when data changes (no chart recreation)
   useEffect(() => {
@@ -174,7 +207,71 @@ function FxChart({
     }
   }, [data, showCandles]);
 
-  // Live tick update: throttled to avoid excessive redraws
+  // Direct socket → chart update: coalesce ticks in requestAnimationFrame so chart repaints every frame
+  useEffect(() => {
+    const internalSymbol = toInternalSymbol(symbol);
+    const socket = getDatafeedSocket();
+
+    function applyPendingTick() {
+      rafScheduledRef.current = false;
+      const tickData = pendingTickRef.current;
+      if (!tickData) return;
+      const price = tickData.close ?? tickData.price;
+      if (typeof price !== 'number' || !Number.isFinite(price)) return;
+      const series = seriesRef.current;
+      if (!series) return;
+      const arr = dataRef.current;
+      const prec = isGoldSymbol(symbolRef.current) ? 2 : 4;
+      const mult = Math.pow(10, prec);
+      const round = (n) => Math.round(n * mult) / mult;
+      const p = round(price);
+
+      if (!arr?.length) {
+        const tf = timeframeRef.current || '1m';
+        const barTime = getCurrentBarStart(tf, new Date());
+        const bar = { time: barTime, open: p, high: p, low: p, close: p };
+        dataRef.current = [bar];
+        if (showCandlesRef.current) {
+          series.setData([bar]);
+        } else {
+          series.setData([{ time: barTime, value: p }]);
+        }
+        return;
+      }
+
+      const last = arr[arr.length - 1];
+      const updated = {
+        ...last,
+        close: p,
+        high: round(Math.max(last.high ?? last.close, price)),
+        low: round(Math.min(last.low ?? last.close, price)),
+      };
+      if (showCandlesRef.current) {
+        series.update(updated);
+      } else {
+        series.update({ time: last.time, value: p });
+      }
+    }
+
+    const handler = (tickData) => {
+      if (!tickData || toInternalSymbol(tickData.symbol) !== internalSymbol) return;
+      const price = tickData.close ?? tickData.price;
+      if (typeof price !== 'number' || !Number.isFinite(price)) return;
+      if (!seriesRef.current) return;
+      pendingTickRef.current = { ...tickData, close: price, price };
+      if (!rafScheduledRef.current) {
+        rafScheduledRef.current = true;
+        requestAnimationFrame(applyPendingTick);
+      }
+    };
+    socket.on('tick', handler);
+    return () => {
+      socket.off('tick', handler);
+      pendingTickRef.current = null;
+    };
+  }, [symbol, timeframe]);
+
+  // Live tick update from props (fallback / header display; throttled to avoid excessive redraws)
   useEffect(() => {
     if (!tick || !seriesRef.current || !data.length) return;
     const price = tick.close ?? tick.price;
@@ -225,18 +322,28 @@ function FxChart({
 
   return (
     <div className="fx-chart-wrap" style={{ position: 'relative' }}>
-      <div className="fx-chart-header" style={{ position: 'absolute', top: 8, left: 12, zIndex: 10, display: 'flex', alignItems: 'center', gap: '1rem' }}>
-        <span style={{ fontWeight: 600, fontSize: '0.95rem' }}>{symbol}</span>
-        {displayPrice != null && (
-          <span className="fx-chart-price" style={{ fontWeight: 600, color: '#de1414' }}>
-            {Number(displayPrice).toFixed(isGoldSymbol(symbol) ? 2 : 4)}
-          </span>
-        )}
-        {loading && <span className="fx-chart-status" style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.6)' }}>Loading…</span>}
-        {wsConnected && !loading && <span className="fx-chart-live" style={{ fontSize: '0.7rem', color: '#22c55e', background: 'rgba(34,197,94,0.2)', padding: '0.15rem 0.4rem', borderRadius: 4 }}>Live</span>}
-        {isDelayed && <span className="fx-chart-delayed" style={{ fontSize: '0.7rem', color: '#ffa500', background: 'rgba(255,165,0,0.2)', padding: '0.15rem 0.4rem', borderRadius: 4 }}>Data delayed</span>}
+      <div className="fx-chart-header" style={{ position: 'absolute', top: 8, left: 12, right: 12, zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <span style={{ fontWeight: 600, fontSize: '0.95rem' }}>{symbol}</span>
+          {displayPrice != null && (
+            <span className="fx-chart-price" style={{ fontWeight: 600, color: '#de1414' }}>
+              {Number(displayPrice).toFixed(isGoldSymbol(symbol) ? 2 : 4)}
+            </span>
+          )}
+          {loading && <span className="fx-chart-status" style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.6)' }}>Loading…</span>}
+          {wsConnected && !loading && <span className="fx-chart-live" style={{ fontSize: '0.7rem', color: '#22c55e', background: 'rgba(34,197,94,0.2)', padding: '0.15rem 0.4rem', borderRadius: 4 }}>Live</span>}
+          {isDelayed && <span className="fx-chart-delayed" style={{ fontSize: '0.7rem', color: '#ffa500', background: 'rgba(255,165,0,0.2)', padding: '0.15rem 0.4rem', borderRadius: 4 }}>Data delayed</span>}
+        </div>
       </div>
-      <div ref={chartContainerRef} style={{ width: '100%', height: `${height}px` }} />
+      <div style={{ position: 'relative', width: '100%', height: `${height}px` }}>
+        <div
+          ref={(el) => {
+            chartContainerRef.current = el;
+            setContainerReady(!!el);
+          }}
+          style={{ width: '100%', height: '100%' }}
+        />
+      </div>
     </div>
   );
 }

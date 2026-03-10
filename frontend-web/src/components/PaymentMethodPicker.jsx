@@ -1,11 +1,11 @@
 import React from 'react';
-import { CreditCard, Bank, PaypalLogo, Wallet } from '@phosphor-icons/react';
+import { CreditCardIcon, BankIcon, PaypalLogoIcon, WalletIcon } from './Icons.jsx';
 
 const ICON_MAP = {
-  CreditCard,
-  Bank,
-  PaypalLogo,
-  Wallet,
+  CreditCard: CreditCardIcon,
+  Bank: BankIcon,
+  PaypalLogo: PaypalLogoIcon,
+  Wallet: WalletIcon,
 };
 
 /**
@@ -18,7 +18,7 @@ export default function PaymentMethodPicker({ options, value, onChange, label = 
       {label && <span className="form-label payment-method-picker-label">{label}</span>}
       <div className="payment-method-options" role="group" aria-label={label}>
         {options.map((opt) => {
-          const Icon = ICON_MAP[opt.icon] || CreditCard;
+          const Icon = ICON_MAP[opt.icon] || CreditCardIcon;
           const isSelected = value === opt.value;
           return (
             <button
@@ -30,7 +30,7 @@ export default function PaymentMethodPicker({ options, value, onChange, label = 
               aria-label={opt.label}
             >
               <span className="payment-method-option-icon" aria-hidden>
-                <Icon weight={isSelected ? 'bold' : 'regular'} size={24} />
+                <Icon size={24} />
               </span>
               <span className="payment-method-option-label">{opt.label}</span>
             </button>

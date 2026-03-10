@@ -3,12 +3,12 @@
  * Trust-first design
  */
 import React from 'react';
-import { CheckCircle, Crown, Sparkle } from '@phosphor-icons/react';
+import { CheckCircleIcon, CrownIcon, SparkleIcon } from './Icons.jsx';
 
 const VARIANTS = {
-  verified: { icon: CheckCircle, class: 'verified-badge', label: 'Verified' },
-  pro: { icon: Crown, class: 'verified-badge verified-badge--pro', label: 'Pro' },
-  new: { icon: Sparkle, class: 'verified-badge verified-badge--new', label: 'New' },
+  verified: { icon: CheckCircleIcon, class: 'verified-badge', label: 'Verified' },
+  pro: { icon: CrownIcon, class: 'verified-badge verified-badge--pro', label: 'Pro' },
+  new: { icon: SparkleIcon, class: 'verified-badge verified-badge--new', label: 'New' },
 };
 
 export default function VerifiedBadge({ variant = 'verified', label, className = '' }) {
@@ -16,7 +16,7 @@ export default function VerifiedBadge({ variant = 'verified', label, className =
   const Icon = config.icon;
   return (
     <span className={`${config.class} ${className}`.trim()} title={config.label}>
-      <Icon size={12} weight="fill" />
+      <Icon size={12} />
       {label ?? config.label}
     </span>
   );

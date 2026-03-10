@@ -24,12 +24,14 @@ export function MarketDataProvider({ children }) {
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
 
+    const toInternalSymbol = (s) => String(s || '').replace(/\//g, '').toUpperCase();
     const unsubTick = subscribeTick((tickData) => {
       if (!tickData || typeof tickData !== 'object') return;
       const { symbol, close, price } = tickData;
       const p = close ?? price;
       if (symbol && Number.isFinite(Number(p))) {
-        setTicks((prev) => ({ ...prev, [symbol]: { ...tickData, close: Number(p), price: Number(p) } }));
+        const key = toInternalSymbol(symbol);
+        setTicks((prev) => ({ ...prev, [key]: { ...tickData, close: Number(p), price: Number(p) } }));
         setLastUpdate(new Date());
       }
     });

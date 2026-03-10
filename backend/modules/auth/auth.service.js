@@ -70,7 +70,9 @@ async function register(payload) {
   let referrerId = null;
   if (ref) {
     const ibRepo = (await import('../ib/ib.repository.js')).default;
-    const ibProfile = await ibRepo.getProfileByUserId(ref) || await ibRepo.getProfileById(ref);
+    const ibProfile = await ibRepo.getProfileByReferralCode(ref) ||
+      await ibRepo.getProfileByUserId(ref) ||
+      await ibRepo.getProfileById(ref);
     if (ibProfile) referrerId = ibProfile.userId || ref;
   }
   const userId = await userRepo.createOne({

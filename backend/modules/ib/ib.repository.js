@@ -1,8 +1,18 @@
 /**
  * IB repository — MongoDB: ib_profiles, ib_commissions, ib_payouts
  */
+import { randomBytes } from 'crypto';
 import { getDb } from '../../config/mongo.js';
 import { ObjectId } from 'mongodb';
+
+function generateReferralCode() {
+  return randomBytes(9)
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=/g, '')
+    .slice(0, 12);
+}
 
 const PROFILES_COLLECTION = 'ib_profiles';
 const COMMISSIONS_COLLECTION = 'ib_commissions';
@@ -34,24 +44,61 @@ async function settingsCol() {
 async function createProfile(doc) {
   const col = await profilesCol();
   const now = new Date();
+  let referralCode = doc.referralCode;
+  if (!referralCode) {
+    referralCode = generateReferralCode();
+    for (let i = 0; i < 5; i++) {
+          const existing = await col.findOne({ referralCode });
+          if (!existing) break;
+          referralCode = generateReferralCode();
+        }
+  }
   const { insertedId } = await col.insertOne({
     ...doc,
+    referralCode,
     createdAt: now,
     updatedAt: now,
   });
   return insertedId.toString();
 }
 
+/** Get IB profile by referral code (for share/referral links) */
+async function getProfileByReferralCode(referralCode) {
+  const code = typeof referralCode === 'string' ? referralCode.trim() : '';
+  if (!code) return null;
+  const col = await profilesCol();
+  const p = await col.findOne({ referralCode: code });
+  return p ? { id: p._id.toString(), ...p, _id: undefined } : null;
+}
+
 async function getProfileByUserId(userId) {
   const col = await profilesCol();
-  const p = await col.findOne({ userId });
+  let p = await col.findOne({ userId });
+  if (!p) return null;
+  if (!p.referralCode) {
+    const referralCode = generateReferralCode();
+    const existing = await col.findOne({ referralCode });
+    if (!existing) {
+      await col.updateOne({ userId }, { $set: { referralCode, updatedAt: new Date() } });
+      p = await col.findOne({ userId });
+    }
+  }
   return p ? { id: p._id.toString(), ...p, _id: undefined } : null;
 }
 
 async function getProfileById(id) {
   if (!ObjectId.isValid(id)) return null;
   const col = await profilesCol();
-  const p = await col.findOne({ _id: new ObjectId(id) });
+  let p = await col.findOne({ _id: new ObjectId(id) });
+  if (!p) return null;
+  if (!p.referralCode) {
+    const referralCode = generateReferralCode();
+    const existing = await col.findOne({ referralCode });
+    if (!existing) {
+      await col.updateOne({ _id: new ObjectId(id) }, { $set: { referralCode, updatedAt: new Date() } });
+      p = await col.findOne({ _id: new ObjectId(id) });
+    }
+  }
   return p ? { id: p._id.toString(), ...p, _id: undefined } : null;
 }
 
@@ -306,6 +353,7 @@ export default {
   createProfile,
   getProfileByUserId,
   getProfileById,
+  getProfileByReferralCode,
   updateProfile,
   getHierarchyDepth,
   getUplineChainForClient,

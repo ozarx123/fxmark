@@ -1,11 +1,11 @@
 import WebSocket from 'ws';
 import { SYMBOL_MAP } from '../config/symbolMap.js';
 
-/** Twelve Data WebSocket URLs (docs: wss://ws.twelvedata.com). Pro plan required for WebSocket. */
+/** Twelve Data WebSocket URLs. Use base + apikey in query; subscribe after connect. Playground uses same endpoint. */
 const WS_URL_OPTIONS = [
-  'wss://ws.twelvedata.com/v1/quotes',
-  'wss://ws.twelvedata.com/v1',
-  'wss://ws.twelvedata.com',
+  'wss://ws.twelvedata.com/v1/quotes',  // documented quotes stream
+  'wss://ws.twelvedata.com/v1',         // base v1
+  'wss://ws.twelvedata.com',            // root (no path)
 ];
 
 /** Phase 2: Heartbeat interval (Twelve Data may require client heartbeat to keep connection alive) */
@@ -69,12 +69,16 @@ export function createTwelveDataWebSocket({ apiKey, symbols, onTick, onError }) 
     retrying = false;
     const baseUrl = WS_URL_OPTIONS[urlIndex];
     const sep = baseUrl.includes('?') ? '&' : '?';
-    const url = `${baseUrl}${sep}apikey=${apiKey}`;
+    // Some endpoints expect apikey, some api_key; try apikey first (documented)
+    const url = `${baseUrl}${sep}apikey=${encodeURIComponent(apiKey.trim())}`;
     const safeUrl = url.replace(/apikey=[^&]+/, 'apikey=***');
 
     console.log(`[twelveDataWS] Trying URL ${urlIndex + 1}/${WS_URL_OPTIONS.length}: ${safeUrl}`);
 
-    ws = new WebSocket(url);
+    ws = new WebSocket(url, {
+      perMessageDeflate: false,
+      handshakeTimeout: 10000,
+    });
 
     ws.on('unexpected-response', (req, res) => {
       if (retrying) return;
@@ -83,11 +87,15 @@ export function createTwelveDataWebSocket({ apiKey, symbols, onTick, onError }) 
       let body = '';
       res.on('data', (chunk) => { body += chunk; });
       res.on('end', () => {
+        try {
+          const parsed = body ? JSON.parse(body) : null;
+          const msg = parsed?.message || parsed?.msg || body;
+          console.warn(`[twelveDataWS] ${res.statusCode} from ${safeUrl}: ${(msg && String(msg).slice(0, 300)) || body?.slice(0, 200) || 'no body'}`);
+        } catch {
+          console.warn(`[twelveDataWS] ${res.statusCode} from ${safeUrl}: ${body?.slice(0, 200) || 'no body'}`);
+        }
         if (res.statusCode === 404) {
-          console.warn(`[twelveDataWS] 404 from ${safeUrl} — WebSocket may require Twelve Data Pro plan. Falling back to REST poller.`);
-        } else {
-          console.error(`[twelveDataWS] Unexpected response ${res.statusCode} from ${safeUrl}`);
-          if (body) console.error(`[twelveDataWS] Body: ${body.slice(0, 200)}`);
+          console.warn(`[twelveDataWS] If playground works, check: (1) exact path /v1/quotes vs /v1, (2) apikey in query, (3) subscribe format.`);
         }
         urlIndex++;
         ws.removeAllListeners();
@@ -99,11 +107,11 @@ export function createTwelveDataWebSocket({ apiKey, symbols, onTick, onError }) 
     ws.on('open', () => {
       console.log(`[twelveDataWS] Connected to ${safeUrl}`);
 
-      // Phase 2: Subscribe (action + params per Twelve Data spec)
+      // Subscribe (Twelve Data: action + params.symbols; comma-separated or array both documented)
       const subscribePayload = {
         action: 'subscribe',
         params: {
-          symbols: symbolsToSubscribe.join(','),
+          symbols: symbolsToSubscribe.join(','),  // e.g. "XAU/USD,GOLD"
         },
       };
       ws.send(JSON.stringify(subscribePayload));
@@ -123,7 +131,7 @@ export function createTwelveDataWebSocket({ apiKey, symbols, onTick, onError }) 
         const msg = JSON.parse(data.toString());
         const event = msg.event || msg.type;
 
-        // Phase 2: Parse price/quote events (event field or symbol+price presence)
+        // Twelve Data format: {"event":"price","symbol":"EUR/USD","timestamp":1772352540,"price":1.1816464,...}
         const isPriceMsg = event === 'price' || event === 'quote' || (msg.symbol && (msg.price ?? msg.close ?? msg.c ?? msg.p));
         if (isPriceMsg) {
           let items = [msg];
@@ -134,6 +142,10 @@ export function createTwelveDataWebSocket({ apiKey, symbols, onTick, onError }) 
             const price = parsePrice(d);
             const internalSymbol = toInternalSymbol(sym);
             if (internalSymbol && price > 0) {
+              const ts = d?.timestamp ?? d?.datetime ?? d?.t;
+              const datetime = ts != null
+                ? (typeof ts === 'number' ? new Date(ts * 1000).toISOString() : String(ts))
+                : new Date().toISOString();
               onTick({
                 symbol: internalSymbol,
                 price,
@@ -142,7 +154,7 @@ export function createTwelveDataWebSocket({ apiKey, symbols, onTick, onError }) 
                 high: parseFloat(d?.high ?? d?.h ?? 0),
                 low: parseFloat(d?.low ?? d?.l ?? 0),
                 volume: parseFloat(d?.volume ?? d?.v ?? 0),
-                datetime: d?.datetime ?? d?.t ?? new Date().toISOString(),
+                datetime,
               });
             }
           }

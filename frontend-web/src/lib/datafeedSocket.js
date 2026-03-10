@@ -8,13 +8,17 @@ let socket = null;
 let connectCount = 0;
 
 function getDatafeedSocketUrl() {
+  // In dev, use same origin so Vite proxy forwards /socket.io to backend (avoids direct ws://localhost:3000 upgrade failures)
+  if (import.meta.env.DEV && typeof window !== 'undefined') {
+    return window.location.origin;
+  }
   const api = import.meta.env.VITE_API_URL;
   if (api) {
     const base = api.replace(/\/api\/?$/, '');
     return base.startsWith('https') ? base : base.replace(/^http/, 'http');
   }
   if (import.meta.env.PROD) return 'https://fxmark-backend-541368249845.us-central1.run.app';
-  return window.location.origin;
+  return typeof window !== 'undefined' ? window.location.origin : '';
 }
 
 function getAuthToken() {
@@ -33,8 +37,9 @@ export function getDatafeedSocket() {
   if (socket && !socket.connected) return socket;
   const url = getDatafeedSocketUrl();
   const isCloudRun = url.includes('run.app');
-  const transports = isCloudRun ? ['polling'] : ['polling', 'websocket'];
   const isDev = import.meta.env.DEV;
+  // In dev, Vite proxy often fails to forward WebSocket upgrade; use polling only so connection works
+  const transports = isDev || isCloudRun ? ['polling'] : ['polling', 'websocket'];
   const token = getAuthToken();
   socket = io(url, {
     path: '/socket.io',

@@ -25,7 +25,7 @@ Backend service for FXMARK that provides market data via REST and WebSocket, usi
 
    Optional:
 
-   - `REDIS_URL` – Redis connection string (future use; in-memory cache is used when not set)
+   - `REDIS_URL` or `REDIS_HOST` – when set, candle cache uses Redis for faster execution; otherwise in-memory. Optional: `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_DB`, `REDIS_PREFIX`. Health: `GET /health/redis`
    - `PORT` – Server port (default: 3000)
 
 3. **Run**

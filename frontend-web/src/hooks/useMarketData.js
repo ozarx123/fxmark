@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useMarketDataContext } from '../context/MarketDataContext.jsx';
+import { getSecondsToNextBar } from '../lib/candleTime.js';
 
 /** API base for market data - use backend URL in production */
 const API_BASE = (() => {
@@ -95,12 +96,29 @@ export function useMarketData(symbol, timeframe = '1m') {
     }
   }, [internalSymbol, timeframe]);
 
+  // Refetch candles at bar boundary so we don't call Twelve Data every N seconds.
+  // The current bar is painted from live ticks; we only need fresh candles when a new bar starts.
+  const scheduleRef = useRef(null);
   useEffect(() => {
     if (!internalSymbol) return;
     fetchCandles();
-    const refetchMs = { '1m': 10000, '5m': 30000, '15m': 60000, '1h': 120000, '1d': 300000 }[timeframe] ?? 30000;
-    const id = setInterval(fetchCandles, refetchMs);
-    return () => clearInterval(id);
+
+    function scheduleNextRefetch() {
+      const secToNext = getSecondsToNextBar(timeframe);
+      const delaySec = 0.2;
+      const ms = Math.min(
+        (secToNext + delaySec) * 1000,
+        { '1m': 65000, '5m': 310000, '15m': 910000, '1h': 3660000, '1d': 86400000 }[timeframe] ?? 300000
+      );
+      scheduleRef.current = setTimeout(() => {
+        fetchCandles().then(scheduleNextRefetch).catch(scheduleNextRefetch);
+      }, ms);
+    }
+
+    scheduleNextRefetch();
+    return () => {
+      if (scheduleRef.current) clearTimeout(scheduleRef.current);
+    };
   }, [fetchCandles, internalSymbol, timeframe]);
 
   // Consume tick from central market data pool

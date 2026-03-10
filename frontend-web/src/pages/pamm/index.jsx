@@ -232,7 +232,10 @@ export default function Pamm() {
             <p className="muted" style={{ marginBottom: '1rem' }}>Browse approved PAMM funds. Sign in to follow.</p>
             <div className="pamm-manager-cards grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {managers.length === 0 && !loading && <p className="muted">No approved managers yet.</p>}
-              {managers.map((m) => {
+              {managers
+                // Hide AI-only BULL RUN fund from the classic PAMM list
+                .filter((m) => (m.name || '').toUpperCase() !== 'BULL RUN')
+                .map((m) => {
                 const fundId = m.id;
                 const alreadyFollowing = activeAllocationManagerIds.has(fundId) || activeAllocationManagerIds.has(m.userId);
                 return (
