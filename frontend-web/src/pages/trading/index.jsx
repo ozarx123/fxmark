@@ -38,6 +38,7 @@ const TIMEFRAMES = [
 /** Fallback prices when API/WS provide no data (market order still shows a price) */
 const FALLBACK_MARKET_PRICES = {
   'XAU/USD': 2650,
+  XAUUSD: 2650,
   'EUR/USD': 1.0852,
   'GBP/USD': 1.2655,
   'USD/JPY': 150.12,
@@ -111,6 +112,8 @@ function mapPositionToModal(pos) {
     entryPrice: pos.openPrice ?? pos.entryPrice ?? 0,
     currentPrice: pos.currentPrice ?? pos.openPrice ?? 0,
     pnl: pos.pnl ?? 0,
+    takeProfit: pos.takeProfit ?? null,
+    stopLoss: pos.stopLoss ?? null,
   };
 }
 
@@ -151,7 +154,7 @@ export default function Trading() {
   const [timeframe, setTimeframe] = useState('1m');
   const [chartType, setChartType] = useState('candles');
   const { candles, tick, loading, error, wsConnected } = useMarketData(symbol, timeframe);
-  const { prices: livePrices } = useLivePrices();
+  const { prices: livePrices, latency: liveLatency } = useLivePrices();
   const lastCandleClose = candles?.length ? candles[candles.length - 1]?.close : null;
   // Use tick first, then livePrices (same WS stream, all symbols), then candle close, then fallback
   const livePriceForSymbol = getPriceForSymbol(livePrices, symbol);
@@ -270,10 +273,11 @@ export default function Trading() {
 
   // Margin = sum of (volume * contract_size * price / leverage). Gold: 100oz, forex: 100k, leverage 100
   const margin = positionsWithLivePnl.reduce((sum, p) => {
-    const vol = Number(p.volume) || 0;
+    const vol = Number(p.volume ?? p.lots) || 0;
     const price = p.currentPrice ?? p.openPrice ?? 0;
     if (!vol || !price) return sum;
-    const isGold = String(p.symbol || '').toUpperCase().includes('XAU');
+    const posInternal = (p.symbol || '').replace(/\//g, '').toUpperCase();
+    const isGold = posInternal.includes('XAU') || posInternal === 'GOLD';
     const contractSize = isGold ? 100 : 100000;
     const leverage = 100;
     return sum + (vol * contractSize * price) / leverage;
@@ -433,6 +437,21 @@ export default function Trading() {
               </select>
             </label>
           </div>
+          {import.meta.env.DEV && (
+            <div className="chart-latency-debug">
+              <span className="chart-latency-debug-label">Latency (ms)</span>
+              {(() => {
+                const internal = (symbol || '').replace(/\//g, '').toUpperCase();
+                const l = liveLatency?.[internal];
+                if (!l) return <span className="chart-latency-debug-value">—</span>;
+                const parts = [];
+                if (l.providerToServerMs != null) parts.push(`feed→srv ${Math.round(l.providerToServerMs)}`);
+                if (l.serverToClientMs != null) parts.push(`srv→ui ${Math.round(l.serverToClientMs)}`);
+                if (l.endToEndMs != null) parts.push(`total ${Math.round(l.endToEndMs)}`);
+                return <span className="chart-latency-debug-value">{parts.join(' | ')}</span>;
+              })()}
+            </div>
+          )}
           <FxChart
             symbol={symbol}
             height={380}
@@ -586,6 +605,8 @@ export default function Trading() {
         positions={modalPositions}
         onClose={() => setTradesModalOpen(false)}
         onClosePosition={handleClosePosition}
+        accountId={accountOpts.accountId}
+        accountNumber={accountOpts.accountNumber}
       />
       <HistoryModal
         isOpen={historyModalOpen}

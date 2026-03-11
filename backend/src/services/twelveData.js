@@ -132,6 +132,15 @@ export async function fetchQuotesBatch(symbols, apiKey) {
     if (!sym || !Number.isFinite(price)) continue;
     const internalSymbol = fromTwelveDataSymbol(sym);
     if (!internalSymbol) continue;
+    const ts = quote?.datetime ?? quote?.t ?? null;
+    let providerTs = null;
+    if (ts) {
+      if (typeof ts === 'number') providerTs = ts * 1000;
+      else {
+        const parsed = Date.parse(ts);
+        providerTs = Number.isNaN(parsed) ? null : parsed;
+      }
+    }
     results.push({
       symbol: internalSymbol,
       price,
@@ -141,6 +150,9 @@ export async function fetchQuotesBatch(symbols, apiKey) {
       close: price,
       volume: parseFloat(quote?.volume ?? quote?.v ?? 0),
       datetime: quote?.datetime ?? quote?.t ?? new Date().toISOString(),
+      source: 'twelvedata_rest',
+      providerTs,
+      serverReceivedAt: Date.now(),
     });
   }
   return results;

@@ -10,6 +10,7 @@ import cors from 'cors';
 import { createServer } from 'http';
 import { initWebSocket, broadcastTick } from './websocket.js';
 import { logMarketTick } from './services/marketDataLogger.js';
+import positionsService from '../modules/trading/positions.service.js';
 import marketRoutes from './routes/market.js';
 import { isRedisAvailable } from './services/cache.js';
 import { fetchQuotesBatch } from './services/twelveData.js';
@@ -90,9 +91,14 @@ app.use(middleware.errorHandler);
 const server = createServer(app);
 initWebSocket(server);
 
-/** Symbols to poll/stream for quotes (broadcast via WebSocket for chart + P&L) */
-const SUBSCRIBED_SYMBOLS = ['XAUUSD', 'EURUSD'];
-/** Default 3s so ticker updates feel responsive; cap 30s. Free tier: 2 symbols × 20/min = 40 credits/min (under 55). */
+/**
+ * Symbols to poll/stream. Default: XAUUSD and EURUSD only.
+ * Override via SUBSCRIBED_SYMBOLS env (comma-separated, e.g. "XAUUSD,EURUSD,GBPUSD").
+ * Free tier: 2 symbols × ~20/min = 40 credits/min (under 55).
+ */
+const SUBSCRIBED_SYMBOLS = process.env.SUBSCRIBED_SYMBOLS
+  ? process.env.SUBSCRIBED_SYMBOLS.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean)
+  : ['XAUUSD', 'EURUSD'];
 const RAW_POLL_MS = parseInt(process.env.QUOTE_POLL_INTERVAL_MS || '3000', 10);
 const QUOTE_POLL_INTERVAL_MS = Math.min(Math.max(RAW_POLL_MS, 1000), 30000);
 
@@ -104,6 +110,13 @@ async function pollSymbols(apiKey, symbols) {
     for (const tick of ticks) {
       broadcastTick(tick);
       logMarketTick(tick, 'quote');
+      const price = tick.close ?? tick.price;
+      if (tick.symbol && price != null) {
+        console.log('[TP/SL] tick', tick.symbol, 'price', price);
+        positionsService
+          .checkAndExecuteTPLS(tick.symbol, price)
+          .catch((e) => console.warn('[TP/SL]', e.message));
+      }
     }
     return ticks.length === 0;
   } catch (err) {
@@ -131,6 +144,13 @@ function runTwelveDataWebSocket() {
     onTick: (tick) => {
       broadcastTick(tick);
       logMarketTick(tick, 'ws');
+      const price = tick.close ?? tick.price;
+      if (tick.symbol && price != null) {
+        console.log('[TP/SL] ws tick', tick.symbol, 'price', price);
+        positionsService
+          .checkAndExecuteTPLS(tick.symbol, price)
+          .catch((e) => console.warn('[TP/SL]', e.message));
+      }
     },
     onError: () => {
       console.warn('[twelveDataWS] Falling back to REST poller');

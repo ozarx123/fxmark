@@ -2337,6 +2337,35 @@ body {
   color: var(--fxmark-dark) !important;
 }
 
+/* History modal — light card, responsive, and readable on dark dashboard */
+.modal-dialog-history {
+  max-width: 720px;
+  width: 100%;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--fxmark-white) !important;
+  color: var(--fxmark-dark) !important;
+}
+
+.modal-dialog-history .modal-header {
+  padding: 0.85rem 1.25rem;
+  border-bottom: 1px solid var(--fxmark-border);
+  background: var(--fxmark-white) !important;
+}
+
+.modal-dialog-history .history-content {
+  background: var(--fxmark-white) !important;
+  color: var(--fxmark-dark) !important;
+  flex: 1;
+  min-height: 0;
+}
+
+.modal-dialog-trades .modal-header {
+  background: var(--fxmark-white) !important;
+  border-bottom-color: var(--fxmark-border);
+}
+
 .modal-dialog-history .history-tabs .tab-btn {
   background: var(--fxmark-soft-grey);
   color: var(--fxmark-dark);
@@ -3249,16 +3278,40 @@ body {
   flex: 1;
 }
 
-/* Active Trades modal */
+/* Active Trades modal — light card, responsive, and fits content */
 .modal-dialog-trades {
-  max-width: 640px;
+  max-width: 720px;
   width: 100%;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--fxmark-white) !important;
+  color: var(--fxmark-dark) !important;
+}
+
+.modal-dialog-trades .modal-header {
+  padding: 0.85rem 1.25rem;
+  border-bottom: 1px solid var(--fxmark-border);
+}
+
+.modal-dialog-trades .active-trades-content {
+  background: var(--fxmark-white) !important;
+  color: var(--fxmark-dark) !important;
+  flex: 1;
+  min-height: 0;
 }
 
 .active-trades-content {
-  padding: 1rem 1.25rem;
-  max-height: 70vh;
+  padding: 0.75rem 1.25rem 1rem;
+  max-height: 100%;
   overflow-y: auto;
+}
+
+.modal-dialog-trades .empty-trades {
+  margin: 0;
+  color: var(--fxmark-text-muted) !important;
+  text-align: center;
+  padding: 2rem;
 }
 
 .empty-trades {
@@ -3275,26 +3328,52 @@ body {
 .trades-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.85rem;
+  font-size: 0.9rem;
+  table-layout: auto;
+}
+
+.modal-dialog-trades .trades-table {
+  color: var(--fxmark-dark) !important;
 }
 
 .trades-table th,
 .trades-table td {
-  padding: 0.5rem 0.75rem;
+  padding: 0.5rem 0.4rem;
   text-align: left;
   border-bottom: 1px solid var(--fxmark-border);
+  color: inherit;
+  white-space: nowrap;
+}
+
+.trades-table th:nth-last-child(-n+3),
+.trades-table td:nth-last-child(-n+3) {
+  text-align: center;
+}
+
+.modal-dialog-trades .trades-table th,
+.modal-dialog-trades .trades-table td {
+  color: var(--fxmark-dark) !important;
 }
 
 .trades-table th {
   color: var(--fxmark-text-muted);
   font-weight: 500;
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
 
+.modal-dialog-trades .trades-table th {
+  color: var(--fxmark-text-muted) !important;
+}
+
 .trades-table .symbol-cell {
   font-weight: 600;
+}
+
+.modal-dialog-trades .trades-table .tp-cell,
+.modal-dialog-trades .trades-table .sl-cell {
+  color: var(--fxmark-dark) !important;
 }
 
 .type-badge {
@@ -3338,9 +3417,25 @@ body {
   flex-wrap: wrap;
 }
 
+.modal-dialog-trades .close-cell .btn {
+  color: inherit;
+}
+
 .partial-close-row td {
   background: var(--fxmark-accent);
   padding: 0.5rem 0.75rem;
+  color: var(--fxmark-dark) !important;
+}
+
+.modal-dialog-trades .partial-close-form,
+.modal-dialog-trades .partial-close-form span {
+  color: var(--fxmark-dark) !important;
+}
+
+.modal-dialog-trades .partial-close-form .form-input-sm {
+  background: var(--fxmark-white) !important;
+  color: var(--fxmark-dark) !important;
+  border-color: var(--fxmark-border);
 }
 
 .partial-close-form {
@@ -3352,8 +3447,49 @@ body {
 
 .partial-close-form .form-input-sm {
   padding: 0.3rem 0.5rem;
-  font-size: 0.85rem;
+  font-size: 0.9rem;
   width: 5rem;
+}
+
+.tpls-row td {
+  background: var(--fxmark-accent);
+  color: var(--fxmark-dark) !important;
+}
+
+.modal-dialog-trades .tpls-form,
+.modal-dialog-trades .tpls-form label {
+  color: var(--fxmark-dark) !important;
+}
+
+.modal-dialog-trades .tpls-form .form-input-sm {
+  background: var(--fxmark-white) !important;
+  color: var(--fxmark-dark) !important;
+  border-color: var(--fxmark-border);
+}
+
+.tpls-form {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.tpls-form label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+}
+
+.tpls-form .form-input-sm {
+  padding: 0.35rem 0.5rem;
+  font-size: 0.9rem;
+  width: 6rem;
+}
+
+.tpls-error {
+  color: var(--fxmark-danger, #c00);
+  font-size: 0.9rem;
 }
 
 /* History modal */
@@ -3858,6 +3994,29 @@ body {
   font-size: 0.85rem;
   color: var(--fxmark-text-muted);
   line-height: 1.45;
+}
+
+/* Chart latency debug (dev only) */
+.chart-latency-debug {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.08);
+  color: var(--fxmark-text-muted);
+  margin-top: 0.35rem;
+}
+
+.chart-latency-debug-label {
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.chart-latency-debug-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
 .chart-controls {

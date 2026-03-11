@@ -77,6 +77,7 @@ function normalizeTick(tick) {
   if (!tick || typeof tick !== 'object') return null;
   const price = Number(tick.close ?? tick.price);
   if (!tick.symbol || !Number.isFinite(price)) return null;
+  const now = Date.now();
   return {
     symbol: String(tick.symbol),
     price,
@@ -86,6 +87,11 @@ function normalizeTick(tick) {
     low: Number(tick.low) || 0,
     volume: Number(tick.volume) || 0,
     datetime: tick.datetime ?? new Date().toISOString(),
+    // Optional latency instrumentation fields
+    source: tick.source || 'unknown',
+    providerTs: tick.providerTs ?? null,
+    serverReceivedAt: tick.serverReceivedAt ?? now,
+    serverBroadcastAt: now,
   };
 }
 

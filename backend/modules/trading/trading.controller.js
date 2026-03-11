@@ -129,6 +129,21 @@ async function closePosition(req, res, next) {
   }
 }
 
+async function updatePositionTPLS(req, res, next) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const { positionId } = req.params;
+    const { takeProfit, stopLoss } = req.body;
+    const accountId = req.activeAccount?.id;
+    const position = await positionsService.updatePositionTPLS(userId, positionId, { takeProfit, stopLoss }, accountId);
+    emitTradeUpdate(userId, null).catch(() => {});
+    res.json(position);
+  } catch (e) {
+    next(e);
+  }
+}
+
 export default {
   placeOrder,
   cancelOrder,
@@ -138,4 +153,5 @@ export default {
   getClosedPositions,
   getPosition,
   closePosition,
+  updatePositionTPLS,
 };

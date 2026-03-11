@@ -94,7 +94,7 @@ export default function Finance() {
     const aid = accountOpts.accountId;
     const arr = Array.isArray(tradeSnapshot.positions) ? tradeSnapshot.positions : [];
     const filtered = aid ? arr.filter((x) => !x.accountId || x.accountId === aid) : arr;
-    setPositions(filtered.map((p) => ({ id: p.id, symbol: p.symbol, type: p.side, lots: p.volume, entryPrice: p.openPrice, currentPrice: p.currentPrice ?? p.openPrice, pnl: p.pnl ?? 0 })));
+    setPositions(filtered.map((p) => ({ ...p, id: p.id, symbol: p.symbol, type: p.side ?? p.type, lots: p.volume ?? p.lots, entryPrice: p.openPrice ?? p.entryPrice, currentPrice: p.currentPrice ?? p.openPrice, pnl: p.pnl ?? 0, takeProfit: p.takeProfit, stopLoss: p.stopLoss })));
   }, [tradeSnapshot, isAuthenticated, accountOpts.accountId]);
 
   const loadMonthlyReport = useCallback(async () => {
@@ -567,6 +567,8 @@ export default function Finance() {
         })}
         onClose={() => setTradesModalOpen(false)}
         onClosePosition={handleClosePosition}
+        accountId={accountOpts.accountId}
+        accountNumber={accountOpts.accountNumber}
       />
       <HistoryModal
         isOpen={historyModalOpen}

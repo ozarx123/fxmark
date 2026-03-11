@@ -28,10 +28,11 @@ async function fetchWithTimeout(url, opts = {}) {
 }
 
 /**
- * Convert display symbol (EUR/USD) to internal (EURUSD)
+ * Convert any symbol (EUR/USD, xAUUSD, GOLD) to internal (EURUSD, XAUUSD)
  */
 function toInternalSymbol(display) {
-  return String(display || '').replace(/\//g, '').toUpperCase();
+  const s = String(display || '').replace(/\//g, '').toUpperCase();
+  return s === 'GOLD' ? 'XAUUSD' : s;
 }
 
 /**
@@ -42,6 +43,7 @@ function toInternalSymbol(display) {
  */
 export function useMarketData(symbol, timeframe = '1m') {
   const [candles, setCandles] = useState([]);
+  const [liveCandles, setLiveCandles] = useState([]);
   const [tick, setTick] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -65,6 +67,7 @@ export function useMarketData(symbol, timeframe = '1m') {
           const data = await res.json();
           const arr = Array.isArray(data) ? data : [];
           setCandles(arr);
+          setLiveCandles(arr);
           if (arr.length > 0) {
             const last = arr[arr.length - 1];
             const lastClose = last.close != null ? Number(last.close) : null;
@@ -124,14 +127,101 @@ export function useMarketData(symbol, timeframe = '1m') {
   // Consume tick from central market data pool
   const { ticks, connected } = useMarketDataContext();
   const poolTick = ticks[internalSymbol];
+
+  // Map timeframe to candle duration in seconds
+  const tfSeconds = {
+    '1m': 60,
+    '5m': 5 * 60,
+    '15m': 15 * 60,
+    '1h': 60 * 60,
+    '1d': 24 * 60 * 60,
+  }[timeframe] ?? 60;
+
+  const rafScheduledRef = useRef(false);
+  const pendingTickRef = useRef(null);
+
   useEffect(() => {
     if (!internalSymbol) return;
-    if (poolTick) {
-      const price = poolTick.close ?? poolTick.price;
-      if (Number.isFinite(Number(price))) setTick(poolTick);
+    if (!poolTick) return;
+    const price = poolTick.close ?? poolTick.price;
+    if (!Number.isFinite(Number(price))) return;
+
+    pendingTickRef.current = { poolTick, price: Number(price), tfSeconds };
+
+    const flush = () => {
+      rafScheduledRef.current = false;
+      const pending = pendingTickRef.current;
+      if (!pending) return;
+      const { poolTick: pt, price: p, tfSeconds: tfs } = pending;
+
+      setTick(pt);
+
+      setLiveCandles((prev) => {
+        if (!Number.isFinite(p)) return prev || [];
+        let nowMs = pt.providerTs;
+        if (nowMs == null || Number.isNaN(Number(nowMs))) {
+          const parsed = pt.datetime ? Date.parse(pt.datetime) : NaN;
+          nowMs = (parsed != null && !Number.isNaN(parsed)) ? parsed : Date.now();
+        }
+        const nowSec = Math.floor(nowMs / 1000);
+        const bucketStart = Math.floor(nowSec / tfs) * tfs;
+
+        if (!prev || prev.length === 0) {
+          return [
+            { time: bucketStart, open: p, high: p, low: p, close: p, volume: 0 },
+          ];
+        }
+
+        const out = [...prev];
+        const last = out[out.length - 1];
+
+        if (!last || typeof last.time !== 'number') {
+          out[out.length - 1] = {
+            time: bucketStart,
+            open: p,
+            high: p,
+            low: p,
+            close: p,
+            volume: last?.volume ?? 0,
+          };
+          return out;
+        }
+
+        if (bucketStart > last.time) {
+          out.push({
+            time: bucketStart,
+            open: p,
+            high: p,
+            low: p,
+            close: p,
+            volume: 0,
+          });
+          return out;
+        }
+
+        const updated = {
+          ...last,
+          high: Math.max(last.high ?? p, p),
+          low: Math.min(
+            last.low == null || Number.isNaN(Number(last.low)) ? p : last.low,
+            p
+          ),
+          close: p,
+        };
+        out[out.length - 1] = updated;
+        return out;
+      });
+    };
+
+    if (!rafScheduledRef.current) {
+      rafScheduledRef.current = true;
+      requestAnimationFrame(flush);
     }
-  }, [internalSymbol, poolTick]);
+  }, [internalSymbol, poolTick, tfSeconds]);
+
   useEffect(() => setWsConnected(connected), [connected]);
 
-  return { candles, tick, loading, error, wsConnected, refetch: fetchCandles };
+  const effectiveCandles = liveCandles.length ? liveCandles : candles;
+
+  return { candles: effectiveCandles, tick, loading, error, wsConnected, refetch: fetchCandles };
 }

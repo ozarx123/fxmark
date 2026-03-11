@@ -2,13 +2,16 @@
  * MarketDataContext — single data pool for feed streams.
  * Receives ticks, candles, and trade updates in one place, distributes to consumers.
  * One socket connection, shared state.
+ * Re-subscribes when token changes (after login) so a new socket is created with auth.
  */
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { subscribeTick, getDatafeedSocket } from '../lib/datafeedSocket.js';
+import { useAuth } from './AuthContext.jsx';
 
 const MarketDataContext = createContext(null);
 
 export function MarketDataProvider({ children }) {
+  const { token } = useAuth();
   const [ticks, setTicks] = useState({});
   const [lastUpdate, setLastUpdate] = useState(null);
   const [connected, setConnected] = useState(false);
@@ -27,11 +30,25 @@ export function MarketDataProvider({ children }) {
     const toInternalSymbol = (s) => String(s || '').replace(/\//g, '').toUpperCase();
     const unsubTick = subscribeTick((tickData) => {
       if (!tickData || typeof tickData !== 'object') return;
-      const { symbol, close, price } = tickData;
+      const { symbol, close, price, providerTs, serverReceivedAt, serverBroadcastAt } = tickData;
       const p = close ?? price;
       if (symbol && Number.isFinite(Number(p))) {
         const key = toInternalSymbol(symbol);
-        setTicks((prev) => ({ ...prev, [key]: { ...tickData, close: Number(p), price: Number(p) } }));
+        const now = Date.now();
+        const latency = {
+          providerToServerMs: providerTs && serverReceivedAt ? serverReceivedAt - providerTs : null,
+          serverToClientMs: serverBroadcastAt ? now - serverBroadcastAt : null,
+          endToEndMs: providerTs ? now - providerTs : null,
+        };
+        setTicks((prev) => ({
+          ...prev,
+          [key]: {
+            ...tickData,
+            close: Number(p),
+            price: Number(p),
+            latency,
+          },
+        }));
         setLastUpdate(new Date());
       }
     });
@@ -63,7 +80,7 @@ export function MarketDataProvider({ children }) {
       unsubTick();
       setConnected(false);
     };
-  }, []);
+  }, [token]);
 
   const value = { ticks, lastUpdate, connected, tradeSnapshot, pammUpdateAt, pammUpdateFundId };
   return <MarketDataContext.Provider value={value}>{children}</MarketDataContext.Provider>;

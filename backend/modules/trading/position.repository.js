@@ -31,12 +31,28 @@ async function findById(id, userId, accountId = null) {
   return p ? { id: p._id.toString(), ...p, _id: undefined } : null;
 }
 
+/**
+ * Generate matching symbol variants for lookups.
+ * Handles:
+ * - Display forms: "XAU/USD", "EUR/USD"
+ * - Internal forms: "XAUUSD", "EURUSD"
+ * - Spaced forms: "XAU USD" (treated as XAUUSD)
+ */
+function symbolVariants(symbol) {
+  if (!symbol) return null;
+  const raw = String(symbol || '').toUpperCase();
+  // Strip slashes and spaces for canonical internal form (e.g. "XAU/USD", "XAU USD" -> "XAUUSD")
+  const noSlashNoSpace = raw.replace(/[\/\s]/g, '');
+  const withSlash = noSlashNoSpace.length === 6 ? `${noSlashNoSpace.slice(0, 3)}/${noSlashNoSpace.slice(3)}` : noSlashNoSpace;
+  return [...new Set([noSlashNoSpace, withSlash, raw, symbol])];
+}
+
 async function listOpen(userId, options = {}) {
   const c = await col();
   const { symbol, limit = 100, accountId } = options;
   const filter = { userId, closedAt: null };
   if (accountId) filter.$or = [{ accountId }, { accountId: { $exists: false } }, { accountId: null }];
-  if (symbol) filter.symbol = symbol;
+  if (symbol) filter.symbol = { $in: symbolVariants(symbol) };
   const list = await c.find(filter).sort({ openedAt: -1 }).limit(limit).toArray();
   return list.map((p) => ({ id: p._id.toString(), ...p, _id: undefined }));
 }
@@ -46,13 +62,27 @@ async function listClosed(userId, options = {}) {
   const { symbol, from, to, limit = 50, accountId } = options;
   const filter = { userId, closedAt: { $ne: null } };
   if (accountId) filter.$or = [{ accountId }, { accountId: { $exists: false } }, { accountId: null }];
-  if (symbol) filter.symbol = symbol;
+  if (symbol) filter.symbol = { $in: symbolVariants(symbol) };
   if (from || to) {
     filter.closedAt = {};
     if (from) filter.closedAt.$gte = new Date(from);
     if (to) filter.closedAt.$lte = new Date(to);
   }
   const list = await c.find(filter).sort({ closedAt: -1 }).limit(limit).toArray();
+  return list.map((p) => ({ id: p._id.toString(), ...p, _id: undefined }));
+}
+
+/** Open positions by symbol that have takeProfit or stopLoss set (for TP/SL execution) */
+async function listOpenBySymbolWithTPLS(symbol) {
+  if (!symbol) return [];
+  const c = await col();
+  const symbols = symbolVariants(symbol);
+  const list = await c
+    .find({
+      closedAt: null,
+      symbol: { $in: symbols },
+    })
+    .toArray();
   return list.map((p) => ({ id: p._id.toString(), ...p, _id: undefined }));
 }
 
@@ -83,4 +113,4 @@ async function update(id, userId, update, accountId = null) {
   return result ? { id: result._id.toString(), ...result, _id: undefined } : null;
 }
 
-export default { create, findById, listOpen, listClosed, listTopUsersByOpenPositions, update };
+export default { create, findById, listOpen, listClosed, listTopUsersByOpenPositions, listOpenBySymbolWithTPLS, update };

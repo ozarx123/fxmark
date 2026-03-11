@@ -1,9 +1,15 @@
 import { useMemo } from 'react';
 import { useMarketDataContext } from '../context/MarketDataContext.jsx';
 
-/** Normalize symbol for matching (EUR/USD -> EURUSD) */
+/** Normalize symbol for matching (EUR/USD -> EURUSD, xAUUSD -> XAUUSD) */
 function toInternal(s) {
   return String(s || '').replace(/\//g, '').toUpperCase();
+}
+
+/** True if symbol is gold (XAU/USD or GOLD) for contract size / decimals */
+function isGoldSymbol(sym) {
+  const s = toInternal(sym);
+  return s.includes('XAU') || s === 'GOLD';
 }
 
 /**
@@ -13,15 +19,17 @@ function toInternal(s) {
  */
 export function useLivePrices() {
   const { ticks, lastUpdate, connected } = useMarketDataContext();
-  const prices = useMemo(() => {
-    const out = {};
+  const { prices, latency } = useMemo(() => {
+    const outPrices = {};
+    const outLatency = {};
     for (const [sym, t] of Object.entries(ticks)) {
       const p = t?.close ?? t?.price;
-      if (Number.isFinite(p)) out[sym] = p;
+      if (Number.isFinite(p)) outPrices[sym] = p;
+      if (t?.latency) outLatency[sym] = t.latency;
     }
-    return out;
+    return { prices: outPrices, latency: outLatency };
   }, [ticks]);
-  return { prices, lastUpdate, connected };
+  return { prices, latency, lastUpdate, connected };
 }
 
 /**
@@ -39,15 +47,15 @@ export function getPriceForSymbol(prices, displaySymbol) {
  * @returns {number} P&L in account currency (USD)
  */
 export function computePnL(pos, currentPrice) {
-  const open = Number(pos.openPrice) || 0;
-  const vol = Number(pos.volume) || 0;
+  const open = Number(pos.openPrice ?? pos.entryPrice) || 0;
+  const vol = Number(pos.volume ?? pos.lots) || 0;
   if (!open || !vol || !currentPrice) return pos.pnl ?? 0;
 
-  const sym = String(pos.symbol || '').toUpperCase();
-  const isGold = sym.includes('XAU');
-  const contractSize = isGold ? 100 : 100000; // 100 oz for gold, 100k for forex
+  const isGold = isGoldSymbol(pos.symbol);
+  const contractSize = isGold ? 100 : 100000; // 100 oz per lot for XAU/GOLD, 100k for forex
 
   const diff = currentPrice - open;
-  const pnl = (pos.side === 'sell' ? -diff : diff) * vol * contractSize;
+  const side = String(pos.side ?? pos.type ?? 'buy').toLowerCase();
+  const pnl = (side === 'sell' ? -diff : diff) * vol * contractSize;
   return pnl;
 }

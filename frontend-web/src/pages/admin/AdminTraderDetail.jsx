@@ -199,10 +199,11 @@ export default function AdminTraderDetail() {
 
   const totalEquity = totalBalance + positionsWithLivePnl.reduce((s, p) => s + (p.pnl ?? 0), 0);
   const totalMargin = positionsWithLivePnl.reduce((sum, p) => {
-    const vol = Number(p.volume) || 0;
+    const vol = Number(p.volume ?? p.lots) || 0;
     const price = p.currentPrice ?? p.openPrice ?? 0;
     if (!vol || !price) return sum;
-    const isGold = String(p.symbol || '').toUpperCase().includes('XAU');
+    const posInternal = (p.symbol || '').replace(/\//g, '').toUpperCase();
+    const isGold = posInternal.includes('XAU') || posInternal === 'GOLD';
     const contractSize = isGold ? 100 : 100000;
     const leverage = 100;
     return sum + (vol * contractSize * price) / leverage;

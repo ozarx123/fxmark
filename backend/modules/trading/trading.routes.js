@@ -26,6 +26,7 @@ router.post('/orders/:orderId/cancel', controller.cancelOrder);
 router.get('/positions', controller.getOpenPositions);
 router.get('/positions/closed', controller.getClosedPositions);
 router.get('/positions/:positionId', controller.getPosition);
+router.patch('/positions/:positionId', controller.updatePositionTPLS);
 router.post('/positions/:positionId/close', controller.closePosition);
 
 export default router;

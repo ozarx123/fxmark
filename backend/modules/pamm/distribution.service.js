@@ -81,7 +81,18 @@ async function distributePammPnl(managerId, positionId, pnl, accountId, position
   }
 
   const updatedFollowerIds = [];
+
+  // Use trade time to exclude followers who joined after this trade.
+  // Prefer position.closedAt when available; otherwise use now.
+  const tradeTimeMs = position?.closedAt
+    ? new Date(position.closedAt).getTime()
+    : Date.now();
+
   for (const alloc of allocations) {
+    // Skip allocations created after this trade was closed — they should not participate in this trade's P&L.
+    if (alloc.createdAt && new Date(alloc.createdAt).getTime() > tradeTimeMs) {
+      continue;
+    }
     // Investor share = (investor's allocation / total fund capital) × remaining P&L
     const allocationShareOfFund = totalCapital > 0 ? (alloc.allocatedBalance || 0) / totalCapital : 0;
     const share = allocationShareOfFund * remainingPnl;

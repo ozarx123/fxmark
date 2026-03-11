@@ -170,24 +170,26 @@ export default function PammAi() {
           name: 'BULL RUN',
         };
         setFund(aiFund);
-        setStats({
+
+        // Fetch detailed stats + trades for the AI fund (includes cumulativePnl, fundGrowthRate, etc.)
+        const detail = await pammApi.getFundDetail(aiFund.id).catch(() => null);
+
+        const effectiveStats = detail?.stats || {
           aum: aiFund.aum ?? aiFund.fundSize ?? 0,
           investors: aiFund.investors ?? 0,
           fundGrowthRate: aiFund.fundGrowthRate ?? aiFund.pnlPercent ?? 0,
           cumulativePnl: aiFund.cumulativePnl ?? 0,
-        });
-        // When authenticated, load fund detail for trades + current user's allocation (share)
-        if (isAuthenticated) {
-          const detail = await pammApi.getFundDetail(aiFund.id).catch(() => null);
-          if (detail) {
-            setFundDetail({
-              recentTrades: detail.recentTrades || [],
-              myAllocation: detail.myAllocation || null,
-              stats: detail.stats || null,
-            });
-          } else {
-            setFundDetail(null);
-          }
+        };
+
+        setStats(effectiveStats);
+
+        // Always show recent trades; only include myAllocation when authenticated
+        if (detail) {
+          setFundDetail({
+            recentTrades: detail.recentTrades || [],
+            myAllocation: isAuthenticated ? (detail.myAllocation || null) : null,
+            stats: detail.stats || null,
+          });
         } else {
           setFundDetail(null);
         }
@@ -268,13 +270,23 @@ export default function PammAi() {
               </div>
               <div className="pamm-ai-hero-actions">
                 {isAuthenticated ? (
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={() => setFollowModalOpen(true)}
-                  >
-                    Follow BULL RUN
-                  </button>
+                  fundDetail?.myAllocation ? (
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => setFollowModalOpen(true)}
+                    >
+                      Add funds
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => setFollowModalOpen(true)}
+                    >
+                      Follow BULL RUN
+                    </button>
+                  )
                 ) : (
                   <Link to="/auth" className="btn btn-primary">
                     Sign in to follow

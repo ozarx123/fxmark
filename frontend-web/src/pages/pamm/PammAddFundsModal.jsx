@@ -38,7 +38,7 @@ export default function PammAddFundsModal({ allocationId, managerName, currentBa
             <input
               type="number"
               min={1}
-              step={100}
+              step={1}
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               className="form-input"

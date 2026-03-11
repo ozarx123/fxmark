@@ -98,6 +98,17 @@ export async function getClosedPositions(params = {}, opts = {}) {
   return res.json();
 }
 
+/** Update take profit and/or stop loss for a position. Pass null to clear. */
+export async function updatePositionTPLS(positionId, { takeProfit, stopLoss }, opts = {}) {
+  const { accountId, accountNumber } = opts;
+  const body = {};
+  if (takeProfit !== undefined) body.takeProfit = takeProfit == null ? null : Number(takeProfit);
+  if (stopLoss !== undefined) body.stopLoss = stopLoss == null ? null : Number(stopLoss);
+  const res = await fetchWithAuth(`/trading/positions/${positionId}`, { method: 'PATCH', body: JSON.stringify(body) }, accountId, accountNumber);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to update TP/SL');
+  return res.json();
+}
+
 /** Close position (full or partial). Pass closePrice for accurate P&L and wallet credit. */
 export async function closePosition(positionId, volume, closePrice, opts = {}) {
   const { accountId, accountNumber } = opts;

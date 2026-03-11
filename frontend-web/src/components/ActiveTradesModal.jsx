@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import ConfirmDialog from './ConfirmDialog';
+import { computePnL } from '../hooks/useLivePrices';
+import { updatePositionTPLS } from '../api/tradingApi';
 
 const LOT_OPTIONS = [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 3, 5, 10];
 
@@ -17,12 +19,23 @@ function formatPnl(pnl) {
   return { text: '0.00', cls: '' };
 }
 
-export default function ActiveTradesModal({ isOpen, positions: propPositions, onClose, onClosePosition }) {
+function formatPrice(value, isXau) {
+  if (value == null || value === '') return '—';
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '—';
+  return n.toFixed(isXau ? 2 : 4);
+}
+
+export default function ActiveTradesModal({ isOpen, positions: propPositions, onClose, onClosePosition, accountId, accountNumber }) {
   const [positions, setPositions] = useState(propPositions ?? MOCK_POSITIONS);
   const [closeRow, setCloseRow] = useState(null); // position id for partial row
   const [partialLots, setPartialLots] = useState(0.1);
   const [closeConfirm, setCloseConfirm] = useState(null); // { pos, partial: false }
   const [partialConfirm, setPartialConfirm] = useState(null); // { pos, lots }
+  const [tplsRow, setTplsRow] = useState(null); // position id for TP/SL edit row
+  const [tplsDraft, setTplsDraft] = useState({ takeProfit: '', stopLoss: '' });
+  const [tplsSaving, setTplsSaving] = useState(false);
+  const [tplsError, setTplsError] = useState(null);
 
   useEffect(() => {
     if (propPositions) setPositions(propPositions);
@@ -63,6 +76,36 @@ export default function ActiveTradesModal({ isOpen, positions: propPositions, on
     setPartialLots(available.length ? available[available.length - 1] : pos.lots);
   };
 
+  const openTplsRow = (pos) => {
+    setTplsRow(pos.id);
+    setTplsDraft({
+      takeProfit: pos.takeProfit != null ? String(pos.takeProfit) : '',
+      stopLoss: pos.stopLoss != null ? String(pos.stopLoss) : '',
+    });
+    setTplsError(null);
+  };
+
+  const handleTplsSet = async (pos) => {
+    setTplsSaving(true);
+    setTplsError(null);
+    try {
+      const takeProfit = tplsDraft.takeProfit.trim() === '' ? null : parseFloat(tplsDraft.takeProfit);
+      const stopLoss = tplsDraft.stopLoss.trim() === '' ? null : parseFloat(tplsDraft.stopLoss);
+      if (takeProfit !== null && !Number.isFinite(takeProfit)) throw new Error('Invalid Take Profit');
+      if (stopLoss !== null && !Number.isFinite(stopLoss)) throw new Error('Invalid Stop Loss');
+      const opts = { accountId, accountNumber };
+      const updated = await updatePositionTPLS(pos.id, { takeProfit, stopLoss }, opts);
+      setPositions((prev) =>
+        prev.map((p) => (p.id === pos.id ? { ...p, takeProfit: updated.takeProfit ?? null, stopLoss: updated.stopLoss ?? null } : p))
+      );
+      setTplsRow(null);
+    } catch (e) {
+      setTplsError(e.message || 'Failed to update TP/SL');
+    } finally {
+      setTplsSaving(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -86,25 +129,36 @@ export default function ActiveTradesModal({ isOpen, positions: propPositions, on
                     <th>Entry</th>
                     <th>Current</th>
                     <th className="pnl-col">P&L</th>
+                    <th>TP</th>
+                    <th>SL</th>
                     <th>Close</th>
                   </tr>
                 </thead>
                 <tbody>
                   {positions.map((pos) => {
-                    const pnl = pos.pnl ?? 0;
+                    const type = pos.type ?? pos.side ?? 'buy';
+                    const entryPrice = pos.entryPrice ?? pos.openPrice ?? 0;
+                    const currentPrice = pos.currentPrice ?? entryPrice ?? 0;
+                    const vol = pos.lots ?? pos.volume ?? 0;
+                    const posForPnl = { openPrice: entryPrice, side: type, volume: vol, symbol: pos.symbol };
+                    const pnl = currentPrice != null && entryPrice && vol
+                      ? computePnL(posForPnl, currentPrice)
+                      : (pos.pnl ?? 0);
                     const { text: pnlText, cls: pnlCls } = formatPnl(pnl);
-                    const currentPrice = pos.currentPrice ?? pos.entryPrice ?? 0;
+                    const isXau = pos.symbol?.includes('XAU');
                     return (
                       <React.Fragment key={pos.id}>
                         <tr>
                           <td className="symbol-cell">{pos.symbol}</td>
                           <td>
-                            <span className={`type-badge type-${pos.type}`}>{pos.type}</span>
+                            <span className={`type-badge type-${type}`}>{type}</span>
                           </td>
-                          <td>{pos.lots}</td>
-                          <td>{(pos.entryPrice ?? 0).toFixed(pos.symbol?.includes('XAU') ? 2 : 4)}</td>
-                          <td>{Number(currentPrice).toFixed(pos.symbol?.includes('XAU') ? 2 : 4)}</td>
+                          <td>{vol}</td>
+                          <td>{entryPrice.toFixed(isXau ? 2 : 4)}</td>
+                          <td>{Number(currentPrice).toFixed(isXau ? 2 : 4)}</td>
                           <td className={`pnl-cell ${pnlCls}`}>{pnlText}</td>
+                          <td className="tp-cell">{formatPrice(pos.takeProfit, isXau)}</td>
+                          <td className="sl-cell">{formatPrice(pos.stopLoss, isXau)}</td>
                           <td className="close-cell">
                             <button type="button" className="btn btn-sm btn-sell" onClick={() => handleCloseAllClick(pos)}>
                               Close all
@@ -112,11 +166,19 @@ export default function ActiveTradesModal({ isOpen, positions: propPositions, on
                             <button type="button" className="btn btn-sm btn-secondary" onClick={() => openCloseRow(pos)}>
                               Partial
                             </button>
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-primary"
+                              onClick={() => openTplsRow(pos)}
+                              title="Set Take Profit / Stop Loss"
+                            >
+                              Set TP/SL
+                            </button>
                           </td>
                         </tr>
                         {closeRow === pos.id && (
                           <tr className="partial-close-row">
-                            <td colSpan={7}>
+                            <td colSpan={9}>
                               <div className="partial-close-form">
                                 <span>Close</span>
                                 <select
@@ -135,6 +197,43 @@ export default function ActiveTradesModal({ isOpen, positions: propPositions, on
                                 <button type="button" className="btn btn-sm btn-secondary" onClick={() => setCloseRow(null)}>
                                   Cancel
                                 </button>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                        {tplsRow === pos.id && (
+                          <tr className="tpls-row">
+                            <td colSpan={9}>
+                              <div className="tpls-form">
+                                <label>
+                                  Take Profit
+                                  <input
+                                    type="number"
+                                    step={isXau ? 0.01 : 0.0001}
+                                    value={tplsDraft.takeProfit}
+                                    onChange={(e) => setTplsDraft((d) => ({ ...d, takeProfit: e.target.value }))}
+                                    className="form-input form-input-sm"
+                                    placeholder={isXau ? 'e.g. 2650' : 'e.g. 1.09'}
+                                  />
+                                </label>
+                                <label>
+                                  Stop Loss
+                                  <input
+                                    type="number"
+                                    step={isXau ? 0.01 : 0.0001}
+                                    value={tplsDraft.stopLoss}
+                                    onChange={(e) => setTplsDraft((d) => ({ ...d, stopLoss: e.target.value }))}
+                                    className="form-input form-input-sm"
+                                    placeholder={isXau ? 'e.g. 2600' : 'e.g. 1.08'}
+                                  />
+                                </label>
+                                <button type="button" className="btn btn-sm btn-primary" onClick={() => handleTplsSet(pos)} disabled={tplsSaving}>
+                                  {tplsSaving ? 'Saving…' : 'Set'}
+                                </button>
+                                <button type="button" className="btn btn-sm btn-secondary" onClick={() => { setTplsRow(null); setTplsError(null); }}>
+                                  Cancel
+                                </button>
+                                {tplsError && <span className="tpls-error">{tplsError}</span>}
                               </div>
                             </td>
                           </tr>

@@ -1,8 +1,11 @@
 # Step 1: Build Docker image and push to Artifact Registry (no local Docker required).
 # From repo root: gcloud builds submit --config=docker/cloudbuild-backend.yaml .
 # Step 2: Deploy to Cloud Run (see DEPLOY.md): gcloud run deploy fxmark-backend --image=...
+# Note: _TAG defaults to 'latest' because SHORT_SHA is empty when submitting from local (non-git) source.
+# For CI with git: pass --substitutions=_TAG=$SHORT_SHA
 substitutions:
   _REGION: 'us-central1'
+  _TAG: 'latest'
 
 options:
   logging: CLOUD_LOGGING_ONLY
@@ -12,7 +15,7 @@ steps:
     args:
       - 'build'
       - '-t'
-      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/fxmark/backend:${SHORT_SHA}'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/fxmark/backend:${_TAG}'
       - '-t'
       - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/fxmark/backend:latest'
       - '-f'
@@ -22,7 +25,7 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
-      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/fxmark/backend:${SHORT_SHA}'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/fxmark/backend:${_TAG}'
 
   - name: 'gcr.io/cloud-builders/docker'
     args:
@@ -30,5 +33,5 @@ steps:
       - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/fxmark/backend:latest'
 
 images:
-  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/fxmark/backend:${SHORT_SHA}'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/fxmark/backend:${_TAG}'
   - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/fxmark/backend:latest'

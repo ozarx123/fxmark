@@ -16,13 +16,35 @@ function getSamplePriceParams(symbol) {
 }
 
 function isGoldSymbol(symbol) {
-  const s = String(symbol || '').toUpperCase();
-  return s.includes('XAU') || s.includes('GOLD');
+  const s = toInternalSymbol(symbol);
+  return s.includes('XAU') || s === 'GOLD';
 }
 
-/** Normalize symbol for comparison (EUR/USD → EURUSD) */
+/** Normalize symbol for comparison (EUR/USD → EURUSD, xAUUSD → XAUUSD) */
 function toInternalSymbol(s) {
   return String(s || '').replace(/\//g, '').toUpperCase();
+}
+
+/** Normalize to display form so chart and lookups work for xAUUSD, XAUUSD, GOLD, etc. */
+function toDisplaySymbol(s) {
+  const internal = toInternalSymbol(s);
+  if (!internal) return s || 'EUR/USD';
+  if (internal === 'GOLD') return 'XAU/USD';
+  if (internal.length === 6) return `${internal.slice(0, 3)}/${internal.slice(3)}`;
+  return internal;
+}
+
+/** Lightweight Charts requires time as number (Unix seconds) or string. Normalize to number. */
+function toBarTime(t) {
+  if (t == null) return 0;
+  if (typeof t === 'number' && Number.isFinite(t)) return t;
+  if (typeof t === 'string') {
+    const ms = Date.parse(t);
+    return Number.isFinite(ms) ? Math.floor(ms / 1000) : 0;
+  }
+  if (typeof t === 'object' && t instanceof Date) return Math.floor(t.getTime() / 1000);
+  if (typeof t === 'object' && typeof t.getTime === 'function') return Math.floor(t.getTime() / 1000);
+  return 0;
 }
 
 /**
@@ -71,13 +93,14 @@ function FxChart({
   wsConnected = false,
   marketPrice = null,
 }) {
+  const displaySymbol = toDisplaySymbol(symbol);
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
   const seriesRef = useRef(null);
   const tickThrottleRef = useRef(null);
   const lastTickRef = useRef(null);
   const dataRef = useRef([]);
-  const symbolRef = useRef(symbol);
+  const symbolRef = useRef(displaySymbol);
   const showCandlesRef = useRef(showCandles);
   const pendingTickRef = useRef(null);
   const rafScheduledRef = useRef(false);
@@ -87,25 +110,26 @@ function FxChart({
   const data = useMemo(() => {
     let     arr = externalData && externalData.length > 0
       ? [...externalData]
-      : generateSampleOHLC(80, '2024-01-01', symbol.split('').reduce((a, c) => a + c.charCodeAt(0), 0), symbol);
-    arr.sort((a, b) => (a.time ?? 0) - (b.time ?? 0));
-    const prec = isGoldSymbol(symbol) ? 2 : 4;
+      : generateSampleOHLC(80, '2024-01-01', displaySymbol.split('').reduce((a, c) => a + c.charCodeAt(0), 0), displaySymbol);
+    arr.sort((a, b) => toBarTime(a.time) - toBarTime(b.time));
+    const prec = isGoldSymbol(displaySymbol) ? 2 : 4;
     const mult = Math.pow(10, prec);
     return arr.map((b) => ({
       ...b,
+      time: toBarTime(b.time),
       open: Math.round((b.open ?? 0) * mult) / mult,
       high: Math.round((b.high ?? 0) * mult) / mult,
       low: Math.round((b.low ?? 0) * mult) / mult,
       close: Math.round((b.close ?? 0) * mult) / mult,
     }));
-  }, [externalData, symbol]);
+  }, [externalData, displaySymbol]);
 
   useEffect(() => {
     dataRef.current = data;
-    symbolRef.current = symbol;
+    symbolRef.current = displaySymbol;
     showCandlesRef.current = showCandles;
     timeframeRef.current = timeframe;
-  }, [data, symbol, showCandles, timeframe]);
+  }, [data, displaySymbol, showCandles, timeframe]);
 
   // Create chart when container is in DOM (callback ref ensures we run when div mounts)
   useEffect(() => {
@@ -124,7 +148,7 @@ function FxChart({
       rightPriceScale: {
         borderColor: 'rgba(255, 255, 255, 0.2)',
         scaleMargins: { top: 0.1, bottom: 0.2 },
-        precision: isGoldSymbol(symbol) ? 2 : 4,
+        precision: isGoldSymbol(displaySymbol) ? 2 : 4,
       },
       timeScale: {
         borderColor: 'rgba(255, 255, 255, 0.2)',
@@ -187,29 +211,41 @@ function FxChart({
       chartRef.current = null;
       seriesRef.current = null;
     };
-  }, [containerReady, height, showCandles, symbol]);
+  }, [containerReady, height, showCandles, displaySymbol]);
 
-  // Update series data when data changes (no chart recreation)
+  // Track last applied data so we only setData when candles array actually changes (new bar or initial load)
+  const lastDataLenRef = useRef(0);
+  const lastBarKeyRef = useRef(null);
+
+  // Update series data when data changes (no chart recreation).
+  // Use full setData to avoid lightweight-charts errors when incremental updates conflict
+  // with internal oldest/newest time tracking.
   useEffect(() => {
     if (!seriesRef.current || !data.length) return;
+    const len = data.length;
+    const lastBar = data[len - 1];
+    const lastBarKey = lastBar ? `${lastBar.time}-${lastBar.close}-${lastBar.high}-${lastBar.low}` : null;
+
     if (showCandles) {
       seriesRef.current.setData(data);
     } else {
       seriesRef.current.setData(data.map(({ time, close }) => ({ time, value: close })));
     }
     const ts = chartRef.current?.timeScale();
-    if (data.length > 70) {
+    if (len > 70) {
       const visibleBars = 70;
-      const from = data.length - visibleBars;
-      ts?.setVisibleLogicalRange({ from, to: data.length - 1 });
+      const from = len - visibleBars;
+      ts?.setVisibleLogicalRange({ from, to: len - 1 });
     } else {
       ts?.fitContent();
     }
+    lastDataLenRef.current = len;
+    lastBarKeyRef.current = lastBarKey;
   }, [data, showCandles]);
 
   // Direct socket → chart update: coalesce ticks in requestAnimationFrame so chart repaints every frame
   useEffect(() => {
-    const internalSymbol = toInternalSymbol(symbol);
+    const internalSymbol = toInternalSymbol(displaySymbol);
     const socket = getDatafeedSocket();
 
     function applyPendingTick() {
@@ -269,7 +305,7 @@ function FxChart({
       socket.off('tick', handler);
       pendingTickRef.current = null;
     };
-  }, [symbol, timeframe]);
+  }, [displaySymbol, timeframe]);
 
   // Live tick update from props (fallback / header display; throttled to avoid excessive redraws)
   useEffect(() => {
@@ -282,7 +318,7 @@ function FxChart({
     const applyUpdate = () => {
       const { price: p } = lastTickRef.current || {};
       if (typeof p !== 'number' || !Number.isFinite(p)) return;
-      const prec = isGoldSymbol(symbol) ? 2 : 4;
+      const prec = isGoldSymbol(displaySymbol) ? 2 : 4;
       const mult = Math.pow(10, prec);
       const round = (n) => Math.round(n * mult) / mult;
       const last = data[data.length - 1];
@@ -324,10 +360,10 @@ function FxChart({
     <div className="fx-chart-wrap" style={{ position: 'relative' }}>
       <div className="fx-chart-header" style={{ position: 'absolute', top: 8, left: 12, right: 12, zIndex: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <span style={{ fontWeight: 600, fontSize: '0.95rem' }}>{symbol}</span>
+          <span style={{ fontWeight: 600, fontSize: '0.95rem' }}>{displaySymbol}</span>
           {displayPrice != null && (
             <span className="fx-chart-price" style={{ fontWeight: 600, color: '#de1414' }}>
-              {Number(displayPrice).toFixed(isGoldSymbol(symbol) ? 2 : 4)}
+              {Number(displayPrice).toFixed(isGoldSymbol(displaySymbol) ? 2 : 4)}
             </span>
           )}
           {loading && <span className="fx-chart-status" style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.6)' }}>Loading…</span>}

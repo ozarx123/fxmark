@@ -137,6 +137,7 @@ export function createTwelveDataWebSocket({ apiKey, symbols, onTick, onError }) 
           let items = [msg];
           if (Array.isArray(msg)) items = msg;
           else if (msg.data) items = Array.isArray(msg.data) ? msg.data : [msg.data];
+          const serverReceivedAt = Date.now();
           for (const d of items) {
             const sym = d?.symbol ?? msg?.symbol;
             const price = parsePrice(d);
@@ -155,6 +156,11 @@ export function createTwelveDataWebSocket({ apiKey, symbols, onTick, onError }) 
                 low: parseFloat(d?.low ?? d?.l ?? 0),
                 volume: parseFloat(d?.volume ?? d?.v ?? 0),
                 datetime,
+                source: 'twelvedata_ws',
+                providerTs: ts != null
+                  ? (typeof ts === 'number' ? ts * 1000 : Date.parse(ts) || null)
+                  : null,
+                serverReceivedAt,
               });
             }
           }
