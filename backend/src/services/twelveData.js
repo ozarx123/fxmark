@@ -29,7 +29,7 @@ export async function fetchCandles({ symbol, tf, from, to, apiKey }) {
     interval,
     apikey: apiKey,
     timezone: 'UTC',
-    outputsize: '500',
+    outputsize: '200',
   });
 
   if (from) params.set('start_date', from);
@@ -214,4 +214,89 @@ export async function fetchQuote(symbol, apiKey) {
     }
   }
   throw lastError || new Error(`Quote failed for ${symbol}`);
+}
+
+/** Map internal timeframe to Twelve Data interval for indicators (1m -> 1min, 1d -> 1day) */
+const INDICATOR_INTERVAL = {
+  '1m': '1min',
+  '5m': '5min',
+  '15m': '15min',
+  '1h': '1h',
+  '1d': '1day',
+};
+
+/**
+ * Fetch RSI from Twelve Data API.
+ * @param {string} symbol - Internal symbol (e.g. XAUUSD, EURUSD)
+ * @param {string} apiKey - Twelve Data API key
+ * @param {string} [interval] - 1min, 5min, 15min, 1h, 1day (default 1day for analysis)
+ * @param {number} [timePeriod] - RSI period (default 14)
+ * @returns {Promise<{ rsi: number, datetime: string }|null>} Latest RSI value
+ */
+export async function fetchRsi(symbol, apiKey, interval = '1day', timePeriod = 14) {
+  const twelveSymbol = toTwelveDataSymbol(symbol);
+  if (!twelveSymbol) throw new Error(`Unknown symbol: ${symbol}`);
+
+  const params = new URLSearchParams({
+    symbol: twelveSymbol,
+    interval: INDICATOR_INTERVAL[interval] || interval,
+    apikey: apiKey,
+    time_period: String(timePeriod),
+    outputsize: '2',
+  });
+  const res = await fetch(`${BASE_URL}/rsi?${params}`);
+  const data = await res.json();
+
+  if (data.status === 'error') {
+    throw new Error(data.message || 'Twelve Data API error');
+  }
+
+  const values = data.values ?? data.data ?? [];
+  const latest = values[0];
+  if (!latest || latest.rsi == null) return null;
+
+  const rsi = parseFloat(latest.rsi);
+  return {
+    rsi: Number.isFinite(rsi) ? rsi : null,
+    datetime: latest.datetime ?? latest.date ?? '',
+  };
+}
+
+/**
+ * Fetch MACD from Twelve Data API.
+ * @param {string} symbol - Internal symbol
+ * @param {string} apiKey - Twelve Data API key
+ * @param {string} [interval] - 1min, 5min, 15min, 1h, 1day (default 1day)
+ * @returns {Promise<{ macd: number, macd_signal: number, macd_hist: number, datetime: string }|null>}
+ */
+export async function fetchMacd(symbol, apiKey, interval = '1day') {
+  const twelveSymbol = toTwelveDataSymbol(symbol);
+  if (!twelveSymbol) throw new Error(`Unknown symbol: ${symbol}`);
+
+  const params = new URLSearchParams({
+    symbol: twelveSymbol,
+    interval: INDICATOR_INTERVAL[interval] || interval,
+    apikey: apiKey,
+    outputsize: '2',
+  });
+  const res = await fetch(`${BASE_URL}/macd?${params}`);
+  const data = await res.json();
+
+  if (data.status === 'error') {
+    throw new Error(data.message || 'Twelve Data API error');
+  }
+
+  const values = data.values ?? data.data ?? [];
+  const latest = values[0];
+  if (!latest) return null;
+
+  const macd = parseFloat(latest.macd);
+  const macdSignal = parseFloat(latest.macd_signal ?? latest.macd_signal_line);
+  const macdHist = parseFloat(latest.macd_hist ?? latest.macd_histogram);
+  return {
+    macd: Number.isFinite(macd) ? macd : null,
+    macd_signal: Number.isFinite(macdSignal) ? macdSignal : null,
+    macd_hist: Number.isFinite(macdHist) ? macdHist : null,
+    datetime: latest.datetime ?? latest.date ?? '',
+  };
 }

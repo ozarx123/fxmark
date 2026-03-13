@@ -5,16 +5,30 @@ import dotenv from 'dotenv';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
+console.log('FINNHUB KEY:', process.env.FINNHUB_API_KEY ? 'LOADED' : 'MISSING');
+console.log('[env] loaded from', path.resolve(__dirname, '../.env'));
+
 import express from 'express';
 import cors from 'cors';
 import { createServer } from 'http';
 import { initWebSocket, broadcastTick } from './websocket.js';
 import { logMarketTick } from './services/marketDataLogger.js';
 import positionsService from '../modules/trading/positions.service.js';
+import { checkAndTriggerPendingOrders } from '../modules/trading/pendingOrders.engine.js';
+import pendingOrdersEngine from '../modules/trading/pendingOrders.engine.js';
 import marketRoutes from './routes/market.js';
 import { isRedisAvailable } from './services/cache.js';
 import { fetchQuotesBatch } from './services/twelveData.js';
 import { createTwelveDataWebSocket } from './services/twelveDataWebSocket.js';
+import { createFinnhubWebSocket } from './services/finnhubWebSocket.js';
+import {
+  logFeedTick,
+  logFeedError,
+  logFeedEvent,
+  getRecentFeedLog,
+  readFeedLogFile,
+  getFeedLogSummary,
+} from './services/twelveDataFeedLogger.js';
 import { getDb } from '../config/mongo.js';
 import apiRoutes from '../core/routes.js';
 import middleware from '../core/middleware.js';
@@ -104,67 +118,86 @@ const QUOTE_POLL_INTERVAL_MS = Math.min(Math.max(RAW_POLL_MS, 1000), 30000);
 
 const MAX_CONSECUTIVE_FAILURES = 5;
 
+// ── Live tick source priority ─────────────────────────────────────────────────
+//
+//   Priority 1 — Finnhub WS    (real-time trades, ~200 ms)
+//   Priority 2 — TwelveData WS (streaming quotes, ~1–5 s when WS plan active)
+//   Priority 3 — REST poll     (fallback, ~2 s interval, price-dedup applied)
+//
+// A higher-priority source suppresses broadcasting from lower-priority ones.
+// When a source disconnects / goes stale its flag is cleared so the next
+// available source picks up automatically.
+let finnhubActive = false; // Priority 1
+let tdWsActive    = false; // Priority 2
+
+// ── REST deduplication ────────────────────────────────────────────────────────
+// Avoid spamming unchanged cached prices to the frontend when the market is
+// flat or outside trading hours.
+const lastRestPrice = new Map(); // symbol → last broadcast price
+
+// ── Unified emit with source tagging ─────────────────────────────────────────
+let lastEmitTs = 0;
+function emitWithLog(tick, source) {
+  const now  = Date.now();
+  const gap  = lastEmitTs ? now - lastEmitTs : 0;
+  lastEmitTs = now;
+  console.log(`EMIT_SOURCE=${source} EMIT GAP MS=${gap} symbol=${tick.symbol} price=${tick.close ?? tick.price}`);
+  broadcastTick(tick);
+}
+
+/**
+ * Fetch quotes via REST and:
+ *   - always run TP/SL checks
+ *   - always log to feed log
+ *   - broadcast to frontend ONLY when TD WebSocket is not active (fallback mode)
+ */
 async function pollSymbols(apiKey, symbols) {
+  const t0 = Date.now();
   try {
     const ticks = await fetchQuotesBatch(symbols, apiKey);
+    const latencyMs = Date.now() - t0;
     for (const tick of ticks) {
-      broadcastTick(tick);
       logMarketTick(tick, 'quote');
+      logFeedTick({
+        symbol:     tick.symbol,
+        price:      tick.close ?? tick.price,
+        providerTs: tick.datetime,
+        latencyMs,
+        status:     200,
+      });
       const price = tick.close ?? tick.price;
       if (tick.symbol && price != null) {
-        console.log('[TP/SL] tick', tick.symbol, 'price', price);
         positionsService
           .checkAndExecuteTPLS(tick.symbol, price)
           .catch((e) => console.warn('[TP/SL]', e.message));
+        checkAndTriggerPendingOrders(tick.symbol, price).catch((e) => console.warn('[pendingOrders]', e.message));
+      }
+      // Priority 3: REST broadcasts only when BOTH WS sources are offline.
+      // Also deduplicate — skip if price is identical to the last REST emit.
+      if (!finnhubActive && !tdWsActive) {
+        const prev = lastRestPrice.get(tick.symbol);
+        if (prev !== price) {
+          lastRestPrice.set(tick.symbol, price);
+          emitWithLog(tick, 'REST');
+        }
       }
     }
     return ticks.length === 0;
   } catch (err) {
-    console.error('[poller]', err.message);
+    logFeedError({
+      symbol:   symbols.join(','),
+      endpoint: '/quote',
+      error:    err.message,
+      latencyMs: Date.now() - t0,
+    });
     return true;
   }
 }
 
-const USE_TWELVE_WS = process.env.TWELVE_DATA_WS === 'true';
-
 /**
- * Start Twelve Data WebSocket stream (market-grade real-time).
- * Falls back to REST poller on failure.
- */
-function runTwelveDataWebSocket() {
-  const apiKey = (process.env.TWELVE_DATA_API_KEY || '').trim();
-  if (!apiKey) {
-    console.warn('[twelveDataWS] TWELVE_DATA_API_KEY not set');
-    return runQuotePoller();
-  }
-
-  const client = createTwelveDataWebSocket({
-    apiKey,
-    symbols: SUBSCRIBED_SYMBOLS,
-    onTick: (tick) => {
-      broadcastTick(tick);
-      logMarketTick(tick, 'ws');
-      const price = tick.close ?? tick.price;
-      if (tick.symbol && price != null) {
-        console.log('[TP/SL] ws tick', tick.symbol, 'price', price);
-        positionsService
-          .checkAndExecuteTPLS(tick.symbol, price)
-          .catch((e) => console.warn('[TP/SL]', e.message));
-      }
-    },
-    onError: () => {
-      console.warn('[twelveDataWS] Falling back to REST poller');
-      runQuotePoller();
-    },
-  });
-
-  if (!client) runQuotePoller();
-  else console.log('[twelveDataWS] Twelve Data WebSocket streaming enabled (market-grade real-time)');
-}
-
-/**
- * Poll Twelve Data quote API (parallel) and broadcast via WebSocket.
- * Used when TWELVE_DATA_WS is false or WebSocket fails.
+ * Start the REST quote poller.
+ * Always running — handles TP/SL, feed logging, and fallback broadcasting.
+ * Broadcasts are suppressed while TD WebSocket is active.
  */
 async function runQuotePoller() {
   const apiKey = (process.env.TWELVE_DATA_API_KEY || '').trim();
@@ -194,7 +227,138 @@ async function runQuotePoller() {
   if (consecutiveFailures < MAX_CONSECUTIVE_FAILURES) {
     pollId = setInterval(runPoll, QUOTE_POLL_INTERVAL_MS);
     const creditsPerMin = Math.round((60000 / QUOTE_POLL_INTERVAL_MS) * SUBSCRIBED_SYMBOLS.length);
-    console.log(`[poller] Quote poller: ${SUBSCRIBED_SYMBOLS.length} symbols every ${QUOTE_POLL_INTERVAL_MS}ms (~${creditsPerMin} credits/min, limit 55)`);
+    console.log(`[poller] REST poller running: ${SUBSCRIBED_SYMBOLS.length} symbols every ${QUOTE_POLL_INTERVAL_MS}ms (~${creditsPerMin} credits/min) — broadcasts only when WS offline`);
+    logFeedEvent('poller_start', {
+      symbols: SUBSCRIBED_SYMBOLS,
+      intervalMs: QUOTE_POLL_INTERVAL_MS,
+      creditsPerMin,
+    });
+  }
+}
+
+/**
+ * Start Twelve Data WebSocket stream as the PRIMARY live tick source.
+ * REST poller runs in parallel for TP/SL and as fallback broadcaster.
+ */
+function runTwelveDataWebSocket() {
+  const apiKey = (process.env.TWELVE_DATA_API_KEY || '').trim();
+  if (!apiKey) {
+    console.warn('[twelveDataWS] TWELVE_DATA_API_KEY not set — using REST-only mode');
+    return;
+  }
+
+  const client = createTwelveDataWebSocket({
+    apiKey,
+    symbols: SUBSCRIBED_SYMBOLS,
+    onTick: (tick) => {
+      // Always run TP/SL and logging regardless of source priority
+      logMarketTick(tick, 'ws');
+      logFeedTick({
+        symbol:     tick.symbol,
+        price:      tick.close ?? tick.price,
+        providerTs: tick.datetime ?? tick.providerTs,
+        latencyMs:  tick.serverReceivedAt ? Date.now() - tick.serverReceivedAt : null,
+        status:     200,
+      });
+      const price = tick.close ?? tick.price;
+      if (tick.symbol && price != null) {
+        positionsService
+          .checkAndExecuteTPLS(tick.symbol, price)
+          .catch((e) => console.warn('[TP/SL]', e.message));
+        checkAndTriggerPendingOrders(tick.symbol, price).catch((e) => console.warn('[pendingOrders]', e.message));
+      }
+      // Priority 2: only broadcast when Finnhub (priority 1) is offline
+      if (!finnhubActive) {
+        tdWsActive = true;
+        emitWithLog(tick, 'TD_WS');
+      }
+    },
+    onError: (err) => {
+      if (tdWsActive) {
+        tdWsActive = false;
+        console.warn('[twelveDataWS] Stream failed — falling back to REST poll:', err?.message ?? err);
+      }
+    },
+  });
+
+  if (!client) {
+    console.warn('[twelveDataWS] Could not create WS client — REST-only mode');
+  } else {
+    console.log('[twelveDataWS] PRIMARY live tick source started (REST poll is standby fallback)');
+  }
+}
+
+/**
+ * Start Finnhub WebSocket stream as the highest-priority live tick source.
+ *
+ * Flow:
+ *   Finnhub trade event
+ *     → normalize to internal tick
+ *     → run TP/SL check
+ *     → emitWithLog(tick, 'FINNHUB')  ← only source that sets finnhubActive=true
+ *
+ * On disconnect / stale: finnhubActive = false
+ *   → TD WebSocket (or REST poll) automatically takes over as broadcaster.
+ */
+function runFinnhubWebSocket() {
+  const apiKey = (process.env.FINNHUB_API_KEY || '').trim();
+  if (!apiKey) {
+    console.warn('[FINNHUB] FINNHUB_API_KEY not set — skipping Finnhub WS');
+    return;
+  }
+
+  const client = createFinnhubWebSocket({
+    apiKey,
+    symbols: SUBSCRIBED_SYMBOLS,
+
+    onConnect: () => {
+      // finnhubActive is set to true on the first tick, not just on connect,
+      // so we don't suppress other sources before real prices arrive.
+      console.log('[FINNHUB] Stream connected — will become primary source on first tick');
+    },
+
+    onTick: (tick) => {
+      // Mark Finnhub as active — suppresses TD_WS and REST broadcasting
+      finnhubActive = true;
+
+      // TP/SL and feed logging always run regardless of source
+      logMarketTick(tick, 'finnhub_ws');
+      logFeedTick({
+        symbol:     tick.symbol,
+        price:      tick.close ?? tick.price,
+        providerTs: tick.datetime,
+        latencyMs:  tick.serverReceivedAt ? Date.now() - tick.serverReceivedAt : null,
+        status:     200,
+      });
+      const price = tick.close ?? tick.price;
+      if (tick.symbol && price != null) {
+        positionsService
+          .checkAndExecuteTPLS(tick.symbol, price)
+          .catch((e) => console.warn('[TP/SL]', e.message));
+        checkAndTriggerPendingOrders(tick.symbol, price).catch((e) => console.warn('[pendingOrders]', e.message));
+      }
+
+      emitWithLog(tick, 'FINNHUB');
+    },
+
+    onDisconnect: (reason) => {
+      if (finnhubActive) {
+        finnhubActive = false;
+        const next = tdWsActive ? 'TD_WS' : 'REST_POLL';
+        console.warn(`[FINNHUB] Stream offline (${reason}) — ${next} will take over broadcasting`);
+      }
+    },
+
+    onError: (err) => {
+      console.error(`FINNHUB_ERROR: ${err?.message ?? err}`);
+      if (finnhubActive) {
+        finnhubActive = false;
+      }
+    },
+  });
+
+  if (client) {
+    console.log('[FINNHUB] PRIMARY live tick source started (TD_WS and REST are standby fallbacks)');
   }
 }
 
@@ -217,9 +381,13 @@ server.listen(PORT, async () => {
     }
   }
 
-  if (USE_TWELVE_WS) {
-    runTwelveDataWebSocket();
-  } else {
-    await runQuotePoller();
-  }
+  // Priority 1 — Finnhub WebSocket (real-time trades, ~200 ms latency)
+  runFinnhubWebSocket();
+
+  // Priority 2 — TwelveData WebSocket (streaming quotes; broadcasts only when Finnhub offline)
+  runTwelveDataWebSocket();
+
+  // Priority 3 — REST poller (TP/SL, feed logging, fallback; broadcasts only when both WS offline)
+  runQuotePoller();
+
 });

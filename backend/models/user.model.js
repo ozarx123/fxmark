@@ -6,6 +6,8 @@ const schema = {
   passwordHash: { type: 'string', required: true },
   role: { type: 'string', default: 'user' },
   kycStatus: { type: 'string', default: 'pending' },
+  kycSubmittedAt: { type: 'Date' },
+  kycRejectedReason: { type: 'string' },
   createdAt: { type: 'Date', required: true },
   updatedAt: { type: 'Date', required: true },
 };

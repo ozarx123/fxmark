@@ -27,14 +27,28 @@ async function fetchWithAuth(url, options = {}, accountId = null, accountNumber 
 /** Place a new order. Pass accountId/accountNumber for multi-account. */
 export async function placeOrder(payload, opts = {}) {
   const { accountId, accountNumber } = opts;
-  const body = {
-    symbol: payload.symbol,
-    side: payload.side || (payload.type === 'sell' ? 'sell' : 'buy'),
-    volume: Number(payload.volume ?? payload.lots ?? 0),
-    type: payload.marketOrder ? 'market' : (payload.type || 'market'),
-    price: payload.marketOrder ? undefined : (payload.price != null ? Number(payload.price) : undefined),
-    executionPrice: payload.marketOrder && payload.price != null ? Number(payload.price) : undefined,
+  const isMarket = payload.marketOrder === true || (payload.type && ['market', 'MARKET_BUY', 'MARKET_SELL'].includes(payload.type));
+  const typeMap = {
+    MARKET_BUY: 'market',
+    MARKET_SELL: 'market',
+    BUY_LIMIT: 'buy_limit',
+    SELL_LIMIT: 'sell_limit',
+    BUY_STOP: 'buy_stop',
+    SELL_STOP: 'sell_stop',
   };
+  const rawType = payload.type || (isMarket ? 'market' : 'market');
+  const type = typeMap[rawType] || (isMarket ? 'market' : rawType.toLowerCase());
+  const side = payload.side || (rawType.includes('SELL') ? 'sell' : 'buy');
+  const body = {
+    symbol: String(payload.symbol || '').replace(/\//g, ''),
+    side,
+    volume: Number(payload.volume ?? payload.lots ?? 0),
+    type,
+    price: isMarket ? undefined : (payload.price != null ? Number(payload.price) : undefined),
+    executionPrice: isMarket && payload.price != null ? Number(payload.price) : undefined,
+  };
+  if (payload.stopLoss != null && payload.stopLoss !== '') body.stopLoss = Number(payload.stopLoss);
+  if (payload.takeProfit != null && payload.takeProfit !== '') body.takeProfit = Number(payload.takeProfit);
   const res = await fetchWithAuth('/trading/orders', { method: 'POST', body: JSON.stringify(body) }, accountId, accountNumber);
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to place order');
   return res.json();
@@ -67,6 +81,19 @@ export async function cancelOrder(orderId, opts = {}) {
   const { accountId, accountNumber } = opts;
   const res = await fetchWithAuth(`/trading/orders/${orderId}/cancel`, { method: 'POST' }, accountId, accountNumber);
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to cancel order');
+  return res.json();
+}
+
+/** Update pending order price (for modify). */
+export async function updateOrderPrice(orderId, price, opts = {}) {
+  const { accountId, accountNumber } = opts;
+  const res = await fetchWithAuth(
+    `/trading/orders/${orderId}`,
+    { method: 'PATCH', body: JSON.stringify({ price: Number(price) }) },
+    accountId,
+    accountNumber
+  );
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to update order');
   return res.json();
 }
 
@@ -141,5 +168,17 @@ export async function getTradingAccount(accountId) {
   const res = await fetchWithAuth(`/trading/accounts/${accountId}`);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to load account');
+  return res.json();
+}
+
+/** Get account summary (balance, equity, margin used, free margin, margin level) */
+export async function getAccountSummary(opts = {}) {
+  const { accountId, accountNumber } = opts;
+  const res = await fetchWithAuth('/trading/account-summary', {}, accountId, accountNumber);
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || err.message || 'Failed to load account summary');
+  }
   return res.json();
 }

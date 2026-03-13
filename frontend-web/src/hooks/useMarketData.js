@@ -43,7 +43,6 @@ function toInternalSymbol(display) {
  */
 export function useMarketData(symbol, timeframe = '1m') {
   const [candles, setCandles] = useState([]);
-  const [liveCandles, setLiveCandles] = useState([]);
   const [tick, setTick] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -51,56 +50,120 @@ export function useMarketData(symbol, timeframe = '1m') {
 
   const internalSymbol = toInternalSymbol(symbol);
 
+  // ── Fix 1: stale-fetch guard ─────────────────────────────────────────────────
+  // Each call to fetchCandles() stamps a unique request ID. When the async response
+  // arrives, it checks whether its ID still matches the latest issued ID. If not,
+  // the symbol/timeframe has already changed and the response is silently discarded,
+  // preventing an older slow request from overwriting newer candle data.
+  const requestIdRef = useRef(0);
+
+  // ── Fix 2: reset tick + candles immediately on symbol/timeframe change ───────
+  // Runs synchronously before the new fetch starts so the previous symbol's price
+  // never flashes on the chart header or seeds the chart's Y-axis.
+  const prevSymbolRef = useRef(internalSymbol);
+  const prevTimeframeRef = useRef(timeframe);
+  if (prevSymbolRef.current !== internalSymbol || prevTimeframeRef.current !== timeframe) {
+    prevSymbolRef.current = internalSymbol;
+    prevTimeframeRef.current = timeframe;
+    // Mutate requestIdRef synchronously to invalidate any in-flight request
+    requestIdRef.current += 1;
+  }
+
+  // Track the symbol+timeframe key of the PREVIOUS fetch so we can distinguish
+  // a symbol/timeframe switch (needs candle clear) from a bar-boundary refresh
+  // (must NOT clear — clearing causes hasRealData→false → sample setData fires).
+  const prevFetchKeyRef = useRef(null);
+
   const fetchCandles = useCallback(async () => {
+    // Stamp this request and keep a local copy for closure comparison
+    requestIdRef.current += 1;
+    const myRequestId = requestIdRef.current;
+
+    const fetchKey       = `${internalSymbol}::${timeframe}`;
+    const isSymbolChange = prevFetchKeyRef.current !== fetchKey;
+    prevFetchKeyRef.current = fetchKey;
+
     setLoading(true);
     setError(null);
+
+    // Only clear stale candles/tick when the symbol or timeframe actually changed.
+    // Bar-boundary refetches must NOT clear — clearing triggers hasRealData=false,
+    // which causes FxChart to load sample bars via setData() mid-session.
+    if (isSymbolChange) {
+      setCandles([]);
+      setTick(null);
+    }
+
     let lastErr = null;
     try {
       for (let attempt = 0; attempt <= FETCH_RETRIES; attempt++) {
         try {
           const params = new URLSearchParams({ symbol: internalSymbol, tf: timeframe });
           const res = await fetchWithTimeout(`${API_BASE}/candles?${params}`);
+
+          // ── Fix 1 check: discard if a newer request has already been issued ──
+          if (myRequestId !== requestIdRef.current) return;
+
           if (!res.ok) {
             const err = await res.json().catch(() => ({}));
             throw new Error(err.error || res.statusText || 'Failed to fetch candles');
           }
           const data = await res.json();
+
+          // ── Fix 1 check: guard again after the second await ──────────────────
+          if (myRequestId !== requestIdRef.current) return;
+
           const arr = Array.isArray(data) ? data : [];
           setCandles(arr);
-          setLiveCandles(arr);
+
+          // Seed tick with the last candle's close so the price label is populated
+          // before the first WebSocket tick arrives. Only seed if no live tick has
+          // arrived yet for this symbol (prev === null after the reset above).
+          // ── Fix 3: preserve prev tick only when it belongs to this symbol ────
           if (arr.length > 0) {
             const last = arr[arr.length - 1];
             const lastClose = last.close != null ? Number(last.close) : null;
             if (lastClose != null) {
-              setTick((prev) => prev && (prev.close != null || prev.price != null) ? prev : {
-                symbol: internalSymbol,
-                close: lastClose,
-                price: lastClose,
-                open: last.open,
-                high: last.high,
-                low: last.low,
-                datetime: last.time || new Date().toISOString(),
+              setTick((prev) => {
+                const prevBelongsHere =
+                  prev &&
+                  toInternalSymbol(prev.symbol ?? '') === internalSymbol &&
+                  (prev.close != null || prev.price != null);
+                return prevBelongsHere
+                  ? prev
+                  : {
+                      symbol: internalSymbol,
+                      close: lastClose,
+                      price: lastClose,
+                      open: last.open,
+                      high: last.high,
+                      low: last.low,
+                      datetime: last.time || new Date().toISOString(),
+                    };
               });
             }
           }
           setError(null);
           return;
         } catch (e) {
+          if (myRequestId !== requestIdRef.current) return;
           lastErr = e;
           if (attempt < FETCH_RETRIES) {
             await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
           }
         }
       }
+      if (myRequestId !== requestIdRef.current) return;
       setError(lastErr?.message || 'Failed to fetch candles');
       setCandles([]);
     } finally {
-      setLoading(false);
+      // Only clear loading spinner if this request is still the latest
+      if (myRequestId === requestIdRef.current) setLoading(false);
     }
   }, [internalSymbol, timeframe]);
 
-  // Refetch candles at bar boundary so we don't call Twelve Data every N seconds.
-  // The current bar is painted from live ticks; we only need fresh candles when a new bar starts.
+  // Refetch candles only at bar boundaries — live ticks are handled entirely inside
+  // FxChart via its own socket subscription. This avoids triggering setData() on every tick.
   const scheduleRef = useRef(null);
   useEffect(() => {
     if (!internalSymbol) return;
@@ -124,104 +187,20 @@ export function useMarketData(symbol, timeframe = '1m') {
     };
   }, [fetchCandles, internalSymbol, timeframe]);
 
-  // Consume tick from central market data pool
+  // Expose latest tick from central pool so Trading page price label stays current.
+  // FxChart handles its own incremental series.update() via its internal socket handler —
+  // we do NOT update candles state here to prevent triggering series.setData() on every tick.
   const { ticks, connected } = useMarketDataContext();
   const poolTick = ticks[internalSymbol];
 
-  // Map timeframe to candle duration in seconds
-  const tfSeconds = {
-    '1m': 60,
-    '5m': 5 * 60,
-    '15m': 15 * 60,
-    '1h': 60 * 60,
-    '1d': 24 * 60 * 60,
-  }[timeframe] ?? 60;
-
-  const rafScheduledRef = useRef(false);
-  const pendingTickRef = useRef(null);
-
   useEffect(() => {
-    if (!internalSymbol) return;
     if (!poolTick) return;
     const price = poolTick.close ?? poolTick.price;
     if (!Number.isFinite(Number(price))) return;
-
-    pendingTickRef.current = { poolTick, price: Number(price), tfSeconds };
-
-    const flush = () => {
-      rafScheduledRef.current = false;
-      const pending = pendingTickRef.current;
-      if (!pending) return;
-      const { poolTick: pt, price: p, tfSeconds: tfs } = pending;
-
-      setTick(pt);
-
-      setLiveCandles((prev) => {
-        if (!Number.isFinite(p)) return prev || [];
-        let nowMs = pt.providerTs;
-        if (nowMs == null || Number.isNaN(Number(nowMs))) {
-          const parsed = pt.datetime ? Date.parse(pt.datetime) : NaN;
-          nowMs = (parsed != null && !Number.isNaN(parsed)) ? parsed : Date.now();
-        }
-        const nowSec = Math.floor(nowMs / 1000);
-        const bucketStart = Math.floor(nowSec / tfs) * tfs;
-
-        if (!prev || prev.length === 0) {
-          return [
-            { time: bucketStart, open: p, high: p, low: p, close: p, volume: 0 },
-          ];
-        }
-
-        const out = [...prev];
-        const last = out[out.length - 1];
-
-        if (!last || typeof last.time !== 'number') {
-          out[out.length - 1] = {
-            time: bucketStart,
-            open: p,
-            high: p,
-            low: p,
-            close: p,
-            volume: last?.volume ?? 0,
-          };
-          return out;
-        }
-
-        if (bucketStart > last.time) {
-          out.push({
-            time: bucketStart,
-            open: p,
-            high: p,
-            low: p,
-            close: p,
-            volume: 0,
-          });
-          return out;
-        }
-
-        const updated = {
-          ...last,
-          high: Math.max(last.high ?? p, p),
-          low: Math.min(
-            last.low == null || Number.isNaN(Number(last.low)) ? p : last.low,
-            p
-          ),
-          close: p,
-        };
-        out[out.length - 1] = updated;
-        return out;
-      });
-    };
-
-    if (!rafScheduledRef.current) {
-      rafScheduledRef.current = true;
-      requestAnimationFrame(flush);
-    }
-  }, [internalSymbol, poolTick, tfSeconds]);
+    setTick(poolTick);
+  }, [poolTick]);
 
   useEffect(() => setWsConnected(connected), [connected]);
 
-  const effectiveCandles = liveCandles.length ? liveCandles : candles;
-
-  return { candles: effectiveCandles, tick, loading, error, wsConnected, refetch: fetchCandles };
+  return { candles, tick, loading, error, wsConnected, refetch: fetchCandles };
 }

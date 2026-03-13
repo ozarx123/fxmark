@@ -15,6 +15,7 @@ const ADMIN_LINKS = [
   { to: '/admin/kyc', end: false, label: 'KYC' },
   { to: '/admin/broadcast', end: false, label: 'Broadcast' },
   { to: '/admin/market', end: false, label: 'Market data' },
+  { to: '/admin/logs',   end: false, label: 'Feed logs' },
   { to: '/admin/settings', end: false, label: 'Settings' },
 ];
 

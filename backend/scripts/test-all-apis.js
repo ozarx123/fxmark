@@ -67,7 +67,7 @@ async function run() {
   const me = await request('GET', '/auth/me');
   ok('GET /auth/me', me);
 
-  const signup = await request('POST', '/auth/register', { email: 'apitest@test.com', password: 'apitest1234' }, false);
+  const signup = await request('POST', '/auth/register', { email: 'apitest@test.com', password: 'Apitest1234' }, false);
   ok('POST /auth/register', signup, [201, 409]);
 
   // --- Wallet ---

@@ -1,6 +1,11 @@
 import { Router } from 'express';
-import { fetchCandles } from '../services/twelveData.js';
+import { fetchCandles, fetchQuotesBatch, fetchRsi, fetchMacd } from '../services/twelveData.js';
 import { getRecentLog, readLogFile } from '../services/marketDataLogger.js';
+import {
+  getRecentFeedLog,
+  readFeedLogFile,
+  getFeedLogSummary,
+} from '../services/twelveDataFeedLogger.js';
 import * as cache from '../services/cache.js';
 import { VALID_TIMEFRAMES } from '../config/symbolMap.js';
 import { getCurrentBarStart } from '../config/candleTime.js';
@@ -145,8 +150,145 @@ router.get('/candles', async (req, res) => {
 });
 
 /**
+ * GET /api/market/quote?symbol=EURUSD
+ * Returns latest Twelve Data quote (price, open, high, low, close, volume, datetime).
+ */
+router.get('/quote', async (req, res) => {
+  try {
+    const { symbol } = req.query;
+    const apiKey = (process.env.TWELVE_DATA_API_KEY || '').trim();
+    if (!symbol) {
+      return res.status(400).json({ error: 'symbol is required' });
+    }
+    if (!apiKey) {
+      return res.status(500).json({ error: 'TWELVE_DATA_API_KEY not configured' });
+    }
+    const internalSymbol = String(symbol || '').replace(/\//g, '').toUpperCase();
+    const cacheKey = `quote:${internalSymbol}`;
+    const ttl = 10; // short cache for quotes
+
+    const cached = await cache.get(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    const quotes = await fetchQuotesBatch([internalSymbol], apiKey);
+    if (!quotes.length) {
+      return res.status(404).json({ error: 'Quote not available' });
+    }
+    const quote = quotes[0];
+    await cache.set(cacheKey, quote, ttl);
+    res.json(quote);
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'Failed to fetch quote' });
+  }
+});
+
+/**
+ * GET /api/market/technical?symbol=XAUUSD&interval=1day
+ * Returns technical analysis from Twelve Data: RSI, MACD, trend, levels (from quote if available).
+ */
+router.get('/technical', async (req, res) => {
+  try {
+    const { symbol, interval } = req.query;
+    const apiKey = (process.env.TWELVE_DATA_API_KEY || '').trim();
+    if (!symbol) {
+      return res.status(400).json({ error: 'symbol is required' });
+    }
+    if (!apiKey) {
+      return res.status(500).json({ error: 'TWELVE_DATA_API_KEY not configured' });
+    }
+    const internalSymbol = String(symbol || '').replace(/\//g, '').toUpperCase();
+    const intervalNorm = (interval || '1day').toLowerCase().replace('1d', '1day');
+    const cacheKey = `technical:${internalSymbol}:${intervalNorm}`;
+    const ttl = 120; // 2 min cache
+
+    const cached = await cache.get(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    const [rsiResult, macdResult, quotes] = await Promise.all([
+      fetchRsi(internalSymbol, apiKey, intervalNorm).catch(() => null),
+      fetchMacd(internalSymbol, apiKey, intervalNorm).catch(() => null),
+      fetchQuotesBatch([internalSymbol], apiKey).catch(() => []),
+    ]);
+
+    const quote = quotes[0] || null;
+    const price = quote?.close ?? quote?.price ?? null;
+
+    const rsi = rsiResult?.rsi != null ? rsiResult.rsi : null;
+    let rsiSignal = 'Neutral';
+    if (rsi != null) {
+      if (rsi >= 70) rsiSignal = 'Overbought';
+      else if (rsi <= 30) rsiSignal = 'Oversold';
+      else if (rsi > 55) rsiSignal = 'Bullish';
+      else if (rsi < 45) rsiSignal = 'Bearish';
+    }
+
+    const macdHist = macdResult?.macd_hist;
+    let trend = 'Neutral';
+    let trendClass = 'neutral';
+    if (macdHist != null) {
+      if (macdHist > 0) {
+        trend = 'Bullish';
+        trendClass = 'bullish';
+      } else if (macdHist < 0) {
+        trend = 'Bearish';
+        trendClass = 'bearish';
+      }
+    }
+
+    let momentum = 'Sideways';
+    if (macdHist != null) {
+      momentum = macdHist > 0 ? 'Up' : macdHist < 0 ? 'Down' : 'Sideways';
+    }
+
+    const p = Number.isFinite(price) ? price : 0;
+    const support = p ? [p * 0.995, p * 0.99].map((x) => Math.round(x * 100) / 100) : [];
+    const resistance = p ? [p * 1.005, p * 1.01].map((x) => Math.round(x * 100) / 100) : [];
+    if (quote?.low != null && quote.low > 0) {
+      support[0] = Math.round(quote.low * 100) / 100;
+    }
+    if (quote?.high != null && quote.high > 0) {
+      resistance[0] = Math.round(quote.high * 100) / 100;
+    }
+
+    let summary = 'Technical data from Twelve Data.';
+    if (trend !== 'Neutral' && rsi != null) {
+      summary = `${trend} momentum. RSI(14) at ${rsi.toFixed(1)} (${rsiSignal}).`;
+    } else if (rsi != null) {
+      summary = `RSI(14) at ${rsi.toFixed(1)} (${rsiSignal}).`;
+    }
+
+    const payload = {
+      trend,
+      trendClass,
+      summary,
+      support,
+      resistance,
+      rsi: rsi ?? undefined,
+      rsiSignal,
+      momentum,
+      macd: macdResult?.macd ?? undefined,
+      macd_signal: macdResult?.macd_signal ?? undefined,
+      macd_hist: macdResult?.macd_hist ?? undefined,
+      price: price ?? undefined,
+      datetime: rsiResult?.datetime ?? macdResult?.datetime ?? quote?.datetime,
+      source: 'twelvedata',
+    };
+
+    await cache.set(cacheKey, payload, ttl);
+    res.json(payload);
+  } catch (e) {
+    console.error('[market/technical]', e.message);
+    res.status(500).json({ error: e.message || 'Failed to fetch technical analysis' });
+  }
+});
+
+/**
  * GET /api/market/log?limit=100&symbol=EURUSD
- * Returns recent market data log entries for checking.
+ * Returns recent generic market data log entries.
  */
 router.get('/log', (req, res) => {
   try {
@@ -159,6 +301,43 @@ router.get('/log', (req, res) => {
     res.json({ count: entries.length, entries });
   } catch (err) {
     console.error('[market/log]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/market/feed-log?limit=100&symbol=XAUUSD&event=tick
+ * Returns Twelve Data feed log: per-tick latency, errors, credit usage.
+ * Query params:
+ *   limit  - max entries to return (default 100, max 500)
+ *   symbol - filter by symbol (e.g. XAUUSD)
+ *   event  - filter by event type: tick | error | candles | poller_start
+ */
+router.get('/feed-log', (req, res) => {
+  try {
+    const limit  = Math.min(parseInt(req.query.limit || '100', 10) || 100, 500);
+    const symbol = req.query.symbol || undefined;
+    const event  = req.query.event  || undefined;
+    let entries = getRecentFeedLog(limit, symbol, event);
+    if (entries.length === 0) {
+      entries = readFeedLogFile(limit, symbol);
+    }
+    res.json({ count: entries.length, entries });
+  } catch (err) {
+    console.error('[market/feed-log]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/market/feed-log/summary
+ * Returns aggregate stats: tick count, error count, avg latency, credits/min.
+ */
+router.get('/feed-log/summary', (req, res) => {
+  try {
+    res.json(getFeedLogSummary());
+  } catch (err) {
+    console.error('[market/feed-log/summary]', err.message);
     res.status(500).json({ error: err.message });
   }
 });

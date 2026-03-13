@@ -11,6 +11,8 @@ import {
   adminCancelOrder,
   getAdminTradingLimits,
   updateAdminTradingLimits,
+  getAdminAccountConfig,
+  updateAdminAccountConfig,
 } from '../../api/adminApi';
 import { useLivePrices, getPriceForSymbol, computePnL } from '../../hooks/useLivePrices';
 
@@ -98,6 +100,27 @@ export default function AdminTraderDetail() {
     if (userId) loadUserTrading();
   }, [userId, loadUserTrading]);
 
+  useEffect(() => {
+    if (!userId || !selectedAccountForConfig) {
+      setAccountConfig(null);
+      setAccountConfigForm({ leverage: '', executionGroup: '', tradingEnabled: true });
+      return;
+    }
+    getAdminAccountConfig(userId, selectedAccountForConfig)
+      .then((c) => {
+        setAccountConfig(c);
+        setAccountConfigForm({
+          leverage: c.leverage != null ? String(c.leverage) : '',
+          executionGroup: c.executionGroup ?? '',
+          tradingEnabled: c.tradingEnabled !== false,
+        });
+      })
+      .catch(() => {
+        setAccountConfig(null);
+        setAccountConfigForm({ leverage: '', executionGroup: '', tradingEnabled: true });
+      });
+  }, [userId, selectedAccountForConfig]);
+
   const handleClose = async (pos) => {
     try {
       const closePrice = pos.currentPrice ?? pos.openPrice;
@@ -182,6 +205,30 @@ export default function AdminTraderDetail() {
       logAction('Update drawdown limits', JSON.stringify(body));
     } catch (e) {
       setError(e.message);
+    }
+  };
+
+  const handleSaveAccountConfig = async () => {
+    if (!selectedAccountForConfig) return;
+    setSavingConfig(true);
+    try {
+      const body = {};
+      const lev = accountConfigForm.leverage.trim();
+      if (lev !== '') body.leverage = parseInt(lev, 10);
+      if (accountConfigForm.executionGroup !== undefined) body.executionGroup = accountConfigForm.executionGroup.trim() || null;
+      body.tradingEnabled = accountConfigForm.tradingEnabled;
+      const updated = await updateAdminAccountConfig(userId, selectedAccountForConfig, body);
+      setAccountConfig(updated);
+      setAccountConfigForm({
+        leverage: updated.leverage != null ? String(updated.leverage) : '',
+        executionGroup: updated.executionGroup ?? '',
+        tradingEnabled: updated.tradingEnabled !== false,
+      });
+      logAction('Update account config', `${updated.accountNumber}: leverage/execution group`);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSavingConfig(false);
     }
   };
 
@@ -345,6 +392,68 @@ export default function AdminTraderDetail() {
           Block prevents new orders and position closes. Max daily loss limits trading when today&apos;s realized P&L falls below the threshold.
         </p>
       </section>
+
+      {accounts.length > 0 && (
+        <section className="admin-section-block">
+          <h2 className="section-title">Account config (CRM)</h2>
+          <p className="muted" style={{ marginBottom: '1rem', fontSize: '0.85rem' }}>
+            Leverage, execution group, and trading enabled per account. Used by trading engine for permissions and routing.
+          </p>
+          <div className="filter-group" style={{ marginBottom: '1rem' }}>
+            <label>Account</label>
+            <select
+              value={selectedAccountForConfig}
+              onChange={(e) => setSelectedAccountForConfig(e.target.value)}
+              className="filter-select"
+            >
+              <option value="">Select account</option>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.accountNumber} ({a.type})
+                </option>
+              ))}
+            </select>
+          </div>
+          {selectedAccountForConfig && accountConfig != null && (
+            <div className="settings-card" style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'flex-end' }}>
+              <div className="filter-group" style={{ marginBottom: 0 }}>
+                <label>Leverage</label>
+                <input
+                  type="number"
+                  placeholder="e.g. 500"
+                  value={accountConfigForm.leverage}
+                  onChange={(e) => setAccountConfigForm((f) => ({ ...f, leverage: e.target.value }))}
+                  className="filter-input"
+                  style={{ width: '8rem' }}
+                />
+              </div>
+              <div className="filter-group" style={{ marginBottom: 0 }}>
+                <label>Execution group</label>
+                <input
+                  type="text"
+                  placeholder="e.g. default"
+                  value={accountConfigForm.executionGroup}
+                  onChange={(e) => setAccountConfigForm((f) => ({ ...f, executionGroup: e.target.value }))}
+                  className="filter-input"
+                  style={{ width: '10rem' }}
+                />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <input
+                  type="checkbox"
+                  id="trading-enabled-crm"
+                  checked={accountConfigForm.tradingEnabled}
+                  onChange={(e) => setAccountConfigForm((f) => ({ ...f, tradingEnabled: e.target.checked }))}
+                />
+                <label htmlFor="trading-enabled-crm" style={{ marginBottom: 0 }}>Trading enabled</label>
+              </div>
+              <button type="button" className="btn btn-secondary" onClick={handleSaveAccountConfig} disabled={savingConfig}>
+                {savingConfig ? 'Saving…' : 'Save account config'}
+              </button>
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="admin-section-block">
         <h2 className="section-title">

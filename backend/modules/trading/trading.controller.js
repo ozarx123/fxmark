@@ -3,7 +3,7 @@
  */
 import orderService from './order.service.js';
 import positionsService from './positions.service.js';
-import { emitTradeUpdate } from '../../src/services/tradeEvents.js';
+import { emitTradeUpdate, emitOrderCreated, emitOrderCancelled } from '../../src/services/tradeEvents.js';
 
 // ---------- Orders ----------
 async function placeOrder(req, res, next) {
@@ -11,8 +11,11 @@ async function placeOrder(req, res, next) {
     const userId = req.user?.id;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
     const accountId = req.activeAccount?.id ?? req.body.accountId;
+    console.log('[orders] placeOrder request', { userId, accountId, body: req.body });
     const result = await orderService.placeOrder(userId, req.body, accountId);
-    emitTradeUpdate(userId, null).catch(() => {});
+    console.log('[orders] placeOrder result', { orderId: result.orderId, status: result.status, positionId: result.positionId });
+    if (result.order) emitOrderCreated(userId, result.order, accountId);
+    emitTradeUpdate(userId, accountId).catch(() => {});
     res.status(201).json(result);
   } catch (e) {
     if (e.statusCode) return next(e);
@@ -29,8 +32,11 @@ async function cancelOrder(req, res, next) {
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
     const { orderId } = req.params;
     const accountId = req.activeAccount?.id;
+    console.log('[orders] cancelOrder', { userId, orderId, accountId });
     const result = await orderService.cancelOrder(userId, orderId, accountId);
-    emitTradeUpdate(userId, null).catch(() => {});
+    console.log('[orders] cancelOrder result', { orderId, status: result.status });
+    emitOrderCancelled(userId, orderId, accountId);
+    emitTradeUpdate(userId, accountId).catch(() => {});
     res.json(result);
   } catch (e) {
     next(e);
@@ -62,6 +68,23 @@ async function getOrder(req, res, next) {
     if (!order) return res.status(404).json({ error: 'Order not found' });
     res.json(order);
   } catch (e) {
+    next(e);
+  }
+}
+
+async function updateOrder(req, res, next) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const { orderId } = req.params;
+    const { price } = req.body;
+    const accountId = req.activeAccount?.id;
+    const order = await orderService.updateOrderPrice(userId, orderId, price, accountId);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+    emitTradeUpdate(userId, accountId).catch(() => {});
+    res.json(order);
+  } catch (e) {
+    if (e.statusCode) return next(e);
     next(e);
   }
 }
@@ -149,6 +172,7 @@ export default {
   cancelOrder,
   listOrders,
   getOrder,
+  updateOrder,
   getOpenPositions,
   getClosedPositions,
   getPosition,

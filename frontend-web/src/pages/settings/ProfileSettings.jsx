@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import ProfileAvatar from '../../components/ProfileAvatar';
+import { getKyc, submitKyc } from '../../api/userApi';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
@@ -23,6 +24,9 @@ export default function ProfileSettings() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
   const fileInputRef = useRef(null);
+  const [kyc, setKyc] = useState(null);
+  const [kycLoading, setKycLoading] = useState(false);
+  const [kycSubmitLoading, setKycSubmitLoading] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -34,6 +38,17 @@ export default function ProfileSettings() {
       setAvatar(user.avatar || '');
     }
   }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    setKycLoading(true);
+    getKyc()
+      .then((data) => { if (!cancelled) setKyc(data); })
+      .catch(() => { if (!cancelled) setKyc({ kycStatus: user.kycStatus || 'pending' }); })
+      .finally(() => { if (!cancelled) setKycLoading(false); });
+    return () => { cancelled = true; };
+  }, [user?.id, user?.kycStatus]);
 
   const resizeImage = (file, maxSize = 200) =>
     new Promise((resolve, reject) => {
@@ -82,6 +97,20 @@ export default function ProfileSettings() {
       setError('Failed to process image');
     }
     e.target.value = '';
+  };
+
+  const handleKycSubmit = async () => {
+    setError('');
+    setKycSubmitLoading(true);
+    try {
+      const data = await submitKyc();
+      setKyc(data);
+      if (login && user) login({ ...user, kycStatus: data.kycStatus, kycSubmittedAt: data.kycSubmittedAt, kycRejectedReason: '' }, token);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setKycSubmitLoading(false);
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -181,6 +210,42 @@ export default function ProfileSettings() {
               {loading ? 'Saving…' : 'Save changes'}
             </button>
           </form>
+
+          <div className="section-block kyc-block" style={{ marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border-color, #e5e7eb)' }}>
+            <h2 className="text-lg font-semibold mb-3">KYC status</h2>
+            {kycLoading ? (
+              <p className="muted">Loading…</p>
+            ) : (
+              <>
+                <div className="kyc-status-row" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                  <span className={`kyc-badge kyc-badge--${(kyc?.kycStatus || user?.kycStatus || 'pending').toLowerCase()}`} style={{ padding: '0.25rem 0.5rem', borderRadius: '4px', fontSize: '0.875rem', fontWeight: 600 }}>
+                    {(kyc?.kycStatus || user?.kycStatus || 'pending').charAt(0).toUpperCase() + (kyc?.kycStatus || user?.kycStatus || 'pending').slice(1)}
+                  </span>
+                  {kyc?.kycSubmittedAt && (
+                    <span className="muted" style={{ fontSize: '0.875rem' }}>
+                      Submitted {new Date(kyc.kycSubmittedAt).toLocaleDateString()}
+                    </span>
+                  )}
+                </div>
+                {(kyc?.kycStatus || user?.kycStatus) === 'rejected' && kyc?.kycRejectedReason && (
+                  <p className="kyc-rejection-reason" style={{ marginBottom: '0.75rem', padding: '0.5rem', background: 'var(--error-bg, #fef2f2)', borderRadius: '4px', fontSize: '0.875rem' }}>
+                    Reason: {kyc.kycRejectedReason}
+                  </p>
+                )}
+                {(kyc?.kycStatus || user?.kycStatus) === 'pending' && (
+                  <p className="muted" style={{ marginBottom: '0.75rem', fontSize: '0.875rem' }}>Under review. We will notify you once verified.</p>
+                )}
+                {(kyc?.kycStatus || user?.kycStatus) === 'approved' && (
+                  <p className="muted" style={{ marginBottom: '0.75rem', fontSize: '0.875rem' }}>Your identity has been verified.</p>
+                )}
+                {((kyc?.kycStatus || user?.kycStatus) === 'rejected' || !(kyc?.kycStatus || user?.kycStatus) || (kyc?.kycStatus || user?.kycStatus) === 'pending') && (
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={handleKycSubmit} disabled={kycSubmitLoading}>
+                    {(kyc?.kycStatus || user?.kycStatus) === 'rejected' ? 'Resubmit for review' : (kyc?.kycStatus || user?.kycStatus) === 'pending' ? 'Resubmit' : 'Submit for review'}
+                  </button>
+                )}
+              </>
+            )}
+          </div>
         </div>
       </section>
     </div>

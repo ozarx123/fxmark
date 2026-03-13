@@ -50,6 +50,16 @@ async function create(doc) {
   if (doc.type === 'pamm' && doc.pammManagerId) {
     insertDoc.pammManagerId = doc.pammManagerId;
   }
+  // CRM / broker integration fields (optional; defaults applied in crmIntegrationService when absent)
+  if (doc.accountGroup != null) insertDoc.accountGroup = doc.accountGroup;
+  if (doc.executionGroup != null) insertDoc.executionGroup = doc.executionGroup;
+  if (doc.riskGroup != null) insertDoc.riskGroup = doc.riskGroup;
+  if (doc.leverage != null) insertDoc.leverage = Number(doc.leverage);
+  if (doc.tradingEnabled !== undefined) insertDoc.tradingEnabled = !!doc.tradingEnabled;
+  if (doc.accountBlocked !== undefined) insertDoc.accountBlocked = !!doc.accountBlocked;
+  if (doc.canTradeForex !== undefined) insertDoc.canTradeForex = !!doc.canTradeForex;
+  if (doc.canTradeMetals !== undefined) insertDoc.canTradeMetals = !!doc.canTradeMetals;
+  if (doc.canTradeCrypto !== undefined) insertDoc.canTradeCrypto = !!doc.canTradeCrypto;
   const { insertedId } = await c.insertOne(insertDoc);
   return insertedId.toString();
 }
@@ -134,6 +144,31 @@ async function getOrCreateDefaultLive(userId) {
   return live ? { id: live._id.toString(), ...live, _id: undefined } : null;
 }
 
+/**
+ * Update CRM/config fields for an account (admin). Only provided fields are updated.
+ */
+async function updateAccountConfig(id, userId, update) {
+  if (!ObjectId.isValid(id)) return null;
+  const c = await col();
+  const set = { updatedAt: new Date() };
+  if (update.accountGroup !== undefined) set.accountGroup = update.accountGroup;
+  if (update.executionGroup !== undefined) set.executionGroup = update.executionGroup;
+  if (update.riskGroup !== undefined) set.riskGroup = update.riskGroup;
+  if (update.leverage !== undefined) set.leverage = Number(update.leverage);
+  if (update.tradingEnabled !== undefined) set.tradingEnabled = !!update.tradingEnabled;
+  if (update.accountBlocked !== undefined) set.accountBlocked = !!update.accountBlocked;
+  if (update.canTradeForex !== undefined) set.canTradeForex = !!update.canTradeForex;
+  if (update.canTradeMetals !== undefined) set.canTradeMetals = !!update.canTradeMetals;
+  if (update.canTradeCrypto !== undefined) set.canTradeCrypto = !!update.canTradeCrypto;
+  if (Object.keys(set).length <= 1) return findById(id, userId);
+  const result = await c.findOneAndUpdate(
+    { _id: new ObjectId(id), userId },
+    { $set: set },
+    { returnDocument: 'after' }
+  );
+  return result ? { id: result._id.toString(), ...result, _id: undefined } : null;
+}
+
 export default {
   create,
   findById,
@@ -143,4 +178,5 @@ export default {
   updateBalance,
   getOrCreateDefaultDemo,
   getOrCreateDefaultLive,
+  updateAccountConfig,
 };

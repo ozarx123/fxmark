@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext.jsx';
 import { MarketDataProvider } from './context/MarketDataContext.jsx';
+import { TradingSocketProvider } from './services/tradingSocket.jsx';
 import { AccountProvider } from './context/AccountContext.jsx';
 import { FinanceProvider } from './context/FinanceContext.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
@@ -15,6 +16,7 @@ import AdminLayout from './layouts/AdminLayout.jsx';
 import Dashboard from './pages/dashboard/index.jsx';
 import Wallet from './pages/wallet/index.jsx';
 import Trading from './pages/trading/index.jsx';
+import TerminalLayout from './pages/trading/TerminalLayout.jsx';
 import Pamm from './pages/pamm/index.jsx';
 import PammManager from './pages/pamm/PammManager.jsx';
 import PammFundDetail from './pages/pamm/PammFundDetail.jsx';
@@ -31,6 +33,7 @@ import AdminTickets from './pages/admin/AdminTickets.jsx';
 import AdminKyc from './pages/admin/AdminKyc.jsx';
 import AdminBroadcast from './pages/admin/AdminBroadcast.jsx';
 import AdminMarket from './pages/admin/AdminMarket.jsx';
+import AdminLogs from './pages/admin/AdminLogs.jsx';
 import AdminFinancials from './pages/admin/AdminFinancials.jsx';
 import AdminUsers from './pages/admin/AdminUsers.jsx';
 import AdminLiquidity from './pages/admin/AdminLiquidity.jsx';
@@ -57,7 +60,8 @@ function App() {
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="wallet" element={<Wallet />} />
           <Route path="gateway-redirect" element={<GatewayRedirect />} />
-          <Route path="trading" element={<Trading />} />
+          <Route path="trading" element={<TradingSocketProvider><Trading /></TradingSocketProvider>} />
+          <Route path="trading/terminal" element={<TradingSocketProvider><TerminalLayout /></TradingSocketProvider>} />
           <Route path="pamm" element={<Pamm />} />
           <Route path="pamm-ai" element={<PammAi />} />
           <Route path="pamm/fund/:fundId" element={<PammFundDetail />} />
@@ -85,6 +89,7 @@ function App() {
           <Route path="kyc" element={<AdminKyc />} />
           <Route path="broadcast" element={<AdminBroadcast />} />
           <Route path="market" element={<AdminMarket />} />
+          <Route path="logs" element={<AdminLogs />} />
           <Route path="settings" element={<AdminSettings />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

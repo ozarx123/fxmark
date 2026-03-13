@@ -75,7 +75,9 @@ export function AccountProvider({ children }) {
       if (stored && list?.length) {
         active = list.find((a) => a.id === stored || a.accountNumber === stored) || list[0];
       } else if (list?.length) {
-        active = list[0];
+        // Prefer live account as default for general users; fall back to first account.
+        const live = list.find((a) => a.type === 'live');
+        active = live || list[0];
       }
       if (active) {
         setActiveAccountState(active);

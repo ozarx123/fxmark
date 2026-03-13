@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import * as adminApi from '../../api/adminApi';
 import { ROLES } from './mockUsersData';
 import { PERMISSION_GROUPS, getDefaultRolePermissions } from './mockPermissionsData';
 import {
@@ -109,6 +110,62 @@ export default function AdminSettings() {
   const togglePammFlag = (id, value) => setPammFlags((prev) => ({ ...prev, [id]: value }));
   const resetPammFlags = () => setPammFlags(getDefaultPammFlags());
 
+  const [executionMode, setExecutionMode] = useState('A_BOOK');
+  const [hybridRules, setHybridRules] = useState({
+    maxInternalExposurePerSymbol: 100,
+    volumeThresholdToABook: 5,
+    profitableTraderToABook: true,
+    newsTimeForceABook: false,
+  });
+  const [executionModeLoading, setExecutionModeLoading] = useState(true);
+  const [executionModeSaving, setExecutionModeSaving] = useState(false);
+  const [executionModeError, setExecutionModeError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [modeRes, rulesRes] = await Promise.all([
+          adminApi.getExecutionMode(),
+          adminApi.getHybridRules(),
+        ]);
+        if (!cancelled) {
+          setExecutionMode(modeRes.executionMode || 'A_BOOK');
+          setHybridRules((prev) => ({ ...prev, ...rulesRes }));
+        }
+      } catch (e) {
+        if (!cancelled) setExecutionModeError(e.message);
+      } finally {
+        if (!cancelled) setExecutionModeLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const saveExecutionMode = async () => {
+    setExecutionModeSaving(true);
+    setExecutionModeError(null);
+    try {
+      await adminApi.putExecutionMode(executionMode);
+    } catch (e) {
+      setExecutionModeError(e.message);
+    } finally {
+      setExecutionModeSaving(false);
+    }
+  };
+
+  const saveHybridRules = async () => {
+    setExecutionModeSaving(true);
+    setExecutionModeError(null);
+    try {
+      await adminApi.putHybridRules(hybridRules);
+    } catch (e) {
+      setExecutionModeError(e.message);
+    } finally {
+      setExecutionModeSaving(false);
+    }
+  };
+
   return (
     <div className="page admin-page admin-settings">
       <header className="page-header">
@@ -198,6 +255,83 @@ export default function AdminSettings() {
           </div>
           <p className="muted">When margin level falls below this %, margin call is triggered.</p>
         </div>
+      </section>
+
+      <section className="admin-section-block">
+        <h2 className="section-title">Execution mode</h2>
+        <div className="settings-card">
+          {executionModeLoading ? (
+            <p className="muted">Loading…</p>
+          ) : (
+            <>
+              <div className="filter-group">
+                <label>Broker execution mode</label>
+                <select
+                  value={executionMode}
+                  onChange={(e) => setExecutionMode(e.target.value)}
+                  className="filter-select"
+                >
+                  <option value="A_BOOK">A-Book (route to liquidity provider)</option>
+                  <option value="B_BOOK">B-Book (internal execution)</option>
+                  <option value="HYBRID">Hybrid (rules-based routing)</option>
+                </select>
+              </div>
+              <p className="muted">All new market orders are routed through this setting. Change takes effect immediately.</p>
+              <button type="button" className="btn btn-primary" onClick={saveExecutionMode} disabled={executionModeSaving}>
+                {executionModeSaving ? 'Saving…' : 'Save execution mode'}
+              </button>
+              {executionModeError && <p className="form-error" style={{ marginTop: '0.5rem' }}>{executionModeError}</p>}
+            </>
+          )}
+        </div>
+        {!executionModeLoading && executionMode === 'HYBRID' && (
+          <div className="settings-card" style={{ marginTop: '1rem' }}>
+            <h3 className="section-title" style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>Hybrid rules</h3>
+            <p className="muted">When mode is Hybrid, these rules decide A-Book vs B-Book per order.</p>
+            <div className="settings-row">
+              <div className="filter-group">
+                <label>Volume threshold to A-Book (lots)</label>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.1}
+                  value={hybridRules.volumeThresholdToABook ?? 5}
+                  onChange={(e) => setHybridRules((r) => ({ ...r, volumeThresholdToABook: Number(e.target.value) || 0 }))}
+                  className="filter-input"
+                />
+              </div>
+              <div className="filter-group">
+                <label>Max internal exposure per symbol (lots)</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={hybridRules.maxInternalExposurePerSymbol ?? 100}
+                  onChange={(e) => setHybridRules((r) => ({ ...r, maxInternalExposurePerSymbol: Number(e.target.value) || 0 }))}
+                  className="filter-input"
+                />
+              </div>
+            </div>
+            <label className="settings-toggle">
+              <input
+                type="checkbox"
+                checked={hybridRules.profitableTraderToABook === true}
+                onChange={(e) => setHybridRules((r) => ({ ...r, profitableTraderToABook: e.target.checked }))}
+              />
+              <span>Route profitable traders to A-Book</span>
+            </label>
+            <label className="settings-toggle">
+              <input
+                type="checkbox"
+                checked={hybridRules.newsTimeForceABook === true}
+                onChange={(e) => setHybridRules((r) => ({ ...r, newsTimeForceABook: e.target.checked }))}
+              />
+              <span>Force A-Book during news (placeholder)</span>
+            </label>
+            <button type="button" className="btn btn-primary" onClick={saveHybridRules} disabled={executionModeSaving} style={{ marginTop: '0.5rem' }}>
+              {executionModeSaving ? 'Saving…' : 'Save hybrid rules'}
+            </button>
+          </div>
+        )}
       </section>
 
       <section className="admin-section-block">

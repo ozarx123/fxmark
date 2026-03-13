@@ -20,6 +20,7 @@ router.get('/accounts/:accountId', accountController.getAccount);
 router.post('/orders', controller.placeOrder);
 router.get('/orders', controller.listOrders);
 router.get('/orders/:orderId', controller.getOrder);
+router.patch('/orders/:orderId', controller.updateOrder);
 router.post('/orders/:orderId/cancel', controller.cancelOrder);
 
 // Positions (specific before :id)

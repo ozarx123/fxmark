@@ -13,6 +13,8 @@ import pammRepo from '../pamm/pamm.repository.js';
 import ibRepo from '../ib/ib.repository.js';
 import payoutService from '../ib/payout.service.js';
 import tradingLimitsRepo from './trading-limits.repository.js';
+import executionModeService from '../trading/execution-mode.service.js';
+import audit from './audit.logs.js';
 
 async function getLeads(req, res, next) {
   try {
@@ -70,14 +72,18 @@ async function listUsers(req, res, next) {
 async function updateUser(req, res, next) {
   try {
     const { id } = req.params;
-    const { role, kycStatus } = req.body;
+    const { role, kycStatus, kycRejectedReason } = req.body;
     const update = {};
     if (role !== undefined) update.role = role;
     if (kycStatus !== undefined) update.kycStatus = kycStatus;
+    if (kycRejectedReason !== undefined) update.kycRejectedReason = kycRejectedReason;
     if (Object.keys(update).length === 0) {
-      return res.status(400).json({ error: 'No role or kycStatus to update' });
+      return res.status(400).json({ error: 'No role, kycStatus or kycRejectedReason to update' });
     }
-    const user = await userService.update(id, update);
+    // Use repo directly so admin can set kycRejectedReason (not in user-service allowed list)
+    const user = await (update.kycStatus !== undefined || update.kycRejectedReason !== undefined
+      ? userRepo.updateById(id, update)
+      : userService.update(id, update));
     if (!user) return res.status(404).json({ error: 'User not found' });
     res.json({
       ...user,
@@ -413,11 +419,94 @@ async function updateTradingLimits(req, res, next) {
     if (Object.keys(data).length === 0) {
       return res.status(400).json({ error: 'Provide blocked, maxDrawdownPercent, or maxDailyLoss' });
     }
+    const oldLimits = await tradingLimitsRepo.getByUserId(userId);
     const limits = await tradingLimitsRepo.upsert(userId, data);
+    if (audit?.log) {
+      audit.log(req.user?.id, 'update_trading_limits', 'user_trading_limits', {
+        targetUserId: userId,
+        old: { blocked: oldLimits?.blocked, maxDrawdownPercent: oldLimits?.maxDrawdownPercent, maxDailyLoss: oldLimits?.maxDailyLoss },
+        new: { blocked: limits?.blocked, maxDrawdownPercent: limits?.maxDrawdownPercent, maxDailyLoss: limits?.maxDailyLoss },
+      });
+    }
     res.json({
       blocked: limits?.blocked ?? false,
       maxDrawdownPercent: limits?.maxDrawdownPercent ?? null,
       maxDailyLoss: limits?.maxDailyLoss ?? null,
+    });
+  } catch (e) {
+    next(e);
+  }
+}
+
+/** Get CRM/config for a trading account (admin) */
+async function getAccountConfig(req, res, next) {
+  try {
+    const { userId, accountId } = req.params;
+    if (!userId || !accountId) return res.status(400).json({ error: 'userId and accountId required' });
+    const account = await tradingAccountRepo.findById(accountId, userId);
+    if (!account) return res.status(404).json({ error: 'Trading account not found' });
+    res.json({
+      accountId: account.id,
+      accountNumber: account.accountNumber,
+      type: account.type,
+      accountGroup: account.accountGroup ?? null,
+      executionGroup: account.executionGroup ?? null,
+      riskGroup: account.riskGroup ?? null,
+      leverage: account.leverage ?? null,
+      tradingEnabled: account.tradingEnabled !== false,
+      accountBlocked: !!account.accountBlocked,
+      canTradeForex: account.canTradeForex !== false,
+      canTradeMetals: account.canTradeMetals !== false,
+      canTradeCrypto: account.canTradeCrypto !== false,
+    });
+  } catch (e) {
+    next(e);
+  }
+}
+
+/** Update CRM/config for a trading account (admin). Audit logged. */
+async function updateAccountConfig(req, res, next) {
+  try {
+    const { userId, accountId } = req.params;
+    const body = req.body || {};
+    if (!userId || !accountId) return res.status(400).json({ error: 'userId and accountId required' });
+    const account = await tradingAccountRepo.findById(accountId, userId);
+    if (!account) return res.status(404).json({ error: 'Trading account not found' });
+    const update = {};
+    if (body.accountGroup !== undefined) update.accountGroup = body.accountGroup;
+    if (body.executionGroup !== undefined) update.executionGroup = body.executionGroup;
+    if (body.riskGroup !== undefined) update.riskGroup = body.riskGroup;
+    if (body.leverage !== undefined) update.leverage = Number(body.leverage);
+    if (body.tradingEnabled !== undefined) update.tradingEnabled = !!body.tradingEnabled;
+    if (body.accountBlocked !== undefined) update.accountBlocked = !!body.accountBlocked;
+    if (body.canTradeForex !== undefined) update.canTradeForex = !!body.canTradeForex;
+    if (body.canTradeMetals !== undefined) update.canTradeMetals = !!body.canTradeMetals;
+    if (body.canTradeCrypto !== undefined) update.canTradeCrypto = !!body.canTradeCrypto;
+    if (Object.keys(update).length === 0) {
+      return res.status(400).json({ error: 'Provide at least one field to update' });
+    }
+    const updated = await tradingAccountRepo.updateAccountConfig(accountId, userId, update);
+    if (audit?.log) {
+      audit.log(req.user?.id, 'update_account_config', 'trading_account', {
+        targetUserId: userId,
+        accountId,
+        accountNumber: account.accountNumber,
+        changes: update,
+      });
+    }
+    res.json({
+      accountId: updated.id,
+      accountNumber: updated.accountNumber,
+      type: updated.type,
+      accountGroup: updated.accountGroup ?? null,
+      executionGroup: updated.executionGroup ?? null,
+      riskGroup: updated.riskGroup ?? null,
+      leverage: updated.leverage ?? null,
+      tradingEnabled: updated.tradingEnabled !== false,
+      accountBlocked: !!updated.accountBlocked,
+      canTradeForex: updated.canTradeForex !== false,
+      canTradeMetals: updated.canTradeMetals !== false,
+      canTradeCrypto: updated.canTradeCrypto !== false,
     });
   } catch (e) {
     next(e);
@@ -487,4 +576,52 @@ export default {
   adminCancelOrder,
   getTradingLimits,
   updateTradingLimits,
+  getAccountConfig,
+  updateAccountConfig,
+
+  // Execution mode (broker A-Book / B-Book / Hybrid)
+  getExecutionMode,
+  putExecutionMode,
+  getHybridRules,
+  putHybridRules,
 };
+
+async function getExecutionMode(req, res, next) {
+  try {
+    const settings = await executionModeService.getExecutionMode();
+    res.json(settings);
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function putExecutionMode(req, res, next) {
+  try {
+    const { executionMode } = req.body;
+    const adminId = req.user?.id;
+    const settings = await executionModeService.setExecutionMode(executionMode, adminId);
+    res.json(settings);
+  } catch (e) {
+    if (e.statusCode) return next(e);
+    next(e);
+  }
+}
+
+async function getHybridRules(req, res, next) {
+  try {
+    const rules = await executionModeService.getHybridRules();
+    res.json(rules);
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function putHybridRules(req, res, next) {
+  try {
+    const adminId = req.user?.id;
+    const rules = await executionModeService.updateHybridRules(req.body || {}, adminId);
+    res.json(rules);
+  } catch (e) {
+    next(e);
+  }
+}

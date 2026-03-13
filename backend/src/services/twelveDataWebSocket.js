@@ -1,11 +1,16 @@
 import WebSocket from 'ws';
 import { SYMBOL_MAP } from '../config/symbolMap.js';
 
-/** Twelve Data WebSocket URLs. Use base + apikey in query; subscribe after connect. Playground uses same endpoint. */
+/**
+ * Twelve Data WebSocket endpoint candidates.
+ * The officially documented streaming path is /v1/quotes/price.
+ * Requires the "Grow" plan or higher — free plan returns 401/403, not 404.
+ * If all return 404, the account plan does not include WebSocket access.
+ */
 const WS_URL_OPTIONS = [
-  'wss://ws.twelvedata.com/v1/quotes',  // documented quotes stream
-  'wss://ws.twelvedata.com/v1',         // base v1
-  'wss://ws.twelvedata.com',            // root (no path)
+  'wss://ws.twelvedata.com/v1/quotes/price', // official streaming endpoint (Growth plan+)
+  'wss://ws.twelvedata.com/v1/quotes',       // alternate path (some docs)
+  'wss://ws.twelvedata.com/v1',              // base v1 fallback
 ];
 
 /** Phase 2: Heartbeat interval (Twelve Data may require client heartbeat to keep connection alive) */
@@ -62,7 +67,7 @@ export function createTwelveDataWebSocket({ apiKey, symbols, onTick, onError }) 
 
   function tryConnect() {
     if (urlIndex >= WS_URL_OPTIONS.length) {
-      onError?.(new Error('All WebSocket URLs failed (404/connection refused). Growth plan may need Pro for WebSocket.'));
+      onError?.(new Error('All WebSocket URLs failed. Twelve Data WebSocket requires the "Grow" plan. REST polling will continue as sole tick source.'));
       return null;
     }
 
@@ -95,7 +100,9 @@ export function createTwelveDataWebSocket({ apiKey, symbols, onTick, onError }) 
           console.warn(`[twelveDataWS] ${res.statusCode} from ${safeUrl}: ${body?.slice(0, 200) || 'no body'}`);
         }
         if (res.statusCode === 404) {
-          console.warn(`[twelveDataWS] If playground works, check: (1) exact path /v1/quotes vs /v1, (2) apikey in query, (3) subscribe format.`);
+          console.warn(`[twelveDataWS] 404 on all paths — WebSocket streaming requires the Twelve Data "Grow" plan ($29/mo). Free plan: REST polling only.`);
+        } else if (res.statusCode === 401 || res.statusCode === 403) {
+          console.warn(`[twelveDataWS] ${res.statusCode} — API key invalid or plan does not include WebSocket. Upgrade to "Grow" plan.`);
         }
         urlIndex++;
         ws.removeAllListeners();

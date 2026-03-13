@@ -1,5 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import FxChart from '../../components/FxChart';
+import {
+  QuoteCardsStrip,
+  OrderTicketSidebar,
+  TradeRiskPanel,
+} from '../../components/trading';
 import OrderConfirmModal from '../../components/OrderConfirmModal';
 import OrderConfirmModalAdvanced from '../../components/OrderConfirmModalAdvanced';
 import ActiveTradesModal from '../../components/ActiveTradesModal';
@@ -7,6 +12,8 @@ import HistoryModal from '../../components/HistoryModal';
 import { useMarketData } from '../../hooks/useMarketData';
 import { useLivePrices, getPriceForSymbol, computePnL } from '../../hooks/useLivePrices';
 import { useTradeSnapshot } from '../../context/MarketDataContext.jsx';
+import { useTradeNotifications } from '../../hooks/useTradeNotifications.js';
+import { useTechnicalAnalysis } from '../../hooks/useTechnicalAnalysis.js';
 import { useAccount } from '../../context/AccountContext';
 import { useAuth } from '../../context/AuthContext';
 import { useFinance } from '../../hooks/useFinance';
@@ -37,15 +44,15 @@ const TIMEFRAMES = [
 
 /** Fallback prices when API/WS provide no data (market order still shows a price) */
 const FALLBACK_MARKET_PRICES = {
-  'XAU/USD': 2650,
-  XAUUSD: 2650,
-  'EUR/USD': 1.0852,
-  'GBP/USD': 1.2655,
-  'USD/JPY': 150.12,
-  'USD/CHF': 0.8845,
-  'USD/CAD': 1.3582,
-  'AUD/USD': 0.6522,
-  'NZD/USD': 0.6125,
+  'XAU/USD': 3000,
+  XAUUSD: 3000,
+  'EUR/USD': 1.1555,
+  'GBP/USD': 1.2950,
+  'USD/JPY': 149.80,
+  'USD/CHF': 0.8820,
+  'USD/CAD': 1.3580,
+  'AUD/USD': 0.6450,
+  'NZD/USD': 0.5920,
 };
 
 /** Mock analysis for current symbol (replace with API or real indicators) */
@@ -145,14 +152,16 @@ function mapHistoryItem(item, isPosition) {
 }
 
 export default function Trading() {
+  const notification = useTradeNotifications();
   const { accounts, activeAccount, setActiveAccount, balance, refreshActiveBalance, refreshLiveBalance, loading: accountsLoading } = useAccount();
   const { isAuthenticated } = useAuth();
   const { refresh: refreshFinance } = useFinance();
   const [pammAccounts, setPammAccounts] = useState([]);
   const [selectedAccountId, setSelectedAccountId] = useState(null);
-  const [symbol, setSymbol] = useState('EUR/USD');
+  const [symbol, setSymbol] = useState('XAU/USD');
   const [timeframe, setTimeframe] = useState('1m');
   const [chartType, setChartType] = useState('candles');
+  const [chartTool, setChartTool] = useState('hairline');
   const { candles, tick, loading, error, wsConnected } = useMarketData(symbol, timeframe);
   const { prices: livePrices, latency: liveLatency } = useLivePrices();
   const lastCandleClose = candles?.length ? candles[candles.length - 1]?.close : null;
@@ -161,6 +170,23 @@ export default function Trading() {
   const marketPrice = tick?.close ?? tick?.price ?? livePriceForSymbol ?? lastCandleClose ?? FALLBACK_MARKET_PRICES[symbol] ?? null;
   // So chart updates last candle when price comes from livePrices (e.g. XAU/USD) even if useMarketData tick is missing
   const chartTick = tick ?? (livePriceForSymbol != null ? { close: livePriceForSymbol, price: livePriceForSymbol } : null);
+  const { data: technicalData, loading: technicalLoading, error: technicalError } = useTechnicalAnalysis(symbol, '1day');
+  const fallbackAnalysis = getAnalysisForSymbol(symbol, marketPrice);
+  const analysis = (technicalData && !technicalError)
+    ? {
+        trend: technicalData.trend ?? fallbackAnalysis.trend,
+        trendClass: technicalData.trendClass ?? fallbackAnalysis.trendClass,
+        summary: technicalData.summary ?? fallbackAnalysis.summary,
+        support: Array.isArray(technicalData.support) && technicalData.support.length ? technicalData.support : fallbackAnalysis.support,
+        resistance: Array.isArray(technicalData.resistance) && technicalData.resistance.length ? technicalData.resistance : fallbackAnalysis.resistance,
+        rsi: technicalData.rsi ?? fallbackAnalysis.rsi,
+        rsiSignal: technicalData.rsiSignal ?? fallbackAnalysis.rsiSignal,
+        momentum: technicalData.momentum ?? fallbackAnalysis.momentum,
+        macd: technicalData.macd,
+        macd_signal: technicalData.macd_signal,
+        macd_hist: technicalData.macd_hist,
+      }
+    : fallbackAnalysis;
   const [modal, setModal] = useState(null);
   const [advancedModalOpen, setAdvancedModalOpen] = useState(false);
   const [tradesModalOpen, setTradesModalOpen] = useState(false);
@@ -283,7 +309,15 @@ export default function Trading() {
     return sum + (vol * contractSize * price) / leverage;
   }, 0);
 
-  const analysis = getAnalysisForSymbol(symbol, marketPrice);
+  const notificationMessage = notification?.message ?? null;
+  const notificationKind = notification?.kind ?? null;
+  const notificationClassName = notificationMessage
+    ? `trade-notification-banner ${
+        notificationKind === 'warning'
+          ? 'trade-notification-banner--warning'
+          : 'trade-notification-banner--success'
+      }`
+    : '';
 
   const handleOrderConfirm = async (order) => {
     if (!isAuthenticated) return;
@@ -352,11 +386,25 @@ export default function Trading() {
 
   return (
     <div className="page trading-page">
-      <header className="page-header">
-        <h1>Trading</h1>
-        <p className="page-subtitle">Orders and positions</p>
-      </header>
-      <div className="trading-stats-bar">
+      {notificationMessage && (
+        <div className={notificationClassName}>
+          <span>{notificationMessage}</span>
+          <button
+            type="button"
+            className="trade-notification-close"
+            onClick={() => {
+              // simple local hide by reloading component state via no-op; real close handled inside hook
+              // trading page has no direct setter, so rely on notification hook updating on next event
+              const banner = document.querySelector('.trade-notification-banner');
+              if (banner) banner.style.display = 'none';
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      <div className="trading-stats-bar trading-stats-bar--compact">
         <div className="trading-stat trading-stat-account">
           <span className="trading-stat-label">Account</span>
           {tradingAccounts.length ? (
@@ -397,8 +445,26 @@ export default function Trading() {
             {profit >= 0 ? '+' : ''}{formatCurrency(profit)}
           </span>
         </div>
+        <div className="trading-stat trading-stat-actions">
+          <button
+            type="button"
+            className="btn btn-close-position"
+            onClick={() => setTradesModalOpen(true)}
+          >
+            Close position
+          </button>
+        </div>
       </div>
       <section className="page-content">
+        <div className="trading-chart-with-sidebar">
+          <div className="trading-chart-main">
+        <div className="chart-price-header">
+          <span className="chart-price-symbol">{symbol}</span>
+          <span className="chart-price-value">{marketPrice != null ? (symbol?.includes('XAU') ? marketPrice.toFixed(2) : marketPrice.toFixed(4)) : '—'}</span>
+          <span className={`chart-price-change ${(analysis?.rsi ?? 50) >= 50 ? 'positive' : 'negative'}`}>
+            {analysis?.rsi != null ? `${(analysis.rsi - 50) / 50 > 0 ? '+' : ''}${((analysis.rsi - 50) / 50 * 1.5).toFixed(2)}%` : '—'}
+          </span>
+        </div>
         <div className="section-block chart-section">
           <div className="chart-controls">
             <label>
@@ -436,6 +502,18 @@ export default function Trading() {
                 <option value="line">Line</option>
               </select>
             </label>
+            <label>
+              <span className="chart-control-label">Tool</span>
+              <select
+                value={chartTool}
+                onChange={(e) => setChartTool(e.target.value)}
+                className="chart-select"
+              >
+                <option value="none">None</option>
+                <option value="hairline">Hairline</option>
+                <option value="trendline" disabled>Trendline (coming soon)</option>
+              </select>
+            </label>
           </div>
           {import.meta.env.DEV && (
             <div className="chart-latency-debug">
@@ -463,10 +541,26 @@ export default function Trading() {
             error={error}
             wsConnected={wsConnected}
             marketPrice={marketPrice}
+            tool={chartTool}
           />
         </div>
-        <div className="section-block trading-analysis-section">
-          <h2>Analysis — {symbol}</h2>
+        <QuoteCardsStrip
+          symbols={SYMBOLS}
+          prices={livePrices}
+          fallbackPrices={FALLBACK_MARKET_PRICES}
+          selectedSymbol={symbol}
+          onSelectSymbol={setSymbol}
+        />
+            <div className="section-block trading-analysis-section">
+          <h2>Technical analysis — {symbol}</h2>
+          {technicalLoading && (
+            <p className="muted">
+              <span className="spinner spinner-inline" />
+            </p>
+          )}
+          {technicalError && !technicalLoading && (
+            <p className="muted">Using fallback analysis. ({technicalError})</p>
+          )}
           <div className="trading-analysis-grid">
             <div className="trading-analysis-card">
               <h3 className="trading-analysis-card-title">Trend & outlook</h3>
@@ -481,13 +575,13 @@ export default function Trading() {
                 <div className="trading-analysis-level-row">
                   <span className="trading-analysis-level-label">Resistance</span>
                   <span className="trading-analysis-level-value">
-                    {analysis.resistance.map((r) => (r < 100 ? r.toFixed(4) : r.toFixed(2))).join(', ')}
+                    {(analysis.resistance || []).map((r) => (r < 100 ? r.toFixed(4) : r.toFixed(2))).join(', ')}
                   </span>
                 </div>
                 <div className="trading-analysis-level-row">
                   <span className="trading-analysis-level-label">Support</span>
                   <span className="trading-analysis-level-value">
-                    {analysis.support.map((s) => (s < 100 ? s.toFixed(4) : s.toFixed(2))).join(', ')}
+                    {(analysis.support || []).map((s) => (s < 100 ? s.toFixed(4) : s.toFixed(2))).join(', ')}
                   </span>
                 </div>
               </div>
@@ -497,11 +591,21 @@ export default function Trading() {
               <div className="trading-analysis-indicators">
                 <div className="trading-analysis-indicator">
                   <span className="trading-analysis-indicator-label">RSI (14)</span>
-                  <span className="trading-analysis-indicator-value">{analysis.rsi}</span>
-                  <span className={`trading-analysis-indicator-signal trading-analysis-indicator-signal--${analysis.rsiSignal.toLowerCase()}`}>
+                  <span className="trading-analysis-indicator-value">
+                    {typeof analysis.rsi === 'number' ? analysis.rsi.toFixed(1) : analysis.rsi}
+                  </span>
+                  <span className={`trading-analysis-indicator-signal trading-analysis-indicator-signal--${(analysis.rsiSignal || 'neutral').toLowerCase()}`}>
                     {analysis.rsiSignal}
                   </span>
                 </div>
+                {analysis.macd_hist != null && (
+                  <div className="trading-analysis-indicator">
+                    <span className="trading-analysis-indicator-label">MACD hist</span>
+                    <span className="trading-analysis-indicator-value">
+                      {Number(analysis.macd_hist).toFixed(4)}
+                    </span>
+                  </div>
+                )}
                 <div className="trading-analysis-indicator">
                   <span className="trading-analysis-indicator-label">Momentum</span>
                   <span className="trading-analysis-indicator-value">{analysis.momentum}</span>
@@ -509,6 +613,79 @@ export default function Trading() {
               </div>
             </div>
           </div>
+        </div>
+          </div>
+          <aside className="trading-terminal-sidebar">
+            <OrderTicketSidebar
+              symbol={symbol}
+              marketPrice={marketPrice}
+              onBuy={async (o) => {
+                try {
+                  await tradingApi.placeOrder({
+                    symbol: o.symbol,
+                    side: 'buy',
+                    lots: o.lots,
+                    price: o.price,
+                    marketOrder: o.marketOrder ?? true,
+                  }, accountOpts);
+                  loadTradingData();
+                  refreshFinance();
+                  refreshActiveBalance();
+                  setTimeout(() => loadTradingData(true), 800);
+                } catch (e) {
+                  setTradingError(e.message || 'Failed to place order');
+                }
+              }}
+              onSell={async (o) => {
+                try {
+                  await tradingApi.placeOrder({
+                    symbol: o.symbol,
+                    side: 'sell',
+                    lots: o.lots,
+                    price: o.price,
+                    marketOrder: o.marketOrder ?? true,
+                  }, accountOpts);
+                  loadTradingData();
+                  refreshFinance();
+                  refreshActiveBalance();
+                  setTimeout(() => loadTradingData(true), 800);
+                } catch (e) {
+                  setTradingError(e.message || 'Failed to place order');
+                }
+              }}
+              disabled={!isAuthenticated}
+              isAuthenticated={!!isAuthenticated}
+            />
+            <div className="terminal-panel account-summary-panel">
+              <h3 className="terminal-panel-title">Account</h3>
+              <div className="account-summary-rows">
+                <div className="account-summary-row">
+                  <span className="account-summary-label">Account Balance</span>
+                  <span className="account-summary-value">{formatCurrency(equity)}</span>
+                </div>
+                <div className="account-summary-row">
+                  <span className="account-summary-label">Open PnL</span>
+                  <span className={`account-summary-value ${(profit ?? 0) >= 0 ? 'positive' : 'negative'}`}>
+                    {(profit ?? 0) >= 0 ? '+' : ''}{formatCurrency(profit ?? 0)}
+                  </span>
+                </div>
+                <div className="account-summary-row">
+                  <span className="account-summary-label">Margin Used</span>
+                  <span className="account-summary-value">{formatCurrency(margin)}</span>
+                </div>
+                <div className="account-summary-row">
+                  <span className="account-summary-label">Available Margin</span>
+                  <span className="account-summary-value">{formatCurrency(Math.max(0, equity - margin))}</span>
+                </div>
+              </div>
+            </div>
+            <TradeRiskPanel
+              equity={equity}
+              margin={margin}
+              profit={profit}
+              positions={positionsWithLivePnl}
+            />
+          </aside>
         </div>
         {tradingError && <p className="form-error">{tradingError}</p>}
         <div className="page-content two-col">
@@ -529,7 +706,11 @@ export default function Trading() {
                   {!isAuthenticated ? (
                     <tr><td colSpan={5} className="empty-cell">Sign in to view positions</td></tr>
                   ) : tradingLoading ? (
-                    <tr><td colSpan={5} className="empty-cell">Loading…</td></tr>
+                    <tr>
+                      <td colSpan={5} className="empty-cell">
+                        <span className="spinner spinner-inline" />
+                      </td>
+                    </tr>
                   ) : positionsWithLivePnl.length === 0 ? (
                     <tr><td colSpan={5} className="empty-cell">No open positions</td></tr>
                   ) : (

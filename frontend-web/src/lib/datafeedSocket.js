@@ -8,9 +8,10 @@ let socket = null;
 let connectCount = 0;
 
 function getDatafeedSocketUrl() {
-  // In dev, use same origin so Vite proxy forwards /socket.io to backend (avoids direct ws://localhost:3000 upgrade failures)
-  if (import.meta.env.DEV && typeof window !== 'undefined') {
-    return window.location.origin;
+  // In dev, connect Socket.IO directly to the backend port to avoid the Vite proxy
+  // failing to forward WebSocket upgrade handshakes (ECONNRESET).
+  if (import.meta.env.DEV) {
+    return 'http://localhost:3000';
   }
   const api = import.meta.env.VITE_API_URL;
   if (api) {
@@ -34,12 +35,20 @@ function getAuthToken() {
  */
 export function getDatafeedSocket() {
   if (socket?.connected) return socket;
-  if (socket && !socket.connected) return socket;
+  // Socket exists but is not connected (e.g. after explicit socket.disconnect()
+  // called by reconnectWithAuth). Call socket.connect() to resume — auto-reconnect
+  // is disabled after an explicit disconnect so we must trigger it manually.
+  if (socket && !socket.connected) {
+    socket.connect();
+    return socket;
+  }
   const url = getDatafeedSocketUrl();
-  const isCloudRun = url.includes('run.app');
-  const isDev = import.meta.env.DEV;
-  // In dev, Vite proxy often fails to forward WebSocket upgrade; use polling only so connection works
-  const transports = isDev || isCloudRun ? ['polling'] : ['polling', 'websocket'];
+  // Always start with polling so Socket.IO can complete the session handshake
+  // (exchange of session ID + capabilities) before upgrading to WebSocket.
+  // Skipping polling by putting 'websocket' first causes the server to reject
+  // the raw WS upgrade (no session exists yet) → infinite reconnect loop.
+  // Socket.IO upgrades to WebSocket automatically once polling is established.
+  const transports = ['polling', 'websocket'];
   const token = getAuthToken();
   socket = io(url, {
     path: '/socket.io',
@@ -52,7 +61,7 @@ export function getDatafeedSocket() {
     timeout: 20000,
     auth: token ? { token } : {},
   });
-  if (isDev) {
+  if (import.meta.env.DEV) {
     socket.on('connect', () => console.log('[datafeed] Socket.IO connected'));
     socket.on('disconnect', (reason) => console.log('[datafeed] Socket.IO disconnected:', reason));
     socket.on('connect_error', (err) => console.error('[datafeed] Socket.IO connect_error:', err.message));

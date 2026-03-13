@@ -2,10 +2,10 @@
  * Audit logs
  * Log admin actions for compliance
  */
-const logger = require('../../utils/logger');
+import logger from '../../utils/logger.js';
 
-function log(userId, action, resource, details = {}) {
+export function log(userId, action, resource, details = {}) {
   logger.info('audit', { userId, action, resource, ...details });
 }
 
-module.exports = { log };
+export default { log };

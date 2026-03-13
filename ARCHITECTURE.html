@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FXMark — System Architecture</title>
+  <style>
+    :root {
+      --bg: #0f0f13;
+      --surface: #18181f;
+      --surface2: #1e1e28;
+      --border: #2a2a38;
+      --accent: #de1414;
+      --accent2: #ff6b6b;
+      --green: #22c55e;
+      --yellow: #fbbf24;
+      --blue: #60a5fa;
+      --purple: #a78bfa;
+      --text: #e2e2e8;
+      --text-muted: #888899;
+      --code-bg: #12121a;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      font-size: 15px;
+      line-height: 1.7;
+    }
+
+    /* ── Layout ── */
+    .layout { display: flex; min-height: 100vh; }
+
+    .sidebar {
+      width: 260px;
+      min-width: 260px;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      padding: 2rem 1.25rem;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+    }
+
+    .sidebar-logo {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      margin-bottom: 2rem;
+    }
+
+    .sidebar-logo .dot {
+      width: 10px; height: 10px;
+      background: var(--accent);
+      border-radius: 50%;
+      box-shadow: 0 0 8px var(--accent);
+    }
+
+    .sidebar-logo span {
+      font-weight: 700;
+      font-size: 1.05rem;
+      letter-spacing: 0.04em;
+      color: #fff;
+    }
+
+    .sidebar nav a {
+      display: block;
+      padding: 0.4rem 0.75rem;
+      margin-bottom: 0.15rem;
+      color: var(--text-muted);
+      text-decoration: none;
+      border-radius: 6px;
+      font-size: 0.88rem;
+      transition: all 0.15s;
+    }
+    .sidebar nav a:hover { background: var(--surface2); color: var(--text); }
+    .sidebar nav a.active { background: rgba(222,20,20,0.15); color: var(--accent2); }
+
+    .sidebar nav .section-label {
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      padding: 0.75rem 0.75rem 0.25rem;
+      margin-top: 0.5rem;
+    }
+
+    .content {
+      flex: 1;
+      padding: 3rem 3.5rem;
+      max-width: 960px;
+    }
+
+    /* ── Header ── */
+    .page-header {
+      margin-bottom: 3rem;
+      padding-bottom: 2rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .page-header h1 {
+      font-size: 2.2rem;
+      font-weight: 800;
+      color: #fff;
+      letter-spacing: -0.02em;
+      margin-bottom: 0.5rem;
+    }
+
+    .page-header h1 span { color: var(--accent); }
+
+    .page-header p {
+      color: var(--text-muted);
+      font-size: 1rem;
+    }
+
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 1rem;
+    }
+
+    .badge {
+      padding: 0.25rem 0.7rem;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+
+    .badge-red    { background: rgba(222,20,20,0.2);  color: var(--accent2); border: 1px solid rgba(222,20,20,0.3); }
+    .badge-green  { background: rgba(34,197,94,0.15); color: var(--green);   border: 1px solid rgba(34,197,94,0.3); }
+    .badge-blue   { background: rgba(96,165,250,0.15);color: var(--blue);    border: 1px solid rgba(96,165,250,0.3);}
+    .badge-yellow { background: rgba(251,191,36,0.15);color: var(--yellow);  border: 1px solid rgba(251,191,36,0.3);}
+    .badge-purple { background: rgba(167,139,250,0.15);color: var(--purple); border: 1px solid rgba(167,139,250,0.3);}
+
+    /* ── Sections ── */
+    section { margin-bottom: 3.5rem; }
+
+    h2 {
+      font-size: 1.45rem;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 1.25rem;
+      padding-bottom: 0.6rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+
+    h2 .num {
+      background: var(--accent);
+      color: #fff;
+      font-size: 0.75rem;
+      font-weight: 700;
+      width: 24px; height: 24px;
+      border-radius: 6px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    h3 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: var(--accent2);
+      margin: 1.8rem 0 0.75rem;
+    }
+
+    h4 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--blue);
+      margin: 1.2rem 0 0.5rem;
+    }
+
+    p { margin-bottom: 0.75rem; color: var(--text); }
+
+    ul { padding-left: 1.4rem; margin-bottom: 0.75rem; }
+    ul li { margin-bottom: 0.3rem; color: var(--text); }
+
+    /* ── Code blocks ── */
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.1rem 1.3rem;
+      overflow-x: auto;
+      margin: 0.75rem 0 1rem;
+      font-size: 0.83rem;
+      line-height: 1.6;
+    }
+
+    code {
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      font-size: 0.85em;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      padding: 0.1em 0.4em;
+      border-radius: 4px;
+      color: #c9d1d9;
+    }
+
+    pre code {
+      background: none;
+      border: none;
+      padding: 0;
+      font-size: inherit;
+    }
+
+    /* ── Tables ── */
+    .table-wrap { overflow-x: auto; margin: 0.75rem 0 1.25rem; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }
+
+    thead tr {
+      background: var(--surface2);
+    }
+
+    th {
+      text-align: left;
+      padding: 0.6rem 1rem;
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      border-bottom: 1px solid var(--border);
+    }
+
+    td {
+      padding: 0.6rem 1rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(255,255,255,0.02); }
+
+    td code { font-size: 0.8em; }
+
+    /* ── Flow boxes ── */
+    .flow-box {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: 8px;
+      padding: 1.1rem 1.3rem;
+      margin: 0.75rem 0 1rem;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      font-size: 0.83rem;
+      line-height: 1.8;
+      white-space: pre;
+      overflow-x: auto;
+    }
+
+    /* ── Cards (overview tech stack) ── */
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 0.75rem;
+      margin: 1rem 0;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.1rem;
+    }
+
+    .card .card-label {
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      margin-bottom: 0.35rem;
+    }
+
+    .card .card-value {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    /* ── Module grid ── */
+    .module-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 0.75rem;
+      margin: 1rem 0;
+    }
+
+    .module-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.1rem;
+      transition: border-color 0.15s;
+    }
+
+    .module-card:hover { border-color: var(--accent); }
+
+    .module-card .mod-name {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--accent2);
+      margin-bottom: 0.3rem;
+      font-family: monospace;
+    }
+
+    .module-card .mod-desc {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    /* ── Status pills ── */
+    .pill {
+      display: inline-block;
+      padding: 0.15rem 0.55rem;
+      border-radius: 20px;
+      font-size: 0.72rem;
+      font-weight: 600;
+    }
+    .pill-green  { background: rgba(34,197,94,0.15);  color: var(--green); }
+    .pill-yellow { background: rgba(251,191,36,0.15); color: var(--yellow); }
+    .pill-red    { background: rgba(222,20,20,0.15);  color: var(--accent2); }
+
+    /* ── HR ── */
+    hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
+
+    /* ── Print ── */
+    @media print {
+      .sidebar { display: none; }
+      .content { padding: 1.5rem; max-width: 100%; }
+      body { background: #fff; color: #000; }
+      pre, .flow-box { background: #f5f5f5; border-color: #ddd; color: #000; }
+      table thead tr { background: #eee; }
+    }
+
+    @media (max-width: 768px) {
+      .sidebar { display: none; }
+      .content { padding: 1.5rem; }
+    }
+  </style>
+</head>
+<body>
+<div class="layout">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="dot"></div>
+      <span>FXMark Docs</span>
+    </div>
+    <nav>
+      <div class="section-label">Architecture</div>
+      <a href="#overview">1. Overview</a>
+      <a href="#structure">2. Project Structure</a>
+      <a href="#backend">3. Backend</a>
+      <a href="#frontend">4. Frontend</a>
+      <a href="#infrastructure">5. Infrastructure</a>
+      <a href="#dataflow">6. Data Flow</a>
+      <a href="#patterns">7. Key Patterns</a>
+      <a href="#future">8. Planned / Future</a>
+    </nav>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="content">
+
+    <div class="page-header">
+      <h1><span>FXMark</span> — System Architecture</h1>
+      <p>Full-stack forex/CFD broker platform — backend, frontend, infrastructure &amp; data flows.</p>
+      <div class="badge-row">
+        <span class="badge badge-red">Node.js 24</span>
+        <span class="badge badge-green">MongoDB Atlas</span>
+        <span class="badge badge-blue">React 18</span>
+        <span class="badge badge-yellow">Socket.IO</span>
+        <span class="badge badge-purple">Cloud Run + Vercel</span>
+        <span class="badge badge-red">Anthropic Claude</span>
+      </div>
+    </div>
+
+    <!-- 1. Overview -->
+    <section id="overview">
+      <h2><span class="num">1</span> Overview</h2>
+      <p>FXMark is a full-featured <strong>forex/CFD broker platform</strong> with real-time trading, PAMM funds, multi-level IB commissions, double-entry bookkeeping, and AI trading scaffolding.</p>
+
+      <div class="card-grid">
+        <div class="card"><div class="card-label">Backend API</div><div class="card-value">Node.js 24 + Express 4</div></div>
+        <div class="card"><div class="card-label">Primary Database</div><div class="card-value">MongoDB Atlas</div></div>
+        <div class="card"><div class="card-label">Cache</div><div class="card-value">Redis 7 (ioredis)</div></div>
+        <div class="card"><div class="card-label">Real-time</div><div class="card-value">Socket.IO 4 + WebSocket</div></div>
+        <div class="card"><div class="card-label">Market Data</div><div class="card-value">Twelve Data REST/WS</div></div>
+        <div class="card"><div class="card-label">Frontend</div><div class="card-value">React 18 + Vite 5</div></div>
+        <div class="card"><div class="card-label">Charts</div><div class="card-value">Lightweight Charts</div></div>
+        <div class="card"><div class="card-label">Backend Hosting</div><div class="card-value">Google Cloud Run</div></div>
+        <div class="card"><div class="card-label">Frontend Hosting</div><div class="card-value">Vercel</div></div>
+        <div class="card"><div class="card-label">AI SDK</div><div class="card-value">Anthropic Claude</div></div>
+      </div>
+
+      <h3>Platform Features</h3>
+      <ul>
+        <li>Real-time FX trading — EURUSD, XAUUSD; live tick streaming from Twelve Data</li>
+        <li>Full PAMM (Percent Allocation Money Management) fund system</li>
+        <li>Multi-level Introducing Broker (IB) commission engine (5 levels)</li>
+        <li>Double-entry bookkeeping ledger (GAAP-aligned chart of accounts)</li>
+        <li>A-Book / B-Book risk routing (FIX protocol scaffolded)</li>
+        <li>AI trading strategy scaffolding (Anthropic Claude SDK integrated)</li>
+        <li>Role-based access: <code>user</code>, <code>ib</code>, <code>pamm_manager</code>, <code>admin</code>, <code>superadmin</code></li>
+        <li>TP/SL auto-execution on every market tick</li>
+        <li>Admin panel: KYC, trading monitor, financials, IB/PAMM approvals, audit logs</li>
+      </ul>
+    </section>
+
+    <!-- 2. Structure -->
+    <section id="structure">
+      <h2><span class="num">2</span> Top-Level Structure</h2>
+      <pre>fxmark/
+├── backend/              # Node.js/Express API + market data server
+├── frontend-web/         # React/Vite client trading portal (production)
+├── frontend-admin/       # Legacy admin stub (not active)
+├── apps/
+│   ├── admin-web/        # Planned: Next.js admin portal
+│   ├── client-portal/    # Planned: Next.js client portal
+│   └── mobile/           # Planned: Flutter mobile app
+├── docker/               # Dockerfiles, docker-compose, deploy scripts
+├── database/             # schema.sql (PostgreSQL DDL reference)
+├── .github/workflows/    # GitHub Actions CI (frontend)
+├── cloudbuild.yaml       # Google Cloud Build (backend → Cloud Run)
+├── ARCHITECTURE.md / .html
+├── DEPLOY.md
+└── README.md</pre>
+    </section>
+
+    <!-- 3. Backend -->
+    <section id="backend">
+      <h2><span class="num">3</span> Backend</h2>
+
+      <h3>3.1 Entry Points</h3>
+      <pre>backend/
+├── src/
+│   ├── index.js          ← PRIMARY entry (npm start)
+│   └── main.js           ← Alternative entry
+├── core/
+│   ├── server.js         ← Thin HTTP bootstrap (wraps app.js)
+│   ├── app.js            ← Express app (CORS, body, routes, error handler)
+│   └── routes.js         ← All /api/* route mounts</pre>
+      <p><strong><code>src/index.js</code></strong> is the production entry: creates Express + HTTP server with Socket.IO and native WebSocket (<code>/ws</code>), mounts all routes, starts Twelve Data polling/streaming, triggers TP/SL on every tick.</p>
+
+      <h3>3.2 API Routes</h3>
+      <p>All routes prefixed <code>/api</code>, gated by <code>requireDb</code> middleware (verifies MongoDB connected):</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Route</th><th>Module</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td><code>/api/auth</code></td><td>auth</td><td>Register, login, logout, refresh token, me</td></tr>
+            <tr><td><code>/api/trading</code></td><td>trading</td><td>Orders, positions, trading accounts</td></tr>
+            <tr><td><code>/api/wallet</code></td><td>wallet</td><td>Deposit, withdraw, transfer, history</td></tr>
+            <tr><td><code>/api/pamm</code></td><td>pamm</td><td>PAMM managers, follow/unfollow, allocations</td></tr>
+            <tr><td><code>/api/ib</code></td><td>ib</td><td>IB profile, commissions, payouts</td></tr>
+            <tr><td><code>/api/users</code></td><td>users</td><td>User profile, KYC</td></tr>
+            <tr><td><code>/api/admin</code></td><td>admin</td><td>Admin management panel</td></tr>
+            <tr><td><code>/api/support</code></td><td>support</td><td>Tickets, notifications</td></tr>
+            <tr><td><code>/api/finance</code></td><td>finance</td><td>Ledger, reports, reconciliation</td></tr>
+            <tr><td><code>/api/market</code></td><td>market</td><td>Live quotes, candles, WebSocket datafeed</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>3.3 Module Map</h3>
+      <div class="module-grid">
+        <div class="module-card"><div class="mod-name">auth/</div><div class="mod-desc">JWT auth, bcrypt passwords, refresh token rotation (JTI), referral code at registration</div></div>
+        <div class="module-card"><div class="mod-name">users/</div><div class="mod-desc">User CRUD, profile update, KYC (Sumsub stub)</div></div>
+        <div class="module-card"><div class="mod-name">trading/</div><div class="mod-desc">Orders, positions, margin, execution, multi-account. TP/SL auto-execution on every tick.</div></div>
+        <div class="module-card"><div class="mod-name">wallet/</div><div class="mod-desc">Deposit, withdrawal, transfer — all post double-entry journals to ledger</div></div>
+        <div class="module-card"><div class="mod-name">pamm/</div><div class="mod-desc">PAMM lifecycle, allocation engine, P&amp;L distribution, performance fees, Socket.IO events</div></div>
+        <div class="module-card"><div class="mod-name">ib/</div><div class="mod-desc">5-level IB hierarchy, commission engine ($/lot per level), payout service</div></div>
+        <div class="module-card"><div class="mod-name">finance/</div><div class="mod-desc">Double-entry ledger, full chart of accounts (GAAP), reports, reconciliation</div></div>
+        <div class="module-card"><div class="mod-name">admin/</div><div class="mod-desc">Admin API, trading limits (block/drawdown/daily loss cap), user/PAMM/IB management, audit logs</div></div>
+        <div class="module-card"><div class="mod-name">support/</div><div class="mod-desc">Tickets, Telegram + WhatsApp stubs, notifications</div></div>
+        <div class="module-card"><div class="mod-name">fix-engine/</div><div class="mod-desc">FIX protocol session, LP connector, price feed, execution reports (stub)</div></div>
+        <div class="module-card"><div class="mod-name">risk-management/</div><div class="mod-desc">A-Book/B-Book routing, AI risk switch, exposure manager, hedging (stub)</div></div>
+      </div>
+
+      <h3>3.4 Data Models (MongoDB)</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Collection</th><th>Key Fields</th></tr></thead>
+          <tbody>
+            <tr><td><code>users</code></td><td>email, passwordHash, name, role, kycStatus, referrerId, profileComplete</td></tr>
+            <tr><td><code>refresh_tokens</code></td><td>userId, jti, expiresAt</td></tr>
+            <tr><td><code>wallets</code></td><td>userId, currency, balance, locked</td></tr>
+            <tr><td><code>wallet_transactions</code></td><td>walletId, type, amount, currency, status, reference</td></tr>
+            <tr><td><code>orders</code></td><td>userId, accountId, symbol, side, volume, type, price, status, filledVolume</td></tr>
+            <tr><td><code>positions</code></td><td>userId, accountId, symbol, side, volume, openPrice, closePrice, pnl, tp, sl</td></tr>
+            <tr><td><code>pamm_managers</code></td><td>userId, fundName, aum, performanceFee, status</td></tr>
+            <tr><td><code>pamm_allocations</code></td><td>managerId, investorId, amount, realizedPnl</td></tr>
+            <tr><td><code>ib_profiles</code></td><td>userId, parentIbId, level, referralCode</td></tr>
+            <tr><td><code>ib_commissions</code></td><td>ibId, orderId, amount, rate, level</td></tr>
+            <tr><td><code>ledger</code></td><td>accountCode, entityId, debit, credit, currency, referenceType, pammFundId</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>3.5 Market Data Services</h3>
+      <pre>backend/src/services/
+├── twelveData.js           REST batch quote fetcher
+├── twelveDataWebSocket.js  Real-time streaming (TWELVE_DATA_WS=true)
+├── cache.js                Redis + in-memory fallback
+├── marketDataLogger.js     Tick logging to file
+└── tradeEvents.js          Socket.IO user room event emitter</pre>
+
+      <h3>3.6 AI Trading (Scaffolding)</h3>
+      <pre>backend/ai-trading/
+├── strategy.m5.gold.js     M5 XAUUSD strategy (getSignal → signal/sl/tp)
+├── backtesting.engine.js   Equity curve, trade list, Sharpe ratio
+├── risk.parameters.js      maxLotPerTrade=0.1, maxDrawdown=10%, dailyLossCap=$100
+├── news.filter.js          High-impact event exclusion (stub)
+└── break-even.logic.js     Move SL to break-even after X pips (stub)</pre>
+      <p>Anthropic Claude SDK (<code>@anthropic-ai/sdk@0.78.0</code>) is installed. Set <code>ANTHROPIC_API_KEY</code> in <code>backend/.env</code> to activate. Not yet wired to any route — ready for integration.</p>
+
+      <h3>3.7 Background Jobs</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Job</th><th>Schedule</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td><code>nightly.settlement.js</code></td><td>Daily (EOD)</td><td>P&amp;L reconciliation, daily statements</td></tr>
+            <tr><td><code>ib.commission.cron.js</code></td><td>Periodic</td><td>IB commission batch calculation</td></tr>
+            <tr><td><code>pamm.performance.cron.js</code></td><td>Periodic</td><td>PAMM performance fee calculation</td></tr>
+            <tr><td><code>exposure.sync.js</code></td><td>Periodic</td><td>Net exposure recalculation per symbol</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>3.8 Environment Variables</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Variable</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td><code>CONNECTION_STRING</code></td><td>MongoDB Atlas URI</td></tr>
+            <tr><td><code>JWT_SECRET</code></td><td>JWT signing secret</td></tr>
+            <tr><td><code>TWELVE_DATA_API_KEY</code></td><td>Twelve Data market data API key</td></tr>
+            <tr><td><code>TWELVE_DATA_WS</code></td><td><code>true</code> to use WebSocket instead of REST polling</td></tr>
+            <tr><td><code>SUBSCRIBED_SYMBOLS</code></td><td>Comma-separated symbols (default: XAUUSD,EURUSD)</td></tr>
+            <tr><td><code>REDIS_URL</code></td><td>Redis connection string (default: <code>redis://localhost:6379</code>)</td></tr>
+            <tr><td><code>PORT</code></td><td>HTTP server port (default: 3000)</td></tr>
+            <tr><td><code>ANTHROPIC_API_KEY</code></td><td>Claude AI API key</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>3.9 Key Backend Dependencies</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Package</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td><code>express@^4.21</code></td><td>HTTP framework</td></tr>
+            <tr><td><code>mongodb@^6.21</code></td><td>MongoDB driver (primary DB)</td></tr>
+            <tr><td><code>jsonwebtoken@^9.0</code></td><td>JWT auth</td></tr>
+            <tr><td><code>bcryptjs@^3.0</code></td><td>Password hashing</td></tr>
+            <tr><td><code>socket.io@^4.8</code></td><td>Real-time WebSocket</td></tr>
+            <tr><td><code>ws@^8.18</code></td><td>Native WebSocket server</td></tr>
+            <tr><td><code>ioredis@^5.4</code></td><td>Redis client</td></tr>
+            <tr><td><code>@anthropic-ai/sdk@^0.78</code></td><td>Claude AI SDK</td></tr>
+            <tr><td><code>node-fetch@^3.3</code></td><td>HTTP client for external APIs</td></tr>
+            <tr><td><code>dotenv@^16.4</code></td><td>Environment config</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 4. Frontend -->
+    <section id="frontend">
+      <h2><span class="num">4</span> Frontend</h2>
+      <p><strong>Stack:</strong> React 18, React Router v6, Vite 5, ESM &nbsp;|&nbsp; <strong>Hosted:</strong> Vercel</p>
+
+      <h3>4.1 App Structure</h3>
+      <pre>frontend-web/src/
+├── App.jsx               Route definitions + provider nesting
+├── AppLayout.jsx         Shared layout shell
+├── main.jsx              Vite entry point
+├── pages/                All route pages
+├── components/           Shared UI components
+├── context/              React context providers
+├── hooks/                Custom React hooks
+├── api/                  Backend API client modules
+├── lib/                  Utilities (candleTime, datafeedSocket)
+├── config/               Role-route config
+└── constants/            Trading, finance, account group constants</pre>
+
+      <h3>4.2 Provider Nesting</h3>
+      <pre>AuthProvider
+  └── BrowserRouter
+        └── MarketDataProvider   (WebSocket tick subscription)
+              └── AccountProvider  (active trading account)
+                    └── FinanceProvider  (wallet balance)
+                          └── ProtectedRoute  (auth + role guard)
+                                └── Page Components</pre>
+
+      <h3>4.3 Page Map</h3>
+      <h4>Public</h4>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Route</th><th>Component</th></tr></thead>
+          <tbody>
+            <tr><td><code>/</code></td><td>Landing.jsx</td></tr>
+            <tr><td><code>/auth</code></td><td>Auth.jsx (login/register)</td></tr>
+            <tr><td><code>/auth/callback</code></td><td>AuthCallback.jsx</td></tr>
+            <tr><td><code>/profile-setup</code></td><td>ProfileSetup.jsx</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h4>Client (authenticated)</h4>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Route</th><th>Page</th></tr></thead>
+          <tbody>
+            <tr><td><code>/dashboard</code></td><td>Main dashboard</td></tr>
+            <tr><td><code>/trading</code></td><td>Trading terminal (charts, orders, positions)</td></tr>
+            <tr><td><code>/wallet</code></td><td>Wallet (deposit/withdraw/transfer/history)</td></tr>
+            <tr><td><code>/finance</code></td><td>Finance/ledger view</td></tr>
+            <tr><td><code>/pamm</code></td><td>PAMM marketplace</td></tr>
+            <tr><td><code>/pamm/:id</code></td><td>Fund detail</td></tr>
+            <tr><td><code>/pamm/manager</code></td><td>PAMM manager dashboard</td></tr>
+            <tr><td><code>/pamm/ai</code></td><td>AI PAMM fund</td></tr>
+            <tr><td><code>/copy</code></td><td>Copy trading hub</td></tr>
+            <tr><td><code>/ib</code></td><td>IB dashboard (role: ib)</td></tr>
+            <tr><td><code>/settings</code></td><td>Profile settings</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h4>Admin (role: admin / superadmin)</h4>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Route</th><th>Page</th></tr></thead>
+          <tbody>
+            <tr><td><code>/admin</code></td><td>KPI dashboard</td></tr>
+            <tr><td><code>/admin/users</code></td><td>User management</td></tr>
+            <tr><td><code>/admin/kyc</code></td><td>KYC review queue</td></tr>
+            <tr><td><code>/admin/trading</code></td><td>Live trading monitor</td></tr>
+            <tr><td><code>/admin/financials</code></td><td>Financial reports</td></tr>
+            <tr><td><code>/admin/pamm</code></td><td>PAMM approvals</td></tr>
+            <tr><td><code>/admin/ib</code></td><td>IB commission management</td></tr>
+            <tr><td><code>/admin/liquidity</code></td><td>A/B-book management</td></tr>
+            <tr><td><code>/admin/tickets</code></td><td>Support tickets</td></tr>
+            <tr><td><code>/admin/audit</code></td><td>Audit log viewer</td></tr>
+            <tr><td><code>/admin/settings</code></td><td>Platform settings</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>4.4 Key Dependencies</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Package</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td><code>react@^18.2</code></td><td>UI framework</td></tr>
+            <tr><td><code>react-router-dom@^6.20</code></td><td>Client-side routing</td></tr>
+            <tr><td><code>lightweight-charts@^4.1</code></td><td>TradingView-style OHLCV charts</td></tr>
+            <tr><td><code>recharts@^2.10</code></td><td>Admin dashboard charts</td></tr>
+            <tr><td><code>socket.io-client@^4.8</code></td><td>Real-time market data</td></tr>
+            <tr><td><code>vite@^5.0</code></td><td>Build tool</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 5. Infrastructure -->
+    <section id="infrastructure">
+      <h2><span class="num">5</span> Infrastructure</h2>
+
+      <h3>5.1 Local Development (Docker Compose)</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Service</th><th>Image</th><th>Port</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>backend</code></td><td>Custom Dockerfile</td><td>3000</td><td>Node.js API server</td></tr>
+            <tr><td><code>mongodb</code></td><td>mongo:7</td><td>27017</td><td>Primary database (volume: mongodata)</td></tr>
+            <tr><td><code>postgres</code></td><td>postgres:15-alpine</td><td>5432</td><td>Planned analytics DB (volume: pgdata)</td></tr>
+            <tr><td><code>redis</code></td><td>redis:7-alpine</td><td>6379</td><td>Cache layer</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>5.2 Production Topology</h3>
+      <pre>┌─────────────────────────────┐
+│  Vercel (frontend-web)      │
+│  React SPA → VITE_API_URL   │
+└──────────────┬──────────────┘
+               │ HTTPS
+┌──────────────▼──────────────┐
+│  Google Cloud Run            │
+│  fxmark-backend (us-central1)│
+│  Port 3000 — public          │
+└──────┬───────────┬───────────┘
+       │           │
+┌──────▼──────┐  ┌─▼──────────┐
+│ MongoDB Atlas│  │  Redis     │
+│ (primary DB) │  │ (cache)    │
+└─────────────┘  └────────────┘</pre>
+
+      <h3>5.3 CI/CD Pipelines</h3>
+      <h4>Frontend — GitHub Actions → Vercel</h4>
+      <ul>
+        <li>Trigger: push/PR to <code>main</code>/<code>master</code> with <code>frontend-web/**</code> changes</li>
+        <li>Node 20, <code>npm ci</code>, <code>npm run build</code></li>
+        <li>Vercel auto-deploys from GitHub integration</li>
+        <li><code>VITE_API_URL</code> injected from GitHub secrets</li>
+      </ul>
+      <h4>Backend — Google Cloud Build</h4>
+      <ul>
+        <li>Trigger: <code>gcloud builds submit --config=cloudbuild.yaml</code></li>
+        <li>Docker image built → pushed to Google Container Registry (<code>$SHORT_SHA</code> + <code>latest</code>)</li>
+        <li>Deployed to Cloud Run (<code>fxmark-backend</code>, <code>us-central1</code>, unauthenticated)</li>
+      </ul>
+    </section>
+
+    <!-- 6. Data Flow -->
+    <section id="dataflow">
+      <h2><span class="num">6</span> Data Flow</h2>
+
+      <h3>6.1 Trade Execution</h3>
+      <div class="flow-box">Client → POST /api/trading/orders
+  └── trading-limits.service    (check block / drawdown / daily loss cap)
+  └── order.service              (validate symbol, side, volume, type)
+  └── risk-management/ai-risk-switch  (A-Book vs B-Book decision)
+      ├── A-Book: fix-engine/lp.connector → external LP via FIX protocol
+      └── B-Book: position opened internally
+  └── positions.service          (create position record)
+  └── margin.service             (reserve margin from wallet)</div>
+
+      <h3>6.2 Position Close</h3>
+      <div class="flow-box">Position Close (manual or TP/SL trigger on tick)
+  └── positions.service.closePosition()
+      ├── Calculate P&amp;L
+      ├── finance/ledger.service   → post trading P&amp;L journal entry
+      ├── wallet                   → credit/debit user balance
+      ├── pamm/distribution.service → distribute P&amp;L to all PAMM investors
+      │     ├── Performance fee deducted first
+      │     ├── Each investor's share posted to ledger
+      │     └── IB commission fired for each investor's upline chain
+      ├── ib/commission.engine    → calculate &amp; post IB commission chain
+      └── tradeEvents             → emit Socket.IO update to user room</div>
+
+      <h3>6.3 Market Data</h3>
+      <div class="flow-box">Twelve Data API / WebSocket
+  └── twelveData.js (poll) OR twelveDataWebSocket.js (stream)
+  └── cache.js (Redis + in-memory fallback)
+  └── src/index.js tick handler
+      ├── Broadcast tick → Socket.IO clients + /ws WebSocket
+      ├── Frontend FxChart (RAF-batched candle update)
+      └── TP/SL checker → auto-close qualifying positions</div>
+
+      <h3>6.4 Authentication</h3>
+      <div class="flow-box">POST /api/auth/register or /api/auth/login
+  └── auth.service → bcrypt verify password
+  └── Issue JWT access token (7d) + refresh token (30d, MongoDB)
+  └── Refresh: POST /api/auth/refresh  (JTI rotation — old token invalidated)
+  └── Logout:  DELETE /api/auth/logout (JTI deleted from DB)</div>
+    </section>
+
+    <!-- 7. Patterns -->
+    <section id="patterns">
+      <h2><span class="num">7</span> Key Architectural Patterns</h2>
+
+      <h3>Double-Entry Bookkeeping</h3>
+      <p>Every money movement posts a balanced journal (debits = credits ± 0.001 tolerance). Pre-built posting functions exist for every financial event.</p>
+      <pre>Example — Trade P&L win (broker earns):
+DR  Client Funds Liability (2100)   [liability reduced]
+CR  Wallet Liability       (2110)   [credited to user wallet]
+DR  Trading Loss Expense   (5200)   [broker cost if user wins]
+CR  Trading Revenue        (4100)   [broker revenue if user loses]
+
+Chart of accounts:
+  Assets    1xxx  |  Liabilities  2xxx
+  Equity    3xxx  |  Revenue      4xxx
+  Expenses  5xxx</pre>
+
+      <h3>Real-Time Architecture</h3>
+      <ul>
+        <li>Ticks arrive from Twelve Data → emitted to all Socket.IO rooms</li>
+        <li><code>FxChart.jsx</code> subscribes via <code>getDatafeedSocket()</code>, batches tick updates with <code>requestAnimationFrame</code></li>
+        <li>Trade events emitted to user-specific rooms via <code>tradeEvents.js</code></li>
+      </ul>
+
+      <h3>Role-Based Access Control</h3>
+      <pre>Roles: user → ib → pamm_manager → admin → superadmin
+Frontend: ProtectedRoute checks auth + allowedRoles[]
+Backend:  role middleware on admin/ib/pamm routes</pre>
+
+      <h3>Dual Database Strategy</h3>
+      <ul>
+        <li><strong>MongoDB</strong>: Active primary store for all business data</li>
+        <li><strong>PostgreSQL</strong>: Schema defined in <code>database/schema.sql</code>, configured but unused — intended for analytics/compliance</li>
+      </ul>
+
+      <h3>ESM Migration State</h3>
+      <p>Backend uses <code>"type": "module"</code> (ES Modules). Some older files (<code>ai-trading/</code>, <code>fix-engine/</code> stubs) still use CommonJS <code>require</code>/<code>module.exports</code> — migration partially complete.</p>
+    </section>
+
+    <!-- 8. Future -->
+    <section id="future">
+      <h2><span class="num">8</span> Planned / Future Components</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Component</th><th>Location</th><th>Status</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>Next.js Admin Portal</td>
+              <td><code>apps/admin-web/</code></td>
+              <td><span class="pill pill-yellow">Planned</span></td>
+              <td>Leads, Tickets, KYC, PAMM Controls, Broadcast</td>
+            </tr>
+            <tr>
+              <td>Flutter Mobile App</td>
+              <td><code>apps/mobile/</code></td>
+              <td><span class="pill pill-yellow">Planned</span></td>
+              <td>Multi-language, Phase 1: clients only</td>
+            </tr>
+            <tr>
+              <td>Claude AI Integration</td>
+              <td><code>backend/utils/</code></td>
+              <td><span class="pill pill-green">Ready to wire</span></td>
+              <td>SDK installed, set <code>ANTHROPIC_API_KEY</code></td>
+            </tr>
+            <tr>
+              <td>AI Trading Strategy</td>
+              <td><code>backend/ai-trading/</code></td>
+              <td><span class="pill pill-yellow">Stub</span></td>
+              <td>M5 XAUUSD strategy, backtesting engine scaffolded</td>
+            </tr>
+            <tr>
+              <td>FIX Engine / A-Book</td>
+              <td><code>backend/modules/fix-engine/</code></td>
+              <td><span class="pill pill-yellow">Stub</span></td>
+              <td>FIX session scaffolded, LP connector needs credentials</td>
+            </tr>
+            <tr>
+              <td>KYC (Sumsub)</td>
+              <td><code>backend/modules/users/kyc.service.js</code></td>
+              <td><span class="pill pill-yellow">Stub</span></td>
+              <td>createApplicant, getAccessToken, getStatus stubbed</td>
+            </tr>
+            <tr>
+              <td>Performance Fees</td>
+              <td><code>backend/modules/pamm/performance.fee.service.js</code></td>
+              <td><span class="pill pill-yellow">Stub</span></td>
+              <td>High water mark calculation — TODO</td>
+            </tr>
+            <tr>
+              <td>PostgreSQL Usage</td>
+              <td><code>database/schema.sql</code></td>
+              <td><span class="pill pill-red">Schema only</span></td>
+              <td>Not used by active Node code</td>
+            </tr>
+            <tr>
+              <td>Telegram / WhatsApp</td>
+              <td><code>backend/modules/support/</code></td>
+              <td><span class="pill pill-yellow">Stub</span></td>
+              <td>Integration files exist, no live credentials</td>
+            </tr>
+            <tr>
+              <td>Nightly Settlement</td>
+              <td><code>backend/jobs/nightly.settlement.js</code></td>
+              <td><span class="pill pill-yellow">Stub</span></td>
+              <td>Logs start/complete, business logic TODO</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <hr />
+    <p style="color: var(--text-muted); font-size: 0.8rem; text-align: center; padding-bottom: 2rem;">
+      FXMark Architecture Document &nbsp;·&nbsp; Generated March 2026
+    </p>
+
+  </main>
+</div>
+
+<script>
+  // Highlight active sidebar link on scroll
+  const sections = document.querySelectorAll('section[id]');
+  const links = document.querySelectorAll('.sidebar nav a');
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        links.forEach(l => l.classList.remove('active'));
+        const active = document.querySelector(`.sidebar nav a[href="#${e.target.id}"]`);
+        if (active) active.classList.add('active');
+      }
+    });
+  }, { threshold: 0.3 });
+  sections.forEach(s => observer.observe(s));
+</script>
+</body>
+</html>

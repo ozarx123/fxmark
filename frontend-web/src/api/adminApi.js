@@ -30,10 +30,11 @@ export async function listUsers(params = {}) {
   return res.json();
 }
 
-export async function updateUser(id, { role, kycStatus }) {
+export async function updateUser(id, { role, kycStatus, kycRejectedReason }) {
   const body = {};
   if (role !== undefined) body.role = role;
   if (kycStatus !== undefined) body.kycStatus = kycStatus;
+  if (kycRejectedReason !== undefined) body.kycRejectedReason = kycRejectedReason;
   const res = await fetchWithAuth(`/admin/users/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(body),
@@ -198,5 +199,53 @@ export async function updateAdminTradingLimits(userId, { blocked, maxDrawdownPer
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to update limits');
+  return res.json();
+}
+
+/** Get CRM/config for a trading account (leverage, execution group, trading enabled, etc.) */
+export async function getAdminAccountConfig(userId, accountId) {
+  const res = await fetchWithAuth(`/admin/trading/users/${userId}/accounts/${accountId}/config`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch account config');
+  return res.json();
+}
+
+/** Update CRM/config for a trading account */
+export async function updateAdminAccountConfig(userId, accountId, body) {
+  const res = await fetchWithAuth(`/admin/trading/users/${userId}/accounts/${accountId}/config`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to update account config');
+  return res.json();
+}
+
+// ---------- Execution mode (A-Book / B-Book / Hybrid) ----------
+export async function getExecutionMode() {
+  const res = await fetchWithAuth('/admin/execution-mode');
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch execution mode');
+  return res.json();
+}
+
+export async function putExecutionMode(executionMode) {
+  const res = await fetchWithAuth('/admin/execution-mode', {
+    method: 'PUT',
+    body: JSON.stringify({ executionMode }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to update execution mode');
+  return res.json();
+}
+
+export async function getHybridRules() {
+  const res = await fetchWithAuth('/admin/hybrid-rules');
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch hybrid rules');
+  return res.json();
+}
+
+export async function putHybridRules(rules) {
+  const res = await fetchWithAuth('/admin/hybrid-rules', {
+    method: 'PUT',
+    body: JSON.stringify(rules),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to update hybrid rules');
   return res.json();
 }

@@ -32,3 +32,45 @@ export async function emitTradeUpdate(userId, accountId = null) {
     console.warn('[tradeEvents] emitTradeUpdate failed:', e.message);
   }
 }
+
+/**
+ * Emit order_created (new pending/market order placed).
+ */
+export function emitOrderCreated(userId, order, accountId = null) {
+  const io = getTradeIo();
+  if (!io) return;
+  io.to(userRoom(userId)).emit('order_created', { order, accountId, at: new Date().toISOString() });
+  io.to(userRoom(userId)).emit('order_update', { event: 'order_created', order, accountId });
+}
+
+/**
+ * Emit order_triggered (pending order filled by price engine).
+ */
+export function emitOrderTriggered(userId, payload, accountId = null) {
+  const io = getTradeIo();
+  if (!io) return;
+  io.to(userRoom(userId)).emit('order_triggered', payload);
+  io.to(userRoom(userId)).emit('order_update', { event: 'order_triggered', ...payload, accountId });
+}
+
+/**
+ * Emit order_cancelled.
+ */
+export function emitOrderCancelled(userId, orderId, accountId = null) {
+  const io = getTradeIo();
+  if (!io) return;
+  io.to(userRoom(userId)).emit('order_cancelled', { orderId, accountId, at: new Date().toISOString() });
+  io.to(userRoom(userId)).emit('order_update', { event: 'order_cancelled', orderId, accountId });
+}
+
+/**
+ * Emit a risk_event (e.g. TP/SL triggered, forced close).
+ */
+export function emitRiskEvent(userId, payload) {
+  const io = getTradeIo();
+  if (!io) return;
+  io.to(userRoom(userId)).emit('risk_event', {
+    ...payload,
+    at: payload?.at || new Date().toISOString(),
+  });
+}

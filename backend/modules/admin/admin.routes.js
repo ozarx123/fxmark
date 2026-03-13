@@ -4,6 +4,7 @@
  */
 import express from 'express';
 import controller from './admin.controller.js';
+import * as logsController from './logs.controller.js';
 import { authenticate } from '../../core/middleware.js';
 
 const requireAdmin = (req, res, next) => {
@@ -54,5 +55,19 @@ router.post('/trading/users/:userId/positions/:positionId/close', controller.adm
 router.post('/trading/users/:userId/orders/:orderId/cancel', controller.adminCancelOrder);
 router.get('/trading/users/:userId/limits', controller.getTradingLimits);
 router.put('/trading/users/:userId/limits', controller.updateTradingLimits);
+router.get('/trading/users/:userId/accounts/:accountId/config', controller.getAccountConfig);
+router.put('/trading/users/:userId/accounts/:accountId/config', controller.updateAccountConfig);
+
+// ── Execution mode (A-Book / B-Book / Hybrid) ─────────────────────────────────
+router.get('/execution-mode', controller.getExecutionMode);
+router.put('/execution-mode', controller.putExecutionMode);
+router.get('/hybrid-rules', controller.getHybridRules);
+router.put('/hybrid-rules', controller.putHybridRules);
+
+// ── Log viewer (admin only) ───────────────────────────────────────────────────
+router.get('/logs/summary',                   logsController.getLogsSummary);
+router.get('/logs/files',                     logsController.getLogFiles);
+router.get('/logs/download',                  logsController.downloadLogFile);
+router.get('/logs',                           logsController.getLogs);
 
 export default router;

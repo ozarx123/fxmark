@@ -12,6 +12,7 @@
     "test:login": "node scripts/test-login.js",
     "test:ib": "node scripts/test-ib-commission.js",
     "test:all": "node scripts/test-all-apis.js",
+    "test:updated": "node scripts/test-updated-features.js",
     "test:pamm-wallet": "node scripts/test-pamm-wallet.js",
     "fix-wallet-userids": "node scripts/fix-wallet-userid-strings.js",
     "ensure-indexes": "node scripts/ensure-indexes.js",
@@ -24,6 +25,7 @@
     "drop-pamm-userid-unique": "node scripts/drop-pamm-userid-unique.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.78.0",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^16.4.5",
@@ -32,7 +34,7 @@
     "jsonwebtoken": "^9.0.3",
     "mongodb": "^6.21.0",
     "node-fetch": "^3.3.2",
-    "ws": "^8.18.0",
-    "socket.io": "^4.8.0"
+    "socket.io": "^4.8.0",
+    "ws": "^8.18.0"
   }
 }

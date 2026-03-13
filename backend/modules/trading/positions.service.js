@@ -113,6 +113,40 @@ async function closePosition(userId, positionId, options = {}) {
     const update = { closedAt: now, closedVolume: pos.volume, pnl };
     if (resolvedClosePrice != null) update.closePrice = resolvedClosePrice;
     await positionRepo.update(positionId, userId, update, accountId);
+
+    // Emit risk_event for UI (TP/SL or forced close) and log summary.
+    try {
+      const { emitRiskEvent } = await import('../../src/services/tradeEvents.js');
+      const payload = {
+        type: 'position_closed',
+        reason: options?.reason || 'manual',
+        positionId,
+        accountId: pos.accountId || accountId || null,
+        symbol: pos.symbol,
+        side: pos.side,
+        volume: pos.volume,
+        openPrice: pos.openPrice,
+        closePrice: resolvedClosePrice != null ? resolvedClosePrice : pos.closePrice ?? null,
+        pnl,
+      };
+      emitRiskEvent(userId, payload);
+    } catch {
+      // ignore emit errors
+    }
+
+    // Console summary for closed trades (useful for debugging and audit during development)
+    // eslint-disable-next-line no-console
+    console.log('[position] closed', {
+      userId,
+      accountId: pos.accountId || accountId || null,
+      positionId,
+      symbol: pos.symbol,
+      side: pos.side,
+      volume: pos.volume,
+      openPrice: pos.openPrice,
+      closePrice: resolvedClosePrice != null ? resolvedClosePrice : pos.closePrice ?? null,
+      pnl,
+    });
     if (Math.abs(pnl) > 0.001) {
       const targetAccountId = pos.accountId || accountId;
 
@@ -177,12 +211,15 @@ async function openPosition(userId, doc) {
   const positionDoc = {
     userId,
     symbol: doc.symbol,
+    side: doc.side ?? 'buy',
     volume: doc.volume,
     openPrice: doc.openPrice,
     currentPrice: doc.currentPrice ?? doc.openPrice,
     pnl: doc.pnl ?? 0,
   };
   if (doc.accountId) positionDoc.accountId = doc.accountId;
+  if (doc.takeProfit != null) positionDoc.takeProfit = doc.takeProfit;
+  if (doc.stopLoss != null) positionDoc.stopLoss = doc.stopLoss;
   const id = await positionRepo.create(positionDoc);
   return positionRepo.findById(id, userId, doc.accountId);
 }
@@ -262,6 +299,10 @@ async function enforceEquityFloorForAccounts(symbol, price, positions) {
     if (!userId || !accountId) continue;
     const account = await tradingAccountRepo.findById(accountId, userId);
     if (!account) continue;
+
+    // Only enforce equity floor on live accounts. Demo/PAMM should not be auto-closed here.
+    if (account.type !== 'live') continue;
+
     const balance = Number(account.balance) || 0;
 
     // Approximate equity using current symbol positions only, with live price
@@ -270,7 +311,11 @@ async function enforceEquityFloorForAccounts(symbol, price, positions) {
       equity += computePnL(pos, pNum);
     }
 
-    if (equity <= 0) {
+    // If equity is below zero *and* we actually have unrealized loss (equity < balance),
+    // close all open positions to prevent going further negative.
+    // This avoids closing immediately when balance is 0 and there is no loss yet.
+    const hasUnrealizedLoss = equity < balance;
+    if (equity < 0 && hasUnrealizedLoss) {
       // Close all open positions on this account (all symbols) at best available info
       const openPositions = await positionRepo.listOpen(userId, { accountId });
       for (const pos of openPositions) {
@@ -305,7 +350,12 @@ async function checkAndExecuteTPLS(symbol, price) {
     if (shouldClose && closePrice != null) {
       console.log(`[TP/SL] ${reason} for position ${pos.id} (${pos.symbol} ${String(pos.side || '').toLowerCase()}) at price ${p} → closing at ${closePrice}`);
       try {
-        await closePosition(pos.userId, pos.id, { closePrice, accountId: pos.accountId, bypassAdmin: true });
+        await closePosition(pos.userId, pos.id, {
+          closePrice,
+          accountId: pos.accountId,
+          bypassAdmin: true,
+          reason: reason || 'tp_sl',
+        });
         console.log(`[TP/SL] Position ${pos.id} closed successfully`);
       } catch (e) {
         console.warn('[TP/SL] Close failed:', pos.id, e.message);
@@ -313,8 +363,11 @@ async function checkAndExecuteTPLS(symbol, price) {
     }
   }
 
-  // After TP/SL processing, enforce equity floor (no negative equity).
-  await enforceEquityFloorForAccounts(symbol, p, positions);
+  // After TP/SL processing, we *would* enforce equity floor (no negative equity).
+  // This is temporarily disabled until margin/equity integration is finalized,
+  // to avoid unexpected instant auto-closure of positions when account balances
+  // are out of sync with wallet/equity.
+  // await enforceEquityFloorForAccounts(symbol, p, positions);
 }
 
 export default {
