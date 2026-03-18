@@ -37,10 +37,14 @@ export default function PositionsPanel({
   positions: controlledPositions,
   onPositionsChange,
   onRefresh,
+  filterSymbol = '',
+  sortBy = 'symbol',
+  sortDir = 'asc',
   className = '',
 }) {
   const [internalPositions, setInternalPositions] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // When parent supplies positions (controlled mode), start with loading false so the table renders immediately
+  const [loading, setLoading] = useState(() => controlledPositions == null);
   const [error, setError] = useState(null);
   const [closingId, setClosingId] = useState(null);
   const { ticks } = useMarketDataContext();
@@ -83,7 +87,10 @@ export default function PositionsPanel({
   }, [accountId, accountNumber, setPositions]);
 
   useEffect(() => {
-    if (controlledPositions != null) return;
+    if (controlledPositions != null) {
+      setLoading(false);
+      return;
+    }
     load();
   }, [load, controlledPositions != null]);
 
@@ -104,10 +111,33 @@ export default function PositionsPanel({
     [positions, tickVersion, ticks]
   );
 
+  const filteredAndSorted = useMemo(() => {
+    let list = positionsWithPnl;
+    if (filterSymbol) {
+      const key = toInternal(filterSymbol);
+      list = list.filter((p) => toInternal(p.symbol) === key || (p.symbol || '').toUpperCase().includes(key));
+    }
+    const mult = sortDir === 'asc' ? 1 : -1;
+    return [...list].sort((a, b) => {
+      if (sortBy === 'symbol') return mult * ((a.symbol || '').localeCompare(b.symbol || ''));
+      if (sortBy === 'pnl') {
+        const pa = a.floatingPnL ?? a.floating_pnl ?? 0;
+        const pb = b.floatingPnL ?? b.floating_pnl ?? 0;
+        return mult * (pa - pb);
+      }
+      if (sortBy === 'volume') return mult * ((a.volume ?? a.lots ?? 0) - (b.volume ?? b.lots ?? 0));
+      return 0;
+    });
+  }, [positionsWithPnl, filterSymbol, sortBy, sortDir]);
+
   const handleClose = async (positionId) => {
     setClosingId(positionId);
     try {
-      await tradingApi.closePosition(positionId, undefined, undefined, opts);
+      const pos = (positions || []).find((p) => p.id === positionId);
+      const key = pos ? toInternal(pos.symbol) : '';
+      const tick = key ? ticks?.[key] : null;
+      const closePrice = tick?.close ?? tick?.price ?? pos?.currentPrice ?? pos?.openPrice ?? undefined;
+      await tradingApi.closePosition(positionId, undefined, closePrice, opts);
       if (controlledPositions != null && onRefresh) onRefresh();
       else await load();
     } catch (e) {
@@ -120,7 +150,11 @@ export default function PositionsPanel({
   const handlePartialClose = async (positionId, volume) => {
     setClosingId(positionId);
     try {
-      await tradingApi.closePosition(positionId, volume, undefined, opts);
+      const pos = (positions || []).find((p) => p.id === positionId);
+      const key = pos ? toInternal(pos.symbol) : '';
+      const tick = key ? ticks?.[key] : null;
+      const closePrice = tick?.close ?? tick?.price ?? pos?.currentPrice ?? pos?.openPrice ?? undefined;
+      await tradingApi.closePosition(positionId, volume, closePrice, opts);
       if (controlledPositions != null && onRefresh) onRefresh();
       else await load();
     } catch (e) {
@@ -162,10 +196,10 @@ export default function PositionsPanel({
             <tr><td colSpan={10} className="terminal-positions-panel__empty">Loading…</td></tr>
           ) : error ? (
             <tr><td colSpan={10} className="terminal-positions-panel__error">{error}</td></tr>
-          ) : positionsWithPnl.length === 0 ? (
+          ) : filteredAndSorted.length === 0 ? (
             <tr><td colSpan={10} className="terminal-positions-panel__empty">No open positions</td></tr>
           ) : (
-            positionsWithPnl.map((pos) => (
+            filteredAndSorted.map((pos) => (
               <PositionRow
                 key={pos.id}
                 position={pos}

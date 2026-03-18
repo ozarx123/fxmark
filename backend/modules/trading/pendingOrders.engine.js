@@ -54,7 +54,7 @@ export async function checkAndTriggerPendingOrders(symbol, price) {
         takeProfit: order.takeProfit ?? null,
         stopLoss: order.stopLoss ?? null,
       });
-      await orderRepo.updateStatus(order.id, order.userId, 'filled', { filledVolume: order.volume }, order.accountId);
+      await orderRepo.updateStatus(order.id, order.userId, 'filled', { filledVolume: order.volume, price: p }, order.accountId);
       const updatedOrder = await orderRepo.findById(order.id, order.userId, order.accountId);
       await emitOrderTriggered(order.userId, { ...updatedOrder, positionId: position?.id }, order.accountId);
     } catch (e) {

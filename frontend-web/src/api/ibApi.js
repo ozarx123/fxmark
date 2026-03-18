@@ -88,6 +88,18 @@ export async function listCommissions(params = {}) {
   return res.json();
 }
 
+/** List PAMM Bull Run commission logs for the current IB (default last 30 days) */
+export async function listPammCommissions(params = {}) {
+  const q = new URLSearchParams();
+  if (params.from) q.set('from', params.from);
+  if (params.to) q.set('to', params.to);
+  if (params.limit) q.set('limit', params.limit);
+  const url = `/ib/pamm-commissions${q.toString() ? `?${q}` : ''}`;
+  const res = await fetchWithAuth(url);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to load PAMM commissions');
+  return res.json();
+}
+
 /** List payouts */
 export async function listPayouts(params = {}) {
   const q = new URLSearchParams();

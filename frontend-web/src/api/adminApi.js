@@ -43,19 +43,63 @@ export async function updateUser(id, { role, kycStatus, kycRejectedReason }) {
   return res.json();
 }
 
-export async function listPammManagers(params = {}) {
-  const q = new URLSearchParams(params).toString();
-  const res = await fetchWithAuth(`/admin/pamm/managers${q ? `?${q}` : ''}`);
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch PAMM managers');
+/** Admin: platform-wide company financials (ledger aggregates) */
+export async function getCompanyLedgerEntries(params = {}) {
+  const q = new URLSearchParams(
+    Object.fromEntries(Object.entries(params).filter(([, v]) => v != null && v !== ''))
+  ).toString();
+  const res = await fetchWithAuth(`/admin/finance/ledger-entries${q ? `?${q}` : ''}`);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to load ledger entries');
+  }
   return res.json();
 }
 
-export async function approvePammManager(id, approvalStatus) {
-  const res = await fetchWithAuth(`/admin/pamm/managers/${id}`, {
-    method: 'PATCH',
-    body: JSON.stringify({ approvalStatus }),
+export async function getCompanyFinancials(params = {}) {
+  const q = new URLSearchParams(
+    Object.fromEntries(Object.entries(params).filter(([, v]) => v != null && v !== ''))
+  ).toString();
+  const res = await fetchWithAuth(`/admin/finance/company${q ? `?${q}` : ''}`);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to load company financials');
+  }
+  return res.json();
+}
+
+/** Admin: company super wallet and main ledger summary (company entity, not owned by any user). */
+export async function getCompanyWallet() {
+  const res = await fetchWithAuth('/admin/finance/company-wallet');
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to load company wallet');
+  }
+  return res.json();
+}
+
+/** Super Admin: user context for profit/commission adjustment form */
+export async function getProfitCommissionContext(userId) {
+  const res = await fetchWithAuth(`/admin/users/${encodeURIComponent(userId)}/profit-commission-context`);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 403) throw new Error('Super Admin role required');
+    throw new Error(data.error || 'Failed to load context');
+  }
+  return res.json();
+}
+
+/** Super Admin: atomic PAMM P&L + wallet + IB commission adjustment */
+export async function postProfitCommissionAdjustment(userId, body) {
+  const res = await fetchWithAuth(`/admin/users/${encodeURIComponent(userId)}/profit-commission-adjustment`, {
+    method: 'POST',
+    body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to update PAMM manager');
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 403) throw new Error('Super Admin role required');
+    throw new Error(data.error || 'Adjustment failed');
+  }
   return res.json();
 }
 
@@ -106,6 +150,30 @@ export async function updateIbSettings(ratePerLotByLevel) {
     body: JSON.stringify({ ratePerLotByLevel }),
   });
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to update IB settings');
+  return res.json();
+}
+
+/** Super Admin: PAMM Bull Run investor IB commission (levels 1–3, % of active capital) */
+export async function getPammIbCommissionSettings() {
+  const res = await fetchWithAuth('/admin/ib/pamm-investor-commission');
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 403) throw new Error('Super Admin role required');
+    throw new Error(data.error || 'Failed to fetch PAMM IB commission settings');
+  }
+  return res.json();
+}
+
+export async function updatePammIbCommissionSettings(levels) {
+  const res = await fetchWithAuth('/admin/ib/pamm-investor-commission', {
+    method: 'PUT',
+    body: JSON.stringify({ levels }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 403) throw new Error('Super Admin role required');
+    throw new Error(data.error || 'Failed to update PAMM IB commission settings');
+  }
   return res.json();
 }
 
@@ -249,3 +317,140 @@ export async function putHybridRules(rules) {
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to update hybrid rules');
   return res.json();
 }
+
+// ---------- PAMM / Bull Run fund (admin) ----------
+export async function listPammFunds() {
+  const res = await fetchWithAuth('/admin/pamm/funds');
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch PAMM funds');
+  return res.json();
+}
+
+export async function createPammFund(body) {
+  const res = await fetchWithAuth('/admin/pamm/funds', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to create fund');
+  return res.json();
+}
+
+export async function getPammFund(fundId) {
+  const res = await fetchWithAuth(`/admin/pamm/funds/${encodeURIComponent(fundId)}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch fund');
+  return res.json();
+}
+
+export async function updatePammFund(fundId, body) {
+  const res = await fetchWithAuth(`/admin/pamm/funds/${encodeURIComponent(fundId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to update fund');
+  return res.json();
+}
+
+// ---------- Bulk user import (superadmin only) ----------
+export async function getBulkImportConfig() {
+  const res = await fetchWithAuth('/admin/bulk-import/config');
+  if (!res.ok) {
+    if (res.status === 403) throw new Error('Super Admin role required');
+    throw new Error((await res.json().catch(() => ({}))).error || 'Failed to load import config');
+  }
+  return res.json();
+}
+
+export async function runBulkImport(rows, dryRun = true) {
+  const res = await fetchWithAuth('/admin/bulk-import', {
+    method: 'POST',
+    body: JSON.stringify({ rows, dryRun }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 403) throw new Error('Super Admin role required');
+    throw new Error(data.error || data.message || 'Bulk import failed');
+  }
+  return res.json();
+}
+
+// ---------- Withdrawal approval settings (command center) ----------
+export async function getWithdrawalApprovalSettings() {
+  const res = await fetchWithAuth('/admin/withdrawal-approval-settings');
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch withdrawal approval settings');
+  return res.json();
+}
+
+export async function updateWithdrawalApprovalSettings({ autoApproveSmallWithdrawals, autoApproveThresholdUsd }) {
+  const body = {};
+  if (typeof autoApproveSmallWithdrawals === 'boolean') body.autoApproveSmallWithdrawals = autoApproveSmallWithdrawals;
+  if (Number.isFinite(autoApproveThresholdUsd)) body.autoApproveThresholdUsd = autoApproveThresholdUsd;
+  const res = await fetchWithAuth('/admin/withdrawal-approval-settings', {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to update withdrawal approval settings');
+  return res.json();
+}
+
+// ---------- Activity feed (all transaction types) ----------
+export async function getActivity(limit = 80) {
+  const res = await fetchWithAuth(`/admin/activity?limit=${limit}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch activity');
+  return res.json();
+}
+
+// ---------- Reconciliation ----------
+export async function getLatestReconciliation() {
+  const res = await fetchWithAuth('/admin/reconciliation/wallet-ledger/latest');
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch reconciliation');
+  return res.json();
+}
+
+// ---------- Fraud dashboard & withdrawals ----------
+export async function getFraudDashboardStats() {
+  const res = await fetchWithAuth('/admin/fraud-dashboard/stats');
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch stats');
+  return res.json();
+}
+
+export async function getWithdrawals(params = {}) {
+  const q = new URLSearchParams(params).toString();
+  const res = await fetchWithAuth(`/admin/withdrawals${q ? `?${q}` : ''}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch withdrawals');
+  return res.json();
+}
+
+export async function getWithdrawalDetail(id) {
+  const res = await fetchWithAuth(`/admin/withdrawals/${id}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch withdrawal');
+  return res.json();
+}
+
+export async function updateWithdrawalStatus(id, status, adminNote) {
+  const body = { status };
+  if (adminNote != null && String(adminNote).trim() !== '') body.adminNote = String(adminNote).trim();
+  const res = await fetchWithAuth(`/admin/withdrawals/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Failed to update withdrawal');
+  return data;
+}
+
+// ---------- Alerts ----------
+export async function getAlerts(params = {}) {
+  const q = new URLSearchParams(params).toString();
+  const res = await fetchWithAuth(`/admin/alerts${q ? `?${q}` : ''}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch alerts');
+  return res.json();
+}
+
+export async function resolveAlert(id) {
+  const res = await fetchWithAuth(`/admin/alerts/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ resolved: true }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to resolve alert');
+  return res.json();
+}
+

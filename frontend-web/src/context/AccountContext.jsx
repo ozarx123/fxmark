@@ -31,6 +31,7 @@ function saveStoredActive(activeAccountId, activeAccountNumber) {
 
 export function AccountProvider({ children }) {
   const { isAuthenticated } = useAuth();
+  const { user } = useAuth();
   const [accounts, setAccounts] = useState([]);
   const [activeAccount, setActiveAccountState] = useState(null);
   const [liveBalance, setLiveBalanceState] = useState(0);

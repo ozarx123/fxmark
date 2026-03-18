@@ -33,10 +33,11 @@ export const requireDb = async (req, res, next) => {
     dbCheckOk = false;
     dbCheckLast = now;
     console.error('[requireDb]', err.message);
-    res.status(503).json({
+    const body = {
       error: 'Database unavailable. Check CONNECTION_STRING in backend/.env and ensure MongoDB is running.',
-      detail: err.message,
-    });
+    };
+    if (process.env.NODE_ENV !== 'production') body.detail = err.message;
+    res.status(503).json(body);
   }
 };
 
@@ -108,11 +109,16 @@ export const errorHandler = (err, req, res, next) => {
     }
   }
 
-  res.status(status).json({
-    error: msg,
-    message: msg,
-    requestId: req.id,
-  });
+  const isProd = process.env.NODE_ENV === 'production';
+  const body = isProd
+    ? { error: msg }
+    : {
+        error: msg,
+        message: msg,
+        requestId: req.id,
+      };
+  if (status === 403 && err.code) body.code = err.code;
+  res.status(status).json(body);
 };
 
 export default { requestId, authenticate, errorHandler };

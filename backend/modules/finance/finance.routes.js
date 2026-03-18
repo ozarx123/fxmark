@@ -24,5 +24,7 @@ router.get('/chart-of-accounts', chartOfAccountsController.getChartOfAccounts);
 router.get('/reports/daily', reportsController.dailyReport);
 router.get('/reports/monthly', reportsController.monthlyReport);
 router.get('/statements', reportsController.statement);
+router.get('/statements.pdf', reportsController.statementPdf);
+router.get('/statements.csv', reportsController.statementCsv);
 
 export default router;

@@ -8,16 +8,10 @@ import { ChartBarIcon, GraduationCapIcon, PhoneIcon, UserIcon, ArrowRightIcon, S
 
 const SUPPORT_PHONE = '+1 (800) 123-4567';
 
-const PAMM_OPPORTUNITIES = [
-  { id: 1, name: 'Alpha Fund', roi: '+8.2%', risk: 'Medium', link: '/pamm' },
-  { id: 2, name: 'Gold Trader Pro', roi: '+12.1%', risk: 'High', link: '/pamm' },
-  { id: 3, name: 'Conservative Growth', roi: '+4.5%', risk: 'Low', link: '/pamm' },
-];
-
 const LEARNING_ITEMS = [
   { title: 'Forex basics', desc: 'Understand currency pairs and spreads', link: '#' },
   { title: 'Risk management', desc: 'Protect your capital with stop-loss', link: '#' },
-  { title: 'PAMM investing', desc: 'How to follow expert traders', link: '/pamm' },
+  { title: 'Copy trading', desc: 'Follow expert traders', link: '/copy' },
 ];
 
 export default function Dashboard() {
@@ -100,21 +94,11 @@ export default function Dashboard() {
           <div className="dashboard-section section-block rounded-xl p-6">
             <h2 className="dashboard-section-title">
               <ShareNetworkIcon size={22} />
-              PAMM opportunities
+              Copy trading
             </h2>
-            <ul className="dashboard-pamm-list">
-              {PAMM_OPPORTUNITIES.map((p) => (
-                <li key={p.id}>
-                  <Link to={p.link} className="dashboard-pamm-item">
-                    <span className="dashboard-pamm-name">{p.name}</span>
-                    <span className="dashboard-pamm-roi">{p.roi}</span>
-                    <span className="dashboard-pamm-risk">{p.risk}</span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-            <Link to="/pamm" className="dashboard-section-link">
-              Explore all PAMM funds <ArrowRightIcon size={16} />
+            <p className="muted" style={{ marginBottom: '0.75rem' }}>Follow expert traders and replicate their strategies.</p>
+            <Link to="/copy" className="dashboard-section-link">
+              Explore copy trading <ArrowRightIcon size={16} />
             </Link>
           </div>
 

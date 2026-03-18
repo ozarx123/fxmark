@@ -2,15 +2,6 @@ import React, { useState, useMemo, useEffect } from 'react';
 import * as adminApi from '../../api/adminApi';
 import { ROLES } from './mockUsersData';
 import { PERMISSION_GROUPS, getDefaultRolePermissions } from './mockPermissionsData';
-import {
-  PAMM_FLAG_SCOPES,
-  PAMM_FLAGS_INVESTOR_VIEW,
-  PAMM_FLAGS_INVESTOR_ACTIONS,
-  PAMM_FLAGS_MANAGER_RISK,
-  PAMM_FLAGS_ADMIN,
-  getDefaultPammFlags,
-} from './pammFeatureFlagsData';
-
 export default function AdminSettings() {
   const [timezone, setTimezone] = useState('UTC');
   const [maintenanceMode, setMaintenanceMode] = useState(false);
@@ -104,11 +95,6 @@ export default function AdminSettings() {
     ROLES.forEach((r) => { o[r.value] = defaultRolePermissions[r.value] || []; });
     setRolePermissions(o);
   };
-
-  const [pammFlagsScope, setPammFlagsScope] = useState('global');
-  const [pammFlags, setPammFlags] = useState(() => getDefaultPammFlags());
-  const togglePammFlag = (id, value) => setPammFlags((prev) => ({ ...prev, [id]: value }));
-  const resetPammFlags = () => setPammFlags(getDefaultPammFlags());
 
   const [executionMode, setExecutionMode] = useState('A_BOOK');
   const [hybridRules, setHybridRules] = useState({
@@ -605,89 +591,6 @@ export default function AdminSettings() {
             <input type="number" min={0} step={0.1} value={defaultIbCommission} onChange={(e) => setDefaultIbCommission(Number(e.target.value) || 0)} className="filter-input" />
           </div>
           <p className="muted">Default commission for new IB accounts; can be overridden per IB.</p>
-        </div>
-      </section>
-
-      <section className="admin-section-block">
-        <h2 className="section-title">PAMM feature flags</h2>
-        <div className="settings-card">
-          <p className="muted" style={{ marginBottom: '0.5rem' }}>Enable/disable PAMM features. Stored in <code>pamm_feature_flags</code>. Priority: Manager override &gt; Group override &gt; Global default. <strong>All toggles are enforced at API level</strong>; backend blocks access when disabled.</p>
-          <div className="pamm-flags-toolbar">
-            <div className="filter-group">
-              <label>Apply to</label>
-              <select value={pammFlagsScope} onChange={(e) => setPammFlagsScope(e.target.value)} className="filter-select">
-                {PAMM_FLAG_SCOPES.map((s) => (
-                  <option key={s.value} value={s.value}>{s.label}</option>
-                ))}
-              </select>
-            </div>
-            <button type="button" className="btn btn-secondary" onClick={resetPammFlags}>Reset to defaults</button>
-          </div>
-        </div>
-        <div className="pamm-flags-grid">
-          <div className="settings-card pamm-flags-block">
-            <h4 className="permission-group-title">Investor view</h4>
-            <ul className="permission-list">
-              {PAMM_FLAGS_INVESTOR_VIEW.map((f) => (
-                <li key={f.id}>
-                  <label className="settings-toggle permission-item">
-                    <input type="checkbox" checked={!!pammFlags[f.id]} onChange={(e) => togglePammFlag(f.id, e.target.checked)} />
-                    <span>{f.label}</span>
-                  </label>
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div className="settings-card pamm-flags-block">
-            <h4 className="permission-group-title">Investor actions</h4>
-            <ul className="permission-list">
-              {PAMM_FLAGS_INVESTOR_ACTIONS.map((f) => (
-                <li key={f.id}>
-                  <label className="settings-toggle permission-item">
-                    <input type="checkbox" checked={!!pammFlags[f.id]} onChange={(e) => togglePammFlag(f.id, e.target.checked)} />
-                    <span>{f.label}</span>
-                  </label>
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div className="settings-card pamm-flags-block">
-            <h4 className="permission-group-title">Manager & risk</h4>
-            <ul className="permission-list">
-              {PAMM_FLAGS_MANAGER_RISK.map((f) => (
-                <li key={f.id}>
-                  <label className="settings-toggle permission-item">
-                    <input type="checkbox" checked={!!pammFlags[f.id]} onChange={(e) => togglePammFlag(f.id, e.target.checked)} />
-                    <span>{f.label}</span>
-                  </label>
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div className="settings-card pamm-flags-block">
-            <h4 className="permission-group-title">Admin control</h4>
-            <ul className="permission-list">
-              {PAMM_FLAGS_ADMIN.filter((f) => f.id !== 'pamm_global_kill_switch').map((f) => (
-                <li key={f.id}>
-                  <label className="settings-toggle permission-item">
-                    <input type="checkbox" checked={!!pammFlags[f.id]} onChange={(e) => togglePammFlag(f.id, e.target.checked)} />
-                    <span>{f.label}</span>
-                  </label>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
-        <div className="settings-card pamm-kill-switch" style={{ marginTop: '1rem' }}>
-          <h4 className="permission-group-title">Global kill switch</h4>
-          <p className="muted" style={{ marginBottom: '0.5rem' }}>When ON, PAMM features can be disabled system-wide. Backend must enforce.</p>
-          <label className="settings-toggle">
-            <input type="checkbox" checked={!!pammFlags.pamm_global_kill_switch} onChange={(e) => togglePammFlag('pamm_global_kill_switch', e.target.checked)} />
-            <span>Global kill switch (ON = active)</span>
-          </label>
-        </div>
-        <div className="settings-actions" style={{ marginTop: '1rem' }}>
-          <button type="button" className="btn btn-primary">Save PAMM flags</button>
         </div>
       </section>
 

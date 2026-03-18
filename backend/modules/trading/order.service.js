@@ -98,6 +98,7 @@ async function placeOrder(userId, body, accountId = null) {
   if (accountId) orderDoc.accountId = accountId;
   if (stopLoss != null) orderDoc.stopLoss = stopLoss;
   if (takeProfit != null) orderDoc.takeProfit = takeProfit;
+  if (type === MARKET && hasValidExecPrice) orderDoc.price = execPrice;
 
   await validateTradingPermission(userId, accountId, { symbol, volume });
 

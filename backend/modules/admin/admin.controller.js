@@ -2,6 +2,7 @@
  * Admin controller
  * Leads, tickets, KYC override, PAMM privacy, broadcast, users, PAMM approval, IB commission, trading monitor
  */
+import { withTransaction } from '../../config/mongo.js';
 import userRepo from '../users/user.repository.js';
 import tradingAccountRepo from '../trading/trading-account.repository.js';
 import positionsService from '../trading/positions.service.js';
@@ -9,12 +10,22 @@ import orderService from '../trading/order.service.js';
 import userService from '../users/user.service.js';
 import walletRepo from '../wallet/wallet.repository.js';
 import ledgerService from '../finance/ledger.service.js';
-import pammRepo from '../pamm/pamm.repository.js';
 import ibRepo from '../ib/ib.repository.js';
 import payoutService from '../ib/payout.service.js';
 import tradingLimitsRepo from './trading-limits.repository.js';
 import executionModeService from '../trading/execution-mode.service.js';
 import audit from './audit.logs.js';
+import paymentSettingsRepo from '../wallet/payment.settings.repository.js';
+import withdrawalApprovalSettingsRepo from '../wallet/withdrawal-approval.settings.repository.js';
+import pammRepo from '../pamm/pamm.repository.js';
+import pammDistRunsRepo from '../pamm/pamm-distribution-runs.repository.js';
+import * as bulkImportService from './bulk-import.service.js';
+import reconciliationDailyService from '../finance/reconciliation-daily.service.js';
+import alertService from './alert.service.js';
+import * as profitCommissionAdjustment from './profit-commission-adjustment.service.js';
+import * as companyFinancialsService from './company-financials.service.js';
+import ledgerRepo from '../finance/ledger.repository.js';
+import { ACCOUNT_NAMES, ACCOUNTS, ENTITY_COMPANY } from '../finance/chart-of-accounts.js';
 
 async function getLeads(req, res, next) {
   try {
@@ -34,7 +45,133 @@ async function kycOverride(req, res, next) {
 
 async function pammPrivacy(req, res, next) {
   try {
-    res.json({ status: 'updated' });
+    res.status(410).json({ error: 'PAMM feature has been removed' });
+  } catch (e) {
+    next(e);
+  }
+}
+
+// ---------- Admin PAMM / Bull Run fund management ----------
+async function listPammFunds(req, res, next) {
+  try {
+    const list = await pammRepo.listAllManagers({ limit: 100 });
+    const withStats = await Promise.all(
+      list.map(async (m) => {
+        const allocs = await pammRepo.listAllocationsByManager(m.id, { status: 'active' });
+        const investorCapital = allocs.reduce((s, a) => s + (a.allocatedBalance || 0), 0);
+        const managerCapital = Number(m.currentDeposit) || 0;
+        return {
+          ...m,
+          investors: allocs.length,
+          aum: managerCapital + investorCapital,
+          reserveBalance: Number(m.reserveBalance) || 0,
+        };
+      })
+    );
+    res.json(withStats);
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function createPammFund(req, res, next) {
+  try {
+    const { managerEmail, name, fundType, strategy, approvalStatus, currentDeposit } = req.body;
+    const email = (managerEmail || '').trim().toLowerCase();
+    if (!email) {
+      return res.status(400).json({ error: 'managerEmail is required' });
+    }
+    const user = await userRepo.findByEmail(email);
+    if (!user) {
+      return res.status(404).json({ error: `User not found: ${email}` });
+    }
+    const userId = user.id;
+    const fundName = (name || 'BULL RUN').trim();
+    const initialDeposit = Number(currentDeposit) || 0;
+
+    const id = await pammRepo.createManager({
+      userId,
+      name: fundName,
+      allocationPercent: 100,
+      performanceFeePercent: 0,
+      cutoffWithdrawEnabled: false,
+      isPublic: true,
+      strategy: (strategy || '').trim(),
+      fundType: (fundType || 'ai').toLowerCase(),
+      fundSize: initialDeposit,
+      currentDeposit: initialDeposit,
+      approvalStatus: approvalStatus === 'approved' ? 'approved' : 'pending',
+    });
+
+    const tradingAccountId = await tradingAccountRepo.create({
+      userId,
+      type: 'pamm',
+      pammManagerId: userId,
+      name: `PAMM: ${fundName}`,
+      balance: initialDeposit,
+    });
+    await pammRepo.updateManagerById(id, { tradingAccountId });
+
+    if (initialDeposit > 0) {
+      const wallet = await walletRepo.getOrCreateWallet(userId, 'USD');
+      if ((wallet.balance ?? 0) >= initialDeposit) {
+        await walletRepo.updateBalance(userId, 'USD', -initialDeposit);
+        await walletRepo.createTransaction({
+          userId,
+          type: 'pamm_manager_cap_in',
+          amount: -initialDeposit,
+          currency: 'USD',
+          status: 'completed',
+          reference: id,
+          destination: `pamm:${id}`,
+          completedAt: new Date(),
+        });
+        await ledgerService.postPammManagerCapitalAdd(userId, initialDeposit, 'USD', id, id);
+      }
+    }
+
+    const fund = await pammRepo.getManagerById(id);
+    res.status(201).json({ ...fund, tradingAccountId });
+  } catch (e) {
+    if (e.statusCode) res.status(e.statusCode).json({ error: e.message });
+    else next(e);
+  }
+}
+
+async function getPammFund(req, res, next) {
+  try {
+    const { fundId } = req.params;
+    const fund = await pammRepo.getManagerById(fundId);
+    if (!fund) return res.status(404).json({ error: 'Fund not found' });
+    const allocs = await pammRepo.listAllocationsByManager(fundId, { status: 'active' });
+    const investorCapital = allocs.reduce((s, a) => s + (a.allocatedBalance || 0), 0);
+    res.json({
+      ...fund,
+      investors: allocs.length,
+      allocations: allocs,
+      aum: (Number(fund.currentDeposit) || 0) + investorCapital,
+      reserveBalance: Number(fund.reserveBalance) || 0,
+    });
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function updatePammFund(req, res, next) {
+  try {
+    const { fundId } = req.params;
+    const { name, isPublic, approvalStatus } = req.body;
+    const fund = await pammRepo.getManagerById(fundId);
+    if (!fund) return res.status(404).json({ error: 'Fund not found' });
+    const update = {};
+    if (name !== undefined) update.name = String(name).trim();
+    if (typeof isPublic === 'boolean') update.isPublic = isPublic;
+    if (approvalStatus === 'approved' || approvalStatus === 'pending' || approvalStatus === 'rejected') update.approvalStatus = approvalStatus;
+    if (Object.keys(update).length === 0) {
+      return res.status(400).json({ error: 'No name, isPublic or approvalStatus to update' });
+    }
+    const updated = await pammRepo.updateManagerById(fundId, update);
+    res.json(updated);
   } catch (e) {
     next(e);
   }
@@ -73,6 +210,9 @@ async function updateUser(req, res, next) {
   try {
     const { id } = req.params;
     const { role, kycStatus, kycRejectedReason } = req.body;
+    if (role === 'pamm_manager') {
+      return res.status(400).json({ error: 'Role pamm_manager is no longer supported. Use trader or investor instead.' });
+    }
     const update = {};
     if (role !== undefined) update.role = role;
     if (kycStatus !== undefined) update.kycStatus = kycStatus;
@@ -90,34 +230,6 @@ async function updateUser(req, res, next) {
       id: user.id,
       approvalStatus: user.kycStatus || 'pending',
     });
-  } catch (e) {
-    next(e);
-  }
-}
-
-async function listPammManagers(req, res, next) {
-  try {
-    const { approvalStatus, limit } = req.query;
-    const list = await pammRepo.listAllManagers({
-      approvalStatus: approvalStatus || undefined,
-      limit: Math.min(parseInt(limit, 10) || 100, 200),
-    });
-    res.json(list);
-  } catch (e) {
-    next(e);
-  }
-}
-
-async function approvePammManager(req, res, next) {
-  try {
-    const { id } = req.params;
-    const { approvalStatus } = req.body;
-    if (!['approved', 'rejected'].includes(approvalStatus)) {
-      return res.status(400).json({ error: 'approvalStatus must be approved or rejected' });
-    }
-    const manager = await pammRepo.updateManagerById(id, { approvalStatus });
-    if (!manager) return res.status(404).json({ error: 'PAMM manager not found' });
-    res.json(manager);
   } catch (e) {
     next(e);
   }
@@ -210,6 +322,29 @@ async function updateIbSettings(req, res, next) {
     }
     await ibRepo.updateSettings(normalized);
     res.json({ ratePerLotByLevel: normalized });
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function getPammIbCommissionSettings(req, res, next) {
+  try {
+    const data = await ibRepo.getPammIbCommissionSettings();
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function updatePammIbCommissionSettings(req, res, next) {
+  try {
+    const { levels } = req.body || {};
+    if (!levels || typeof levels !== 'object') {
+      return res.status(400).json({ error: 'levels object required (e.g. { 1: { daily_payout_percent: 0.25, status: "enabled" } })' });
+    }
+    const updatedBy = req.user?.id || null;
+    const result = await ibRepo.updatePammIbCommissionSettings(levels, updatedBy);
+    res.json(result);
   } catch (e) {
     next(e);
   }
@@ -513,7 +648,105 @@ async function updateAccountConfig(req, res, next) {
   }
 }
 
-/** Superadmin only: add funds to a customer wallet */
+/** Admin: platform-wide company financials (ledger aggregates) */
+async function getCompanyFinancials(req, res, next) {
+  try {
+    const data = await companyFinancialsService.getCompanyFinancials(req.query || {});
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+/** Admin: platform-wide ledger lines (drill-down from company financials KPIs) */
+async function getCompanyLedgerEntries(req, res, next) {
+  try {
+    const { from, to, accountCode, referenceType, accountClass, limit } = req.query || {};
+    const list = await ledgerRepo.listEntriesGlobal({
+      from,
+      to,
+      accountCode,
+      referenceType,
+      accountClass,
+      limit,
+    });
+    const entries = list.map((e) => ({
+      ...e,
+      accountName: ACCOUNT_NAMES[e.accountCode] || e.accountCode,
+    }));
+    res.json({ entries, count: entries.length });
+  } catch (e) {
+    next(e);
+  }
+}
+
+/**
+ * Admin: company super wallet and main ledger summary.
+ * Company entity owns all platform income, expenses, assets, liabilities; not owned by any user.
+ * Superadmins (and admin-panel roles) have full access.
+ * Company wallet balance = ledger Cash/Bank (1200) for company — all company cash is held there.
+ */
+async function getCompanyWallet(req, res, next) {
+  try {
+    const wallet = await walletRepo.getOrCreateWallet(ENTITY_COMPANY, 'USD');
+    const ledgerBalances = await ledgerRepo.getBalancesByEntity(ENTITY_COMPANY, null);
+    const balancesWithNames = Object.entries(ledgerBalances).map(([code, balance]) => ({
+      accountCode: code,
+      accountName: ACCOUNT_NAMES[code] || code,
+      balance: Math.round(balance * 100) / 100,
+    }));
+    balancesWithNames.sort((a, b) => a.accountCode.localeCompare(b.accountCode));
+    // Company cash is in ledger 1200 (Cash/Bank), not the wallets doc — use ledger as source of truth
+    const companyCashFromLedger = Number(ledgerBalances[ACCOUNTS.CASH_BANK] ?? 0);
+    const balanceRounded = Math.round(companyCashFromLedger * 100) / 100;
+    res.json({
+      entityId: ENTITY_COMPANY,
+      description: 'Company super wallet — main ledger and wallet of the platform. All company income, expenses, liabilities and assets connect here.',
+      wallet: {
+        id: wallet?.id,
+        currency: wallet?.currency ?? 'USD',
+        balance: balanceRounded,
+        locked: Number(wallet?.locked ?? 0),
+        note: 'Balance = ledger Cash/Bank (1200) for company entity.',
+      },
+      ledgerBalances: balancesWithNames,
+    });
+  } catch (e) {
+    next(e);
+  }
+}
+
+/** Superadmin: context for manual profit / commission adjustment form */
+async function getUserProfitCommissionContext(req, res, next) {
+  try {
+    const ctx = await profitCommissionAdjustment.getAdjustmentContext(req.params.userId);
+    res.json(ctx);
+  } catch (e) {
+    if (e.statusCode) return res.status(e.statusCode).json({ error: e.message });
+    next(e);
+  }
+}
+
+/** Superadmin: apply PAMM P&L delta, wallet credit, IB pending commission in one transaction */
+async function postUserProfitCommissionAdjustment(req, res, next) {
+  try {
+    const r = await profitCommissionAdjustment.applyAdjustment({
+      targetUserId: req.params.userId,
+      adminUserId: req.user?.id,
+      reason: req.body?.reason,
+      pammAllocationId: req.body?.pammAllocationId,
+      pammRealizedPnlDelta: req.body?.pammRealizedPnlDelta,
+      walletProfitCreditUsd: req.body?.walletProfitCreditUsd,
+      ibCommissionPendingUsd: req.body?.ibCommissionPendingUsd,
+    });
+    res.json(r);
+  } catch (e) {
+    if (e.statusCode) return res.status(e.statusCode).json({ error: e.message });
+    next(e);
+  }
+}
+
+/** Superadmin only: add funds to a customer wallet. Atomic: ledger + wallet + transaction. */
 async function addFundsToWallet(req, res, next) {
   try {
     const { userId } = req.params;
@@ -524,26 +757,292 @@ async function addFundsToWallet(req, res, next) {
     }
     const user = await userRepo.findById(userId);
     if (!user) return res.status(404).json({ error: 'User not found' });
-    const txId = await walletRepo.createTransaction({
-      userId,
-      type: 'admin_credit',
-      amount: amt,
-      currency: currency || 'USD',
-      status: 'completed',
-      reference: reference || `Admin credit by ${req.user?.email || req.user?.id}`,
-      completedAt: new Date(),
+    const wallet = await withTransaction(async (session) => {
+      const txId = await walletRepo.createTransaction({
+        userId,
+        type: 'admin_credit',
+        amount: amt,
+        currency: currency || 'USD',
+        status: 'completed',
+        reference: null,
+        completedAt: new Date(),
+      }, { session });
+      await walletRepo.updateTransaction(txId, { reference: txId }, { session });
+      await ledgerService.postAdminCredit(userId, amt, currency || 'USD', txId, { session });
+      const w = await walletRepo.updateBalance(userId, currency || 'USD', amt, { session });
+      return w;
     });
-    const wallet = await walletRepo.updateBalance(userId, currency || 'USD', amt);
-    try {
-      await ledgerService.postAdminCredit(userId, amt, currency || 'USD', txId);
-    } catch (e) {
-      console.warn('[admin] Ledger post admin credit failed:', e.message);
-    }
     res.json({
       success: true,
       wallet: { balance: wallet.balance, currency: wallet.currency },
       message: `Added ${amt} ${currency || 'USD'} to ${user.email}`,
     });
+  } catch (e) {
+    next(e);
+  }
+}
+
+// ---------- Payment settings (admin) ----------
+async function getPaymentSettings(req, res, next) {
+  try {
+    const settings = await paymentSettingsRepo.getPaymentSettings();
+    res.json(settings);
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function updatePaymentSettings(req, res, next) {
+  try {
+    const { pspEnabled, minDeposit, maxDeposit, methods } = req.body || {};
+    const update = {};
+    if (typeof pspEnabled === 'boolean') update.pspEnabled = pspEnabled;
+    if (Number.isFinite(minDeposit) && minDeposit >= 0) update.minDeposit = minDeposit;
+    if (Number.isFinite(maxDeposit) && maxDeposit > 0) update.maxDeposit = maxDeposit;
+    if (methods && typeof methods === 'object') update.methods = methods;
+    const settings = await paymentSettingsRepo.updatePaymentSettings(update);
+    res.json(settings);
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function getWithdrawalApprovalSettings(req, res, next) {
+  try {
+    const settings = await withdrawalApprovalSettingsRepo.getWithdrawalApprovalSettings();
+    res.json(settings);
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function updateWithdrawalApprovalSettings(req, res, next) {
+  try {
+    const { autoApproveSmallWithdrawals, autoApproveThresholdUsd } = req.body || {};
+    const update = {};
+    if (typeof autoApproveSmallWithdrawals === 'boolean') update.autoApproveSmallWithdrawals = autoApproveSmallWithdrawals;
+    if (Number.isFinite(autoApproveThresholdUsd) && autoApproveThresholdUsd >= 0) update.autoApproveThresholdUsd = autoApproveThresholdUsd;
+    const settings = await withdrawalApprovalSettingsRepo.updateWithdrawalApprovalSettings(update);
+    res.json(settings);
+  } catch (e) {
+    next(e);
+  }
+}
+
+// ---------- Bulk user import (superadmin only) ----------
+async function bulkImport(req, res, next) {
+  try {
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+    const dryRun = req.body?.dryRun !== false;
+    const report = await bulkImportService.runBulkImport(rows, dryRun);
+    res.json({ dryRun, report });
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function getBulkImportConfig(req, res, next) {
+  try {
+    const config = bulkImportService.getImportConfig();
+    res.json(config);
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function getLatestWalletLedgerReconciliation(req, res, next) {
+  try {
+    const doc = await reconciliationDailyService.getLatestRun();
+    if (!doc) return res.json({ message: 'No reconciliation runs yet', run: null });
+    const { _id, ...rest } = doc;
+    res.json({ run: { ...rest, id: _id?.toString?.() } });
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function listRecentActivity(req, res, next) {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 80, 200);
+    const list = await walletRepo.listRecentActivityForAdmin(limit);
+    res.json(list);
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function listWithdrawals(req, res, next) {
+  try {
+    const risk = req.query.risk;
+    const status = req.query.status;
+    const from = req.query.from;
+    const to = req.query.to;
+    const amountMin = req.query.amountMin;
+    const amountMax = req.query.amountMax;
+    const search = req.query.search;
+    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
+    const list = await walletRepo.listWithdrawalsForAdmin({
+      limit,
+      risk: risk || undefined,
+      status: status || undefined,
+      from: from || undefined,
+      to: to || undefined,
+      amountMin: amountMin || undefined,
+      amountMax: amountMax || undefined,
+      search: search || undefined,
+    });
+    res.json(list);
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function getWithdrawalDetail(req, res, next) {
+  try {
+    const { id } = req.params;
+    const w = await walletRepo.getWithdrawalByIdForAdmin(id);
+    if (!w) return res.status(404).json({ error: 'Withdrawal not found' });
+    res.json(w);
+  } catch (e) {
+    next(e);
+  }
+}
+
+/** Admin PATCH only; completed is set only by processWithdrawal. */
+function isAllowedWithdrawalStatusTransition(from, to) {
+  if (from === to) return true;
+  if (from === 'completed' || from === 'rejected') return false;
+  if (to === 'completed') return false;
+  const next = {
+    pending: ['review', 'rejected'],
+    review: ['approved', 'rejected'],
+    approved: ['rejected'],
+  };
+  return (next[from] || []).includes(to);
+}
+
+async function updateWithdrawalStatus(req, res, next) {
+  try {
+    const { id } = req.params;
+    const { status, adminNote: rawNote } = req.body || {};
+    const patchable = ['pending', 'review', 'approved', 'rejected'];
+    if (typeof status !== 'string' || !patchable.includes(status)) {
+      return res.status(400).json({
+        error:
+          'Invalid status. Allowed values: pending, review, approved, rejected. Use process API to complete.',
+      });
+    }
+    const w = await walletRepo.getWithdrawalByIdForAdmin(id);
+    if (!w) return res.status(404).json({ error: 'Withdrawal not found' });
+    const from = w.status;
+    if (!isAllowedWithdrawalStatusTransition(from, status)) {
+      return res.status(400).json({
+        error: `Invalid status transition: ${from} → ${status}. Allowed: pending→review|rejected, review→approved|rejected, approved→rejected. Completed/rejected are final.`,
+      });
+    }
+    const adminId = req.user?.id != null ? String(req.user.id) : null;
+    const note =
+      rawNote != null && String(rawNote).trim() !== ''
+        ? String(rawNote).trim().slice(0, 2000)
+        : undefined;
+    const update = { status };
+    if (note !== undefined) update.adminNote = note;
+    const now = new Date();
+    if (status === 'approved' && from !== 'approved') {
+      update.approvedBy = adminId;
+      update.approvedAt = now;
+    }
+    if (status === 'rejected' && from !== 'rejected') {
+      update.rejectedBy = adminId;
+      update.rejectedAt = now;
+    }
+    await walletRepo.updateTransaction(id, update);
+    const updated = await walletRepo.getWithdrawalByIdForAdmin(id);
+    console.log(
+      `[admin] withdrawal status id=${id} ${from}→${status} by=${adminId || 'unknown'} note=${note ? 'yes' : 'no'}`
+    );
+    res.json(updated);
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function getFraudDashboardStats(req, res, next) {
+  try {
+    const now = new Date();
+    const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
+    const list = await walletRepo.listWithdrawalsForAdmin({
+      from: todayStart.toISOString(),
+      to: now.toISOString(),
+      limit: 2000,
+    });
+    let highRiskToday = 0;
+    let mediumRiskToday = 0;
+    let blockedToday = 0;
+    for (const w of list) {
+      const s = w.fraudRiskScore;
+      if (w.status === 'rejected') blockedToday += 1;
+      if (s >= 70) highRiskToday += 1;
+      else if (s >= 41 && s < 70) mediumRiskToday += 1;
+    }
+    const latestRecon = await reconciliationDailyService.getLatestRun();
+    res.json({
+      highRiskToday,
+      mediumRiskToday,
+      blockedToday,
+      totalWithdrawalsToday: list.length,
+      reconciliationMismatches: latestRecon?.mismatchCount ?? 0,
+      reconciliationCheckedAt: latestRecon?.checkedAt ?? null,
+    });
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function getAlerts(req, res, next) {
+  try {
+    const type = req.query.type;
+    const resolved = req.query.resolved;
+    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 200);
+    const list = await alertService.listAlerts({
+      type: type || undefined,
+      resolved: resolved === 'true' ? true : resolved === 'false' ? false : undefined,
+      limit,
+    });
+    res.json(list);
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function resolveAlert(req, res, next) {
+  try {
+    const { id } = req.params;
+    const updated = await alertService.resolveAlert(id);
+    if (!updated) return res.status(404).json({ error: 'Alert not found' });
+    res.json(updated);
+  } catch (e) {
+    next(e);
+  }
+}
+
+/** GET /admin/pamm/distribution-runs — audit log of PAMM distribution runs */
+async function listPammDistributionRuns(req, res, next) {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+    const runs = await pammDistRunsRepo.listRuns(limit);
+    res.json({ runs });
+  } catch (e) {
+    next(e);
+  }
+}
+
+/** GET /admin/pamm/distribution-runs/:positionId — runs for one closed position */
+async function getPammDistributionRunsByPosition(req, res, next) {
+  try {
+    const { positionId } = req.params;
+    const runs = await pammDistRunsRepo.findRunsByPositionId(positionId);
+    res.json({ positionId, runs });
   } catch (e) {
     next(e);
   }
@@ -556,14 +1055,23 @@ export default {
   broadcast,
   listUsers,
   updateUser,
-  listPammManagers,
-  approvePammManager,
   addFundsToWallet,
+  getUserProfitCommissionContext,
+  postUserProfitCommissionAdjustment,
+  getCompanyFinancials,
+  getCompanyLedgerEntries,
+  getCompanyWallet,
+  listPammFunds,
+  createPammFund,
+  getPammFund,
+  updatePammFund,
   getIbProfiles,
   getIbCommissions,
   getIbWallets,
   getIbSettings,
   updateIbSettings,
+  getPammIbCommissionSettings,
+  updatePammIbCommissionSettings,
   processIbPayout,
   getTopTraders,
   getTradingUserSummary,
@@ -584,6 +1092,24 @@ export default {
   putExecutionMode,
   getHybridRules,
   putHybridRules,
+
+  getPaymentSettings,
+  updatePaymentSettings,
+  getWithdrawalApprovalSettings,
+  updateWithdrawalApprovalSettings,
+
+  bulkImport,
+  getBulkImportConfig,
+  getLatestWalletLedgerReconciliation,
+  listRecentActivity,
+  listWithdrawals,
+  getWithdrawalDetail,
+  updateWithdrawalStatus,
+  getFraudDashboardStats,
+  getAlerts,
+  resolveAlert,
+  listPammDistributionRuns,
+  getPammDistributionRunsByPosition,
 };
 
 async function getExecutionMode(req, res, next) {

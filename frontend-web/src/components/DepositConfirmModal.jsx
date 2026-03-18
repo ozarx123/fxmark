@@ -1,47 +1,89 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import ConfirmDialog from './ConfirmDialog';
 import PaymentMethodPicker from './PaymentMethodPicker';
+import * as walletApi from '../api/walletApi';
 import {
   MIN_DEPOSIT,
   MAX_DEPOSIT,
   DEPOSIT_PRESETS,
-  GATEWAYS,
+  GATEWAYS as FALLBACK_GATEWAYS,
   CURRENCIES,
   formatCurrency,
 } from '../constants/finance';
 
+const METHOD_ICON = {
+  bank_transfer: 'Bank',
+  crypto: 'Wallet',
+  card: 'CreditCard',
+  neteller: 'Wallet',
+  skrill: 'Wallet',
+  alipay: 'Wallet',
+};
+
 export default function DepositConfirmModal({ isOpen, onConfirm, onClose }) {
+  const [paymentMethodsData, setPaymentMethodsData] = useState(null);
+  const [loadingMethods, setLoadingMethods] = useState(false);
   const [amount, setAmount] = useState('');
   const [currency, setCurrency] = useState('USD');
-  const [gateway, setGateway] = useState('stripe');
+  const [gateway, setGateway] = useState('card');
   const [agreeTerms, setAgreeTerms] = useState(false);
   const [error, setError] = useState('');
   const [pendingConfirm, setPendingConfirm] = useState(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setLoadingMethods(true);
+    setError('');
+    walletApi.getPaymentMethods()
+      .then((data) => {
+        setPaymentMethodsData(data);
+        if (data.pspEnabled && data.methods?.length) {
+          setGateway(data.methods[0].id);
+        }
+      })
+      .catch(() => setPaymentMethodsData({ pspEnabled: false, methods: [] }))
+      .finally(() => setLoadingMethods(false));
+  }, [isOpen]);
+
+  const minDeposit = paymentMethodsData?.minDeposit ?? MIN_DEPOSIT;
+  const maxDeposit = paymentMethodsData?.maxDeposit ?? MAX_DEPOSIT;
+  const gateways = paymentMethodsData?.pspEnabled && paymentMethodsData?.methods?.length
+    ? paymentMethodsData.methods.map((m) => ({
+        value: m.id,
+        label: m.label,
+        icon: METHOD_ICON[m.id] || 'Wallet',
+      }))
+    : FALLBACK_GATEWAYS;
 
   const handleSubmit = (e) => {
     e.preventDefault();
     setError('');
     const num = parseFloat(amount);
-    if (!amount || isNaN(num) || num < MIN_DEPOSIT) {
-      setError(`Minimum deposit is ${formatCurrency(MIN_DEPOSIT)}.`);
+    if (!amount || isNaN(num) || num < minDeposit) {
+      setError(`Minimum deposit is ${formatCurrency(minDeposit)}.`);
       return;
     }
-    if (num > MAX_DEPOSIT) {
-      setError(`Maximum deposit is ${formatCurrency(MAX_DEPOSIT)}.`);
+    if (num > maxDeposit) {
+      setError(`Maximum deposit is ${formatCurrency(maxDeposit)}.`);
       return;
     }
     if (!agreeTerms) {
       setError('Please agree to the deposit terms.');
       return;
     }
-    const gatewayLabel = GATEWAYS.find((g) => g.value === gateway)?.label ?? gateway;
+    const gatewayLabel = gateways.find((g) => g.value === gateway)?.label ?? gateway;
     const currencyLabel = CURRENCIES.find((c) => c.value === currency)?.label ?? currency;
     setPendingConfirm({ amount: num, currency, gateway, gatewayLabel, currencyLabel });
   };
 
   const handleDepositConfirm = () => {
     if (!pendingConfirm) return;
-    onConfirm({ amount: pendingConfirm.amount, currency: pendingConfirm.currency, gateway: pendingConfirm.gateway });
+    onConfirm({
+      amount: pendingConfirm.amount,
+      currency: pendingConfirm.currency,
+      gateway: pendingConfirm.gateway,
+      payment_method: pendingConfirm.gateway,
+    });
     setPendingConfirm(null);
     onClose();
   };
@@ -49,8 +91,9 @@ export default function DepositConfirmModal({ isOpen, onConfirm, onClose }) {
   if (!isOpen) return null;
 
   const amountNum = parseFloat(amount);
-  const isValidAmount = !isNaN(amountNum) && amountNum >= MIN_DEPOSIT && amountNum <= MAX_DEPOSIT;
-  const gatewayLabel = GATEWAYS.find((g) => g.value === gateway)?.label ?? gateway;
+  const isValidAmount = !isNaN(amountNum) && amountNum >= minDeposit && amountNum <= maxDeposit;
+  const gatewayLabel = gateways.find((g) => g.value === gateway)?.label ?? gateway;
+  const pspActive = paymentMethodsData?.pspEnabled && gateways.length > 0;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -59,14 +102,19 @@ export default function DepositConfirmModal({ isOpen, onConfirm, onClose }) {
           <h2>Deposit</h2>
           <button type="button" className="modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
+        {loadingMethods ? (
+          <p className="form-hint">Loading payment options…</p>
+        ) : !pspActive ? (
+          <p className="form-error">Deposits are temporarily unavailable. Please try again later.</p>
+        ) : (
         <form onSubmit={handleSubmit} className="deposit-withdraw-form finance-form-optimized">
           <div className="form-row">
             <label>
               <span className="form-label">Amount</span>
               <input
                 type="number"
-                min={MIN_DEPOSIT}
-                max={MAX_DEPOSIT}
+                min={minDeposit}
+                max={maxDeposit}
                 step={1}
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
@@ -74,7 +122,7 @@ export default function DepositConfirmModal({ isOpen, onConfirm, onClose }) {
                 placeholder="e.g. 500"
                 required
               />
-              <span className="form-hint">Min {formatCurrency(MIN_DEPOSIT)} – Max {formatCurrency(MAX_DEPOSIT)}</span>
+              <span className="form-hint">Min {formatCurrency(minDeposit)} – Max {formatCurrency(maxDeposit)}</span>
             </label>
             <label>
               <span className="form-label">Currency</span>
@@ -101,7 +149,7 @@ export default function DepositConfirmModal({ isOpen, onConfirm, onClose }) {
 
           <PaymentMethodPicker
             label="Payment method"
-            options={GATEWAYS}
+            options={gateways}
             value={gateway}
             onChange={setGateway}
           />
@@ -130,6 +178,7 @@ export default function DepositConfirmModal({ isOpen, onConfirm, onClose }) {
             <button type="submit" className="btn btn-primary">Confirm & go to payment</button>
           </div>
         </form>
+        )}
 
         <ConfirmDialog
           isOpen={!!pendingConfirm}

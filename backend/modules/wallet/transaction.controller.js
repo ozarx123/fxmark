@@ -5,12 +5,16 @@ import depositService from './deposit.service.js';
 import withdrawalService from './withdrawal.service.js';
 import walletRepo from './wallet.repository.js';
 import transferService from './transfer.service.js';
+import { ENTITY_COMPANY } from '../finance/chart-of-accounts.js';
 
 async function getBalance(req, res, next) {
   try {
     const userId = req.user?.id;
     if (!userId) {
       return res.status(401).json({ error: 'Unauthorized' });
+    }
+    if (userId === ENTITY_COMPANY) {
+      return res.status(403).json({ error: 'Company wallet is not accessible via this API. Use admin panel.' });
     }
     const currency = req.query.currency || 'USD';
     const wallet = await walletRepo.getOrCreateWallet(userId, currency);
@@ -19,6 +23,15 @@ async function getBalance(req, res, next) {
       locked: wallet.locked || 0,
       currency: wallet.currency,
     });
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function getPaymentMethods(req, res, next) {
+  try {
+    const result = await depositService.getAvailablePaymentMethods();
+    res.json(result);
   } catch (e) {
     next(e);
   }
@@ -79,10 +92,11 @@ async function createDeposit(req, res, next) {
   try {
     const userId = req.user?.id;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-    const { currency, amount, reference } = req.body;
-    const result = await depositService.createDeposit(userId, currency, amount, reference);
+    const { currency, amount, reference, payment_method: paymentMethod } = req.body;
+    const result = await depositService.createDeposit(userId, currency, amount, reference, paymentMethod);
     res.status(201).json(result);
   } catch (e) {
+    if (e.statusCode) return res.status(e.statusCode).json({ error: e.message });
     next(e);
   }
 }
@@ -116,7 +130,9 @@ async function processWithdrawal(req, res, next) {
     const userId = req.user?.id;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
     const { id } = req.params;
-    const result = await withdrawalService.processWithdrawal(id, userId);
+    const idem =
+      (req.get('Idempotency-Key') || req.headers['idempotency-key'] || req.body?.idempotencyKey || '').trim();
+    const result = await withdrawalService.processWithdrawal(id, userId, idem || undefined);
     res.json(result);
   } catch (e) {
     next(e);
@@ -162,6 +178,7 @@ async function executeTransfer(req, res, next) {
 
 export default {
   getBalance,
+  getPaymentMethods,
   listDeposits,
   listWithdrawals,
   listTrades,

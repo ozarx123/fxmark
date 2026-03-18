@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FXMARK — Completed Features and Modules</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      line-height: 1.6;
+      color: #1a1a1a;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem;
+      background: #f8f9fa;
+    }
+    h1 {
+      font-size: 1.75rem;
+      margin-bottom: 0.5rem;
+      color: #0d47a1;
+    }
+    h2 {
+      font-size: 1.25rem;
+      margin-top: 2rem;
+      margin-bottom: 0.75rem;
+      color: #1565c0;
+      border-bottom: 1px solid #90caf9;
+      padding-bottom: 0.25rem;
+    }
+    h3 {
+      font-size: 1.05rem;
+      margin-top: 1.25rem;
+      margin-bottom: 0.5rem;
+      color: #1976d2;
+    }
+    p { margin: 0.5rem 0; }
+    ul {
+      margin: 0.5rem 0 1rem 1.25rem;
+      padding: 0;
+    }
+    li { margin: 0.25rem 0; }
+    hr {
+      border: none;
+      border-top: 1px solid #dee2e6;
+      margin: 1.5rem 0;
+    }
+    code, .route {
+      font-family: 'Consolas', 'Monaco', monospace;
+      font-size: 0.9em;
+      background: #e9ecef;
+      padding: 0.15em 0.4em;
+      border-radius: 4px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1rem 0;
+      background: #fff;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    th, td {
+      padding: 0.6rem 0.75rem;
+      text-align: left;
+      border-bottom: 1px solid #dee2e6;
+    }
+    th {
+      background: #1976d2;
+      color: #fff;
+      font-weight: 600;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:nth-child(even) { background: #f8f9fa; }
+    .meta {
+      font-size: 0.9rem;
+      color: #6c757d;
+      margin-top: 2rem;
+    }
+  </style>
+</head>
+<body>
+
+<h1>FXMARK — Completed Features and Modules</h1>
+<p>This document lists <strong>features and modules that are already implemented</strong> in the project (backend, frontend-web, and supporting pieces).</p>
+
+<hr />
+
+<h2>Backend modules (API)</h2>
+
+<h3>1. Auth (<code>/api/auth</code>)</h3>
+<ul>
+  <li>User registration (signup) and login (email/password)</li>
+  <li>JWT access + refresh tokens; logout</li>
+  <li><strong>Email verification</strong>: send on signup, verify via link, resend; <strong>mandatory</strong> (login/refresh rejected until verified)</li>
+  <li>Google OAuth (redirect + callback)</li>
+  <li><code>GET /me</code> (current user)</li>
+  <li>Routes: <code>register</code>, <code>signup</code>, <code>login</code>, <code>refresh</code>, <code>logout</code>, <code>me</code>, <code>verify-email</code> (GET/POST), <code>resend-verification</code></li>
+</ul>
+
+<h3>2. Users (<code>/api/users</code>)</h3>
+<ul>
+  <li>User profile: get and update</li>
+  <li>KYC: get status, submit (with file upload)</li>
+  <li>Routes: <code>profile</code> (GET/PATCH), <code>kyc</code> (GET), <code>kyc/submit</code> (POST)</li>
+</ul>
+
+<h3>3. Trading (<code>/api/trading</code>)</h3>
+<ul>
+  <li><strong>Trading accounts</strong>: list, create, get, account summary (with <code>X-Account-Id</code> / <code>X-Account-Number</code> header resolution)</li>
+  <li><strong>Orders</strong>: place (market, limit, buy/sell limit/stop), list, get, update (TP/SL), cancel</li>
+  <li><strong>Positions</strong>: open/closed positions, get, update TP/SL, close position</li>
+  <li>Execution routing: A-Book / B-Book / Hybrid rules (admin-configurable)</li>
+  <li>CRM/trading permission checks (KYC, daily loss limits, symbol, account)</li>
+  <li>Pending-orders engine (triggers on price)</li>
+  <li>Routes: <code>accounts</code>, <code>account-summary</code>, <code>accounts/:accountId</code>, <code>orders</code>, <code>orders/:orderId</code>, <code>positions</code>, <code>positions/closed</code>, <code>positions/:positionId</code>, etc.</li>
+</ul>
+
+<h3>4. Wallet (<code>/api/wallet</code>)</h3>
+<ul>
+  <li>Balance, deposits, withdrawals, trades, transfers</li>
+  <li>Create deposit, confirm deposit; request withdrawal, process withdrawal</li>
+  <li>Transfer: lookup recipient, execute transfer</li>
+  <li>Routes: <code>balance</code>, <code>deposits</code>, <code>withdrawals</code>, <code>trades</code>, <code>transfers</code>, <code>deposits</code> (POST), <code>deposits/:id/confirm</code>, <code>withdrawals</code> (POST), <code>withdrawals/:id/process</code>, <code>transfer/lookup</code>, <code>transfer</code> (POST)</li>
+</ul>
+
+<h3>5. PAMM (Fund/Manager) (<code>/api/pamm</code>)</h3>
+<ul>
+  <li>Managers: list, get profile, get manager's trades; register as manager, update profile</li>
+  <li>Funds: fund detail (allocations, performance, follow/unfollow)</li>
+  <li>Follow/unfollow, add funds, withdraw</li>
+  <li>Manager: my funds, allocations, follower trades, investors, trades; create/get PAMM trading account</li>
+  <li>Allocation engine, distribution service, performance fee service</li>
+  <li>Routes: <code>managers</code>, <code>managers/me</code>, <code>managers/:managerId</code>, <code>managers/:managerId/trades</code>, <code>funds/:fundId</code>, <code>follow</code>, <code>unfollow</code>, <code>add-funds</code>, <code>withdraw</code>, etc.</li>
+</ul>
+
+<h3>6. Finance (<code>/api/finance</code>)</h3>
+<ul>
+  <li><strong>Ledger</strong>: entries, balances, P&amp;L, reconciliation; PAMM fund ledger</li>
+  <li><strong>Chart of accounts</strong>: list</li>
+  <li><strong>Reports</strong>: daily, monthly; statements</li>
+  <li>Double-entry ledger, P&amp;L service, reconciliation service</li>
+  <li>Routes: <code>ledger/entries</code>, <code>ledger/balances</code>, <code>ledger/pnl</code>, <code>ledger/reconciliation</code>, <code>ledger/pamm/:fundId</code>, <code>chart-of-accounts</code>, <code>reports/daily</code>, <code>reports/monthly</code>, <code>statements</code></li>
+</ul>
+
+<h3>7. Admin (<code>/api/admin</code>)</h3>
+<ul>
+  <li><strong>Users</strong>: list, update; <strong>Leads</strong></li>
+  <li><strong>PAMM</strong>: list managers, approve manager; privacy toggle; <strong>Broadcast</strong></li>
+  <li><strong>KYC</strong>: override</li>
+  <li><strong>Wallets</strong>: add funds (superadmin)</li>
+  <li><strong>IB</strong>: profiles, commissions, wallets, settings (GET/PUT), payout (admin process)</li>
+  <li><strong>Trading monitor</strong>: top traders; per-user summary, accounts, wallet, positions (open/closed), orders; admin close position / cancel order; trading limits (GET/PUT); account config (GET/PUT)</li>
+  <li><strong>Execution mode</strong>: A-Book / B-Book / Hybrid (GET/PUT); hybrid rules (GET/PUT)</li>
+  <li><strong>Logs</strong>: summary, list files, download, get log entries</li>
+  <li>Routes: <code>leads</code>, <code>users</code>, <code>users/:id</code>, <code>pamm/managers</code>, <code>pamm/managers/:id</code>, <code>kyc-override</code>, <code>pamm-privacy</code>, <code>broadcast</code>, <code>wallets/:userId/add-funds</code>, <code>ib/*</code>, <code>trading/*</code>, <code>execution-mode</code>, <code>hybrid-rules</code>, <code>logs/*</code></li>
+</ul>
+
+<h3>8. Support (<code>/api/support</code>)</h3>
+<ul>
+  <li>Tickets: create, list, reply</li>
+  <li>Notification service (email channel); Telegram and WhatsApp integrations</li>
+  <li>Routes: <code>tickets</code> (POST/GET), <code>tickets/:id/reply</code> (POST)</li>
+</ul>
+
+<h3>9. IB (Introducing Brokers) (<code>/api/ib</code>)</h3>
+<ul>
+  <li>Profile: get, register, update</li>
+  <li>Balance, stats, commissions, payouts, referrals, referral joinings</li>
+  <li>Request payout</li>
+  <li>Commission engine, level calculator, payout service</li>
+  <li>Routes: <code>profile</code>, <code>register</code>, <code>balance</code>, <code>stats</code>, <code>commissions</code>, <code>payouts</code>, <code>referrals</code>, <code>referrals/joinings</code>, <code>payouts</code> (POST)</li>
+</ul>
+
+<hr />
+
+<h2>Backend — Supporting / internal</h2>
+<ul>
+  <li><strong>Email</strong>: Nodemailer-based service (e.g. Gmail SMTP); used for verification and notifications</li>
+  <li><strong>Risk management</strong>: A-Book router, B-Book router, exposure manager, hedging service, AI risk switch; hybrid rules evaluator for routing</li>
+  <li><strong>FIX engine</strong>: FIX session, router, LP connector, price feed, execution report handler (integration points for liquidity provider)</li>
+  <li><strong>CRM</strong>: CRM integration service (trading permissions, etc.)</li>
+  <li><strong>Jobs</strong>: <code>nightly.settlement</code>, <code>exposure.sync</code>, <code>ib.commission.cron</code>, <code>pamm.performance.cron</code></li>
+  <li><strong>AI trading</strong> (logic/strategy): backtesting engine, news filter, M5 gold strategy, break-even logic, risk parameters</li>
+  <li><strong>Config</strong>: MongoDB, Redis, env, FIX, liquidity (default route)</li>
+  <li><strong>Core</strong>: Express app, CORS, JSON, request ID, error handler; JWT auth middleware; DB middleware; route aggregation</li>
+</ul>
+
+<hr />
+
+<h2>Backend — Market data (in <code>src/</code>)</h2>
+<ul>
+  <li>REST market routes (e.g. quotes)</li>
+  <li>WebSocket: tick broadcast, market data logging</li>
+  <li>TwelveData and Finnhub: REST + WebSocket feeds; cache (Redis when available)</li>
+  <li>Pending-orders engine and position checks wired into the main server</li>
+</ul>
+
+<hr />
+
+<h2>Frontend (frontend-web) — Pages and features</h2>
+
+<h3>Auth &amp; onboarding</h3>
+<ul>
+  <li><strong>Landing</strong> (<code>/</code>)</li>
+  <li><strong>Auth</strong> (<code>/auth</code>): Login, signup (email/password), Google OAuth; redirect after login; email verification required (redirect to verify-email on 403)</li>
+  <li><strong>Auth callback</strong> (<code>/auth/callback</code>): OAuth callback</li>
+  <li><strong>Verify email</strong> (<code>/auth/verify-email</code>): Verify from link (<code>?token=...</code>), success/error, resend form (pre-filled from state or user)</li>
+  <li><strong>Profile setup</strong> (<code>/auth/profile-setup</code>): Post-login profile completion</li>
+</ul>
+
+<h3>Client app (protected; email verification required)</h3>
+<ul>
+  <li><strong>Dashboard</strong> (<code>/dashboard</code>)</li>
+  <li><strong>Wallet</strong> (<code>/wallet</code>): Balance, deposits, withdrawals, transfers; gateway redirect (<code>/gateway-redirect</code>)</li>
+  <li><strong>Trading</strong> (<code>/trading</code>, <code>/trading/terminal</code>): Trading UI with TradingSocketProvider</li>
+  <li><strong>PAMM</strong>: List (<code>/pamm</code>), PAMM AI (<code>/pamm-ai</code>), fund detail (<code>/pamm/fund/:fundId</code>), manager (<code>/pamm/manager</code> for PAMM manager role); follow/unfollow, add funds, withdraw modals</li>
+  <li><strong>Copy trading</strong>: Hub (<code>/copy</code>), following (<code>/copy/following</code>), manager (<code>/copy/manager</code>), master profile (<code>/copy/master/:slug</code>)</li>
+  <li><strong>IB</strong> (<code>/ib</code>): For IB roles — profile, balance, commissions, payouts, referrals, register</li>
+  <li><strong>Finance</strong> (<code>/finance</code>): Ledger, reports, statements (user-facing)</li>
+  <li><strong>Settings</strong> (<code>/settings/profile</code>): Profile and KYC</li>
+</ul>
+
+<h3>Admin (admin role)</h3>
+<ul>
+  <li><strong>Admin layout</strong> with nav; role-based access (<code>ADMIN_ROLES</code>)</li>
+  <li><strong>Dashboard</strong> (<code>/admin</code>)</li>
+  <li><strong>Financials</strong> (<code>/admin/financials</code>)</li>
+  <li><strong>Trading monitor</strong> (<code>/admin/trading-monitor</code>, <code>/admin/trading-monitor/:userId</code>)</li>
+  <li><strong>Users</strong> (<code>/admin/users</code>)</li>
+  <li><strong>IB commission</strong> (<code>/admin/ib-commission</code>)</li>
+  <li><strong>Audit log</strong> (<code>/admin/audit</code>)</li>
+  <li><strong>PAMM</strong> (<code>/admin/pamm</code>)</li>
+  <li><strong>Liquidity</strong> (<code>/admin/liquidity</code>)</li>
+  <li><strong>Leads</strong> (<code>/admin/leads</code>)</li>
+  <li><strong>Tickets</strong> (<code>/admin/tickets</code>)</li>
+  <li><strong>KYC</strong> (<code>/admin/kyc</code>)</li>
+  <li><strong>Broadcast</strong> (<code>/admin/broadcast</code>)</li>
+  <li><strong>Market</strong> (<code>/admin/market</code>)</li>
+  <li><strong>Logs</strong> (<code>/admin/logs</code>)</li>
+  <li><strong>Settings</strong> (<code>/admin/settings</code>)</li>
+</ul>
+
+<h3>UI &amp; infrastructure</h3>
+<ul>
+  <li><strong>ProtectedRoute</strong>: Auth required, email verification required, profile setup redirect, role-based (admin, PAMM manager, IB)</li>
+  <li><strong>Contexts</strong>: Auth, MarketData, Account, Finance; TradingSocketProvider</li>
+  <li><strong>Components</strong>: FxChart, wallet sync, modals (order confirm, deposit/withdraw, transfer, history, etc.), icons, layout</li>
+  <li><strong>API clients</strong>: tradingApi, walletApi, financeApi, adminApi, pammApi, ibApi</li>
+</ul>
+
+<hr />
+
+<h2>Summary table</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Area</th>
+      <th>Backend</th>
+      <th>Frontend (web)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>Auth + email</td><td>✅</td><td>✅</td></tr>
+    <tr><td>Users + KYC</td><td>✅</td><td>✅ (profile, settings)</td></tr>
+    <tr><td>Trading</td><td>✅</td><td>✅ (trading + terminal)</td></tr>
+    <tr><td>Wallet</td><td>✅</td><td>✅</td></tr>
+    <tr><td>PAMM</td><td>✅</td><td>✅ (list, AI, fund, manager)</td></tr>
+    <tr><td>Copy trading</td><td>—</td><td>✅ (hub, following, manager, master)</td></tr>
+    <tr><td>Finance</td><td>✅</td><td>✅ (user + admin)</td></tr>
+    <tr><td>Admin</td><td>✅</td><td>✅ (full admin panel)</td></tr>
+    <tr><td>Support</td><td>✅</td><td>✅ (tickets in admin)</td></tr>
+    <tr><td>IB</td><td>✅</td><td>✅ (client + admin)</td></tr>
+    <tr><td>Market data</td><td>✅</td><td>✅ (context, chart, live)</td></tr>
+  </tbody>
+</table>
+
+<p class="meta">Generated from the current codebase. For deployment and env setup, see README.md, DEPLOY.md, and LIVE_DATA_SETUP.md.</p>
+
+</body>
+</html>

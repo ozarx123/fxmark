@@ -72,6 +72,11 @@ export default function Auth() {
         navigate(target, { replace: true });
         return;
       }
+      if (res.status === 403 && (data.code === 'EMAIL_NOT_VERIFIED' || String(data.error || data.message || '').toLowerCase().includes('verif'))) {
+        setError('Please verify your email. Check your inbox or resend the verification email.');
+        navigate('/auth/verify-email', { state: { email: loginEmail }, replace: true });
+        return;
+      }
       if (res.status === 404 || res.status === 502) {
         login(ensureUserRole({ email: loginEmail, name: loginEmail.split('@')[0] }, loginEmail), null);
         navigate(safeRedirect || '/auth/profile-setup', { replace: true });

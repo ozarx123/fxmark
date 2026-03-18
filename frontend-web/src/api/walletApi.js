@@ -22,6 +22,13 @@ export async function getBalance(currency = 'USD') {
   return res.json();
 }
 
+/** Get available payment methods (when PSP is enabled) */
+export async function getPaymentMethods() {
+  const res = await fetchWithAuth('/wallet/payment-methods');
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to load payment methods');
+  return res.json();
+}
+
 /** List deposits */
 export async function listDeposits(limit = 50) {
   const res = await fetchWithAuth(`/wallet/deposits?limit=${limit}`);
@@ -50,18 +57,22 @@ export async function listTransfers(limit = 50) {
   return res.json();
 }
 
-/** Create deposit (returns id for confirm) */
+/** Create deposit (returns id for confirm). Pass payment_method when PSP is enabled. */
 export async function createDeposit(payload) {
   const body = {
     currency: payload.currency || 'USD',
     amount: Number(payload.amount),
     reference: payload.reference || payload.gateway || null,
   };
+  if (payload.payment_method) body.payment_method = payload.payment_method;
   const res = await fetchWithAuth('/wallet/deposits', {
     method: 'POST',
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to create deposit');
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to create deposit');
+  }
   return res.json();
 }
 

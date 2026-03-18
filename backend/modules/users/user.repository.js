@@ -23,12 +23,17 @@ function generateAccountNo() {
 async function createOne(doc) {
   await ensureIndex();
   const col = await collection();
-  const accountNo = doc.accountNo || generateAccountNo();
+  const accountNo = doc.accountNo !== undefined && doc.accountNo !== null && doc.accountNo !== ''
+    ? String(doc.accountNo)
+    : generateAccountNo();
+  const createdAt = doc.createdAt instanceof Date ? doc.createdAt : new Date();
+  const updatedAt = doc.updatedAt instanceof Date ? doc.updatedAt : new Date();
+  const { createdAt: _c, updatedAt: _u, ...rest } = doc;
   const { insertedId } = await col.insertOne({
-    ...doc,
+    ...rest,
     accountNo,
-    createdAt: new Date(),
-    updatedAt: new Date(),
+    createdAt,
+    updatedAt,
   });
   return insertedId.toString();
 }
@@ -44,6 +49,24 @@ async function findByAccountNo(accountNo) {
   const col = await collection();
   const normalized = accountNo.trim().toUpperCase();
   const user = await col.findOne({ accountNo: normalized });
+  return user ? toUser(user) : null;
+}
+
+/** Find user by accountNo exactly as stored (no normalization). For bulk import duplicate check. */
+async function findByAccountNoExact(accountNo) {
+  if (accountNo == null) return null;
+  const col = await collection();
+  const user = await col.findOne({ accountNo: String(accountNo) });
+  return user ? toUser(user) : null;
+}
+
+/** Find user by referralCode (CRM referral code). For bulk import Refer By resolution. */
+async function findByReferralCode(referralCode) {
+  if (!referralCode || typeof referralCode !== 'string') return null;
+  const col = await collection();
+  const code = referralCode.trim();
+  if (!code) return null;
+  const user = await col.findOne({ referralCode: code });
   return user ? toUser(user) : null;
 }
 
@@ -74,6 +97,21 @@ async function findById(id) {
   return user ? toUser(user) : null;
 }
 
+/** Get user by id with password hashes (for auth change-password flows). Do not expose to API. */
+async function findByIdWithPasswordHashes(id) {
+  if (!id) return null;
+  const col = await collection();
+  let _id;
+  try {
+    _id = ObjectId.isValid(id) ? new ObjectId(id) : null;
+  } catch {
+    return null;
+  }
+  if (!_id) return null;
+  const user = await col.findOne({ _id });
+  return user ? { id: user._id.toString(), ...user, _id: undefined } : null;
+}
+
 async function updateById(id, update) {
   if (!id) return null;
   const col = await collection();
@@ -88,7 +126,7 @@ async function updateById(id, update) {
 
 function toUser(row) {
   if (!row) return null;
-  const { _id, passwordHash, ...rest } = row;
+  const { _id, passwordHash, investorPasswordHash, ...rest } = row;
   return { id: _id.toString(), ...rest };
 }
 
@@ -130,7 +168,10 @@ export default {
   createOne,
   findByEmail,
   findByAccountNo,
+  findByAccountNoExact,
+  findByReferralCode,
   findById,
+  findByIdWithPasswordHashes,
   updateById,
   list,
   toUser,

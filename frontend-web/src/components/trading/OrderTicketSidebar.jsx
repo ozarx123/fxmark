@@ -1,5 +1,9 @@
 import React, { useState } from 'react';
 
+/**
+ * Secondary/optional order ticket. In the terminal, order placement flows through
+ * TradeControlPanel only; use this component only where a compact sidebar order form is needed.
+ */
 const LOT_OPTIONS = [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 3, 5];
 
 export default function OrderTicketSidebar({

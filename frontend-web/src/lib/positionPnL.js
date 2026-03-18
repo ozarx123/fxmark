@@ -10,6 +10,43 @@ export const CONTRACT_SIZE = {
   DEFAULT: 100_000,
 };
 
+/** Pip size for pip distance: XAU 1 (per 1 unit), JPY pairs 0.01, others 0.0001. */
+export function getPipSize(symbol) {
+  const s = String(symbol ?? '').replace(/\//g, '').toUpperCase();
+  if (s.includes('XAU') || s === 'GOLD') return 1;
+  if (s.includes('JPY')) return 0.01;
+  return 0.0001;
+}
+
+/** Distance between two prices in pips. */
+export function getPipDistance(priceA, priceB, symbol) {
+  if (priceA == null || priceB == null || !Number.isFinite(Number(priceA)) || !Number.isFinite(Number(priceB))) return null;
+  const pip = getPipSize(symbol);
+  return Math.abs(Number(priceA) - Number(priceB)) / pip;
+}
+
+/**
+ * Suggested volume (lots) from risk % of equity: riskAmount = equity * (riskPct/100),
+ * loss per lot = |entry - sl| * contractSize, lots = riskAmount / lossPerLot.
+ * @param {number} equity - Account equity
+ * @param {number} riskPct - Risk percentage (e.g. 1 for 1%)
+ * @param {number} entryPrice - Entry price
+ * @param {number} slPrice - Stop loss price
+ * @param {string} symbol - Symbol
+ * @param {string} side - 'buy' or 'sell'
+ * @returns {number|null} Lots or null if invalid
+ */
+export function volumeFromRiskPct(equity, riskPct, entryPrice, slPrice, symbol, side = 'buy') {
+  if (!Number.isFinite(equity) || equity <= 0 || !Number.isFinite(riskPct) || riskPct <= 0) return null;
+  if (!Number.isFinite(entryPrice) || !Number.isFinite(slPrice)) return null;
+  const riskAmount = equity * (riskPct / 100);
+  const contractSize = getContractSize(symbol);
+  const lossPerLot = Math.abs(entryPrice - slPrice) * contractSize;
+  if (lossPerLot <= 0) return null;
+  const lots = riskAmount / lossPerLot;
+  return Math.max(0, Math.min(lots, 100)); // clamp to 0–100 lots
+}
+
 export function getContractSize(symbol) {
   const s = String(symbol ?? '').replace(/\//g, '').toUpperCase();
   if (s.includes('XAU') || s === 'GOLD') return CONTRACT_SIZE.XAUUSD;

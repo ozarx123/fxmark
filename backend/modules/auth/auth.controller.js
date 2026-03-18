@@ -45,4 +45,46 @@ async function me(req, res, next) {
   }
 }
 
-export default { register, login, refresh, logout, me };
+async function verifyEmail(req, res, next) {
+  try {
+    const token = req.query.token || req.body?.token;
+    const result = await authService.verifyEmail(token);
+    res.json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function resendVerification(req, res, next) {
+  try {
+    const email = req.body?.email;
+    const result = await authService.resendVerificationEmail(email);
+    res.json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function changePassword(req, res, next) {
+  try {
+    const userId = req.user?.id;
+    const { currentPassword, newPassword } = req.body || {};
+    const result = await authService.changePassword(userId, currentPassword, newPassword);
+    res.json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function changeInvestorPassword(req, res, next) {
+  try {
+    const userId = req.user?.id;
+    const { currentInvestorPassword, newInvestorPassword } = req.body || {};
+    const result = await authService.changeInvestorPassword(userId, currentInvestorPassword, newInvestorPassword);
+    res.json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export default { register, login, refresh, logout, me, verifyEmail, resendVerification, changePassword, changeInvestorPassword };

@@ -39,4 +39,18 @@ async function getAccount(req, res, next) {
   }
 }
 
-export default { listAccounts, createAccount, getAccount };
+async function getAccountSummary(req, res, next) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const accountId = req.activeAccount?.id;
+    if (!accountId) return res.status(400).json({ error: 'No active account. Send X-Account-Id or X-Account-Number.' });
+    const summary = await tradingAccountService.getAccountSummary(userId, accountId);
+    if (!summary) return res.status(404).json({ error: 'Account not found' });
+    res.json(summary);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export default { listAccounts, createAccount, getAccount, getAccountSummary };

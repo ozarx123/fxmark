@@ -73,8 +73,10 @@ export function useMarketData(symbol, timeframe = '1m') {
   // a symbol/timeframe switch (needs candle clear) from a bar-boundary refresh
   // (must NOT clear — clearing causes hasRealData→false → sample setData fires).
   const prevFetchKeyRef = useRef(null);
+  const cancelledRef = useRef(false);
 
   const fetchCandles = useCallback(async () => {
+    if (cancelledRef.current) return;
     // Stamp this request and keep a local copy for closure comparison
     requestIdRef.current += 1;
     const myRequestId = requestIdRef.current;
@@ -101,8 +103,8 @@ export function useMarketData(symbol, timeframe = '1m') {
           const params = new URLSearchParams({ symbol: internalSymbol, tf: timeframe });
           const res = await fetchWithTimeout(`${API_BASE}/candles?${params}`);
 
-          // ── Fix 1 check: discard if a newer request has already been issued ──
-          if (myRequestId !== requestIdRef.current) return;
+          // ── Fix 1 check: discard if a newer request or unmount ──
+          if (myRequestId !== requestIdRef.current || cancelledRef.current) return;
 
           if (!res.ok) {
             const err = await res.json().catch(() => ({}));
@@ -111,9 +113,10 @@ export function useMarketData(symbol, timeframe = '1m') {
           const data = await res.json();
 
           // ── Fix 1 check: guard again after the second await ──────────────────
-          if (myRequestId !== requestIdRef.current) return;
+          if (myRequestId !== requestIdRef.current || cancelledRef.current) return;
 
           const arr = Array.isArray(data) ? data : [];
+          if (cancelledRef.current) return;
           setCandles(arr);
 
           // Seed tick with the last candle's close so the price label is populated
@@ -125,6 +128,7 @@ export function useMarketData(symbol, timeframe = '1m') {
             const lastClose = last.close != null ? Number(last.close) : null;
             if (lastClose != null) {
               setTick((prev) => {
+                if (cancelledRef.current) return prev;
                 const prevBelongsHere =
                   prev &&
                   toInternalSymbol(prev.symbol ?? '') === internalSymbol &&
@@ -143,6 +147,7 @@ export function useMarketData(symbol, timeframe = '1m') {
               });
             }
           }
+          if (cancelledRef.current) return;
           setError(null);
           return;
         } catch (e) {
@@ -153,12 +158,11 @@ export function useMarketData(symbol, timeframe = '1m') {
           }
         }
       }
-      if (myRequestId !== requestIdRef.current) return;
+      if (myRequestId !== requestIdRef.current || cancelledRef.current) return;
       setError(lastErr?.message || 'Failed to fetch candles');
       setCandles([]);
     } finally {
-      // Only clear loading spinner if this request is still the latest
-      if (myRequestId === requestIdRef.current) setLoading(false);
+      if (!cancelledRef.current && myRequestId === requestIdRef.current) setLoading(false);
     }
   }, [internalSymbol, timeframe]);
 
@@ -167,9 +171,11 @@ export function useMarketData(symbol, timeframe = '1m') {
   const scheduleRef = useRef(null);
   useEffect(() => {
     if (!internalSymbol) return;
+    cancelledRef.current = false;
     fetchCandles();
 
     function scheduleNextRefetch() {
+      if (cancelledRef.current) return;
       const secToNext = getSecondsToNextBar(timeframe);
       const delaySec = 0.2;
       const ms = Math.min(
@@ -177,13 +183,18 @@ export function useMarketData(symbol, timeframe = '1m') {
         { '1m': 65000, '5m': 310000, '15m': 910000, '1h': 3660000, '1d': 86400000 }[timeframe] ?? 300000
       );
       scheduleRef.current = setTimeout(() => {
+        if (cancelledRef.current) return;
         fetchCandles().then(scheduleNextRefetch).catch(scheduleNextRefetch);
       }, ms);
     }
 
     scheduleNextRefetch();
     return () => {
-      if (scheduleRef.current) clearTimeout(scheduleRef.current);
+      cancelledRef.current = true;
+      if (scheduleRef.current) {
+        clearTimeout(scheduleRef.current);
+        scheduleRef.current = null;
+      }
     };
   }, [fetchCandles, internalSymbol, timeframe]);
 
@@ -197,6 +208,7 @@ export function useMarketData(symbol, timeframe = '1m') {
     if (!poolTick) return;
     const price = poolTick.close ?? poolTick.price;
     if (!Number.isFinite(Number(price))) return;
+    if (cancelledRef.current) return;
     setTick(poolTick);
   }, [poolTick]);
 

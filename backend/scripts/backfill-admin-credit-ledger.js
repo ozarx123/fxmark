@@ -4,13 +4,20 @@
  * 2. For users with wallet > ledger, posts reconciliation adjustment for the difference
  *
  * Run from backend: node scripts/backfill-admin-credit-ledger.js
+ * Or: npm run backfill-ledger
  * Optional: node scripts/backfill-admin-credit-ledger.js <email|userId|name>  (fix specific user only)
  */
-import 'dotenv/config';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import { config } from 'dotenv';
 import { getDb } from '../config/mongo.js';
 import ledgerService from '../modules/finance/ledger.service.js';
+import ledgerRepo from '../modules/finance/ledger.repository.js';
 import { ACCOUNTS } from '../modules/finance/chart-of-accounts.js';
 import { ObjectId } from 'mongodb';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+config({ path: join(__dirname, '..', '.env') });
 
 const TRANSACTIONS_COLLECTION = 'wallet_transactions';
 const LEDGER_COLLECTION = 'ledger_entries';
@@ -92,7 +99,9 @@ async function run() {
       targetUserId = user?._id?.toString();
     }
     if (targetUserId) {
-      walletFilter = { userId: targetUserId, balance: { $gt: 0 } };
+      const uidConditions = [{ userId: targetUserId }];
+      if (ObjectId.isValid(targetUserId) && targetUserId.length === 24) uidConditions.push({ userId: new ObjectId(targetUserId) });
+      walletFilter = { $or: uidConditions, balance: { $gt: 0 } };
       console.log(`  Targeting user: ${targetArg} (userId=${targetUserId})\n`);
     } else {
       console.warn(`  User not found for "${targetArg}". Running for all users.\n`);
@@ -108,7 +117,7 @@ async function run() {
     const walletBal = Number(w.balance) || 0;
     if (walletBal <= 0) continue;
 
-    const ledgerBal = await ledgerRepoGetBalance(db, userId, ACCOUNTS.WALLET);
+    const ledgerBal = await ledgerRepo.getBalance(userId, ACCOUNTS.WALLET, null);
     const diff = walletBal - ledgerBal;
     if (diff < 0.01) continue;
 
@@ -123,20 +132,6 @@ async function run() {
   }
 
   console.log(`\nDone. Admin credits posted: ${posted}. Reconciliation adjustments: ${adjusted}`);
-}
-
-/** Get ledger balance for WALLET account (handles 1100 and 2110) */
-async function ledgerRepoGetBalance(db, entityId, accountCode) {
-  const c = db.collection(LEDGER_COLLECTION);
-  const uid = normUserId(entityId);
-  const r = await c.aggregate([
-    { $match: { entityId: uid, accountCode: { $in: [accountCode, '1100'] } } },
-    { $group: { _id: null, debit: { $sum: '$debit' }, credit: { $sum: '$credit' } } },
-  ]).next();
-  if (!r) return 0;
-  const first = accountCode[0];
-  if (first === '1' || first === '5') return (r.debit || 0) - (r.credit || 0);
-  return (r.credit || 0) - (r.debit || 0);
 }
 
 run().catch((e) => {

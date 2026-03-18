@@ -24,13 +24,13 @@ export default function AnalyticsPanel({
           return t.getDate() === now.getDate() && t.getMonth() === now.getMonth() && t.getFullYear() === now.getFullYear();
         })
       : [];
-    const dailyPnl = closedToday.reduce((sum, h) => sum + (h.pnl ?? h.realizedPnl ?? 0), 0);
+    const dailyPnl = closedToday.reduce((sum, h) => sum + (h.realizedPnl ?? h.pnl ?? 0), 0);
     const openCount = positionsWithPnl.length;
     const winning = positionsWithPnl.filter((p) => (p.floatingPnL ?? p.floating_pnl ?? 0) >= 0).length;
     const losing = positionsWithPnl.filter((p) => (p.floatingPnL ?? p.floating_pnl ?? 0) < 0).length;
     const totalClosed = Array.isArray(history) ? history.length : 0;
     const winRate = totalClosed > 0
-      ? (history.filter((h) => (h.pnl ?? 0) >= 0).length / totalClosed * 100).toFixed(1)
+      ? (history.filter((h) => (h.realizedPnl ?? h.pnl ?? 0) >= 0).length / totalClosed * 100).toFixed(1)
       : null;
 
     return {

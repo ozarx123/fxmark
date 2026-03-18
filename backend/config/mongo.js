@@ -44,6 +44,26 @@ export async function getDb(dbName) {
 }
 
 /**
+ * Run a function inside a MongoDB transaction. All operations must use the same session.
+ * Use for atomic wallet + ledger + transaction record updates.
+ * @param {(session: import('mongodb').ClientSession) => Promise<T>} asyncFn
+ * @returns {Promise<T>}
+ */
+export async function withTransaction(asyncFn) {
+  const client = await getClient();
+  const session = client.startSession();
+  try {
+    let result;
+    await session.withTransaction(async () => {
+      result = await asyncFn(session);
+    });
+    return result;
+  } finally {
+    await session.endSession();
+  }
+}
+
+/**
  * Close the MongoDB client (e.g. on graceful shutdown).
  */
 export async function closeMongo() {

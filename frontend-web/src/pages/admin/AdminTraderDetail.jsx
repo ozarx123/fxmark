@@ -325,7 +325,7 @@ export default function AdminTraderDetail() {
           <div className="kpi-card">
             <h3>Trading balance</h3>
             <p className="kpi-value">{formatCurrency(totalBalance)}</p>
-            <p className="kpi-meta">Sum of live & PAMM accounts (excludes demo)</p>
+            <p className="kpi-meta">Sum of live accounts (excludes demo)</p>
           </div>
           <div className="kpi-card">
             <h3>Equity</h3>

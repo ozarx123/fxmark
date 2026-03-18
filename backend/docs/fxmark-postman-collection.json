@@ -1,0 +1,218 @@
+{
+  "info": {
+    "name": "FXMARK Backend API",
+    "description": "Backend API for FXMARK. Set `baseUrl` (e.g. http://localhost:3000) and after login set `accessToken` in your environment.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      { "key": "token", "value": "{{accessToken}}", "type": "string" }
+    ]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000" },
+    { "key": "accessToken", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const j = pm.response.json();",
+                  "  if (j.accessToken) pm.environment.set('accessToken', j.accessToken);",
+                  "  if (j.refreshToken) pm.environment.set('refreshToken', j.refreshToken);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"your@email.com\",\n  \"password\": \"your_password\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/login"
+          }
+        },
+        {
+          "name": "Register",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"new@email.com\",\n  \"password\": \"SecurePass1!\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/register"
+          }
+        },
+        {
+          "name": "Me",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/auth/me" }
+        },
+        {
+          "name": "Refresh",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/auth/refresh"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "API Health",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": "{{baseUrl}}/api/health"
+          }
+        },
+        {
+          "name": "Redis Health",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": "{{baseUrl}}/health/redis"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Market",
+      "item": [
+        {
+          "name": "Candles",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/market/candles?symbol=EURUSD&tf=1m",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "market", "candles"],
+              "query": [
+                { "key": "symbol", "value": "EURUSD" },
+                { "key": "tf", "value": "1m" },
+                { "key": "from", "value": "", "disabled": true },
+                { "key": "to", "value": "", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Quote",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": "{{baseUrl}}/api/market/quote?symbol=EURUSD"
+          }
+        },
+        {
+          "name": "Technical",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": "{{baseUrl}}/api/market/technical?symbol=XAUUSD&interval=1day"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        { "name": "Get Profile", "request": { "method": "GET", "url": "{{baseUrl}}/api/users/profile" } },
+        { "name": "Update Profile", "request": { "method": "PATCH", "url": "{{baseUrl}}/api/users/profile", "body": { "mode": "raw", "raw": "{}" } },
+        { "name": "Get KYC", "request": { "method": "GET", "url": "{{baseUrl}}/api/users/kyc" }
+      ]
+    },
+    {
+      "name": "Wallet",
+      "item": [
+        { "name": "Get Balance", "request": { "method": "GET", "url": "{{baseUrl}}/api/wallet/balance" },
+        { "name": "Payment Methods", "request": { "method": "GET", "url": "{{baseUrl}}/api/wallet/payment-methods" },
+        { "name": "List Deposits", "request": { "method": "GET", "url": "{{baseUrl}}/api/wallet/deposits" },
+        { "name": "List Withdrawals", "request": { "method": "GET", "url": "{{baseUrl}}/api/wallet/withdrawals" },
+        {
+          "name": "Create Deposit",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"amount\": 100,\n  \"currency\": \"USD\"\n}" },
+            "url": "{{baseUrl}}/api/wallet/deposits"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Trading",
+      "item": [
+        { "name": "List Accounts", "request": { "method": "GET", "url": "{{baseUrl}}/api/trading/accounts" },
+        { "name": "Account Summary", "request": { "method": "GET", "url": "{{baseUrl}}/api/trading/account-summary" },
+        { "name": "Open Positions", "request": { "method": "GET", "url": "{{baseUrl}}/api/trading/positions" },
+        { "name": "Closed Positions", "request": { "method": "GET", "url": "{{baseUrl}}/api/trading/positions/closed" },
+        { "name": "List Orders", "request": { "method": "GET", "url": "{{baseUrl}}/api/trading/orders" }
+      ]
+    },
+    {
+      "name": "Finance",
+      "item": [
+        { "name": "Ledger Entries", "request": { "method": "GET", "url": "{{baseUrl}}/api/finance/ledger/entries" },
+        { "name": "Ledger Balances", "request": { "method": "GET", "url": "{{baseUrl}}/api/finance/ledger/balances" },
+        { "name": "Chart of Accounts", "request": { "method": "GET", "url": "{{baseUrl}}/api/finance/chart-of-accounts" }
+      ]
+    },
+    {
+      "name": "PAMM",
+      "item": [
+        { "name": "Config", "request": { "auth": { "type": "noauth" }, "method": "GET", "url": "{{baseUrl}}/api/pamm/config" },
+        { "name": "List Managers", "request": { "auth": { "type": "noauth" }, "method": "GET", "url": "{{baseUrl}}/api/pamm/managers" },
+        { "name": "My Manager", "request": { "method": "GET", "url": "{{baseUrl}}/api/pamm/managers/me" },
+        { "name": "My Allocations", "request": { "method": "GET", "url": "{{baseUrl}}/api/pamm/managers/me/allocations" }
+      ]
+    },
+    {
+      "name": "IB",
+      "item": [
+        { "name": "IB Profile", "request": { "method": "GET", "url": "{{baseUrl}}/api/ib/profile" },
+        { "name": "IB Balance", "request": { "method": "GET", "url": "{{baseUrl}}/api/ib/balance" },
+        { "name": "IB Commissions", "request": { "method": "GET", "url": "{{baseUrl}}/api/ib/commissions" }
+      ]
+    },
+    {
+      "name": "Admin",
+      "item": [
+        { "name": "List Users", "request": { "method": "GET", "url": "{{baseUrl}}/api/admin/users" },
+        {
+          "name": "Add Funds to Wallet",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"amount\": 100,\n  \"currency\": \"USD\"\n}" },
+            "url": "{{baseUrl}}/api/admin/wallets/{{userId}}/add-funds"
+          }
+        }
+      ]
+    }
+  ]
+}

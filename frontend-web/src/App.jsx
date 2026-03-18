@@ -6,21 +6,20 @@ import { TradingSocketProvider } from './services/tradingSocket.jsx';
 import { AccountProvider } from './context/AccountContext.jsx';
 import { FinanceProvider } from './context/FinanceContext.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
-import { ADMIN_ROLES, PAMM_MANAGER_ROLES, IB_ROLES } from './config/roleRoutes.js';
+import { ADMIN_ROLES, IB_ROLES } from './config/roleRoutes.js';
 import Landing from './pages/landing/Landing.jsx';
 import Auth from './pages/auth/Auth.jsx';
 import AuthCallback from './pages/auth/AuthCallback.jsx';
 import ProfileSetup from './pages/auth/ProfileSetup.jsx';
+import VerifyEmail from './pages/auth/VerifyEmail.jsx';
 import AppLayout from './AppLayout.jsx';
 import AdminLayout from './layouts/AdminLayout.jsx';
 import Dashboard from './pages/dashboard/index.jsx';
 import Wallet from './pages/wallet/index.jsx';
 import Trading from './pages/trading/index.jsx';
 import TerminalLayout from './pages/trading/TerminalLayout.jsx';
-import Pamm from './pages/pamm/index.jsx';
-import PammManager from './pages/pamm/PammManager.jsx';
-import PammFundDetail from './pages/pamm/PammFundDetail.jsx';
 import PammAi from './pages/pamm/PammAi.jsx';
+import PammFundDetail from './pages/pamm/PammFundDetail.jsx';
 import CopyHub from './pages/copy/index.jsx';
 import CopyFollowing from './pages/copy/CopyFollowing.jsx';
 import CopyManager from './pages/copy/CopyManager.jsx';
@@ -35,6 +34,7 @@ import AdminBroadcast from './pages/admin/AdminBroadcast.jsx';
 import AdminMarket from './pages/admin/AdminMarket.jsx';
 import AdminLogs from './pages/admin/AdminLogs.jsx';
 import AdminFinancials from './pages/admin/AdminFinancials.jsx';
+import AdminCompanyLedger from './pages/admin/AdminCompanyLedger.jsx';
 import AdminUsers from './pages/admin/AdminUsers.jsx';
 import AdminLiquidity from './pages/admin/AdminLiquidity.jsx';
 import AdminSettings from './pages/admin/AdminSettings.jsx';
@@ -42,7 +42,12 @@ import AdminTradingMonitor from './pages/admin/AdminTradingMonitor.jsx';
 import AdminTraderDetail from './pages/admin/AdminTraderDetail.jsx';
 import AdminAuditLog from './pages/admin/AdminAuditLog.jsx';
 import AdminIbCommission from './pages/admin/AdminIbCommission.jsx';
-import AdminPamm from './pages/admin/AdminPamm.jsx';
+import AdminBullRun from './pages/admin/AdminBullRun.jsx';
+import AdminBulkImport from './pages/admin/AdminBulkImport.jsx';
+import AdminProfitCommissionAdjust from './pages/admin/AdminProfitCommissionAdjust.jsx';
+import AdminAccountsCommandCenter from './pages/admin/AdminAccountsCommandCenter.jsx';
+import AdminFraudDashboard from './pages/admin/AdminFraudDashboard.jsx';
+import AdminAlerts from './pages/admin/AdminAlerts.jsx';
 import GatewayRedirect from './pages/wallet/GatewayRedirect.jsx';
 import ProfileSettings from './pages/settings/ProfileSettings.jsx';
 
@@ -55,6 +60,7 @@ function App() {
           <Route path="/" element={<Landing />} />
           <Route path="/auth" element={<Auth />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
+          <Route path="/auth/verify-email" element={<VerifyEmail />} />
           <Route path="/auth/profile-setup" element={<ProfileSetup />} />
           <Route element={<AccountProvider><FinanceProvider><ProtectedRoute requireAuth><AppLayout /></ProtectedRoute></FinanceProvider></AccountProvider>}>
           <Route path="dashboard" element={<Dashboard />} />
@@ -62,10 +68,8 @@ function App() {
           <Route path="gateway-redirect" element={<GatewayRedirect />} />
           <Route path="trading" element={<TradingSocketProvider><Trading /></TradingSocketProvider>} />
           <Route path="trading/terminal" element={<TradingSocketProvider><TerminalLayout /></TradingSocketProvider>} />
-          <Route path="pamm" element={<Pamm />} />
           <Route path="pamm-ai" element={<PammAi />} />
-          <Route path="pamm/fund/:fundId" element={<PammFundDetail />} />
-          <Route path="pamm/manager" element={<ProtectedRoute allowedRoles={PAMM_MANAGER_ROLES}><PammManager /></ProtectedRoute>} />
+          <Route path="pamm-ai/fund/:fundId" element={<PammFundDetail />} />
           <Route path="copy" element={<CopyHub />} />
           <Route path="copy/following" element={<CopyFollowing />} />
           <Route path="copy/manager" element={<CopyManager />} />
@@ -77,12 +81,15 @@ function App() {
           <Route path="admin" element={<ProtectedRoute requireAuth allowedRoles={ADMIN_ROLES} redirectTo="/dashboard"><AdminLayout /></ProtectedRoute>}>
           <Route index element={<AdminDashboard />} />
           <Route path="financials" element={<AdminFinancials />} />
+          <Route path="financials/ledger" element={<AdminCompanyLedger />} />
           <Route path="trading-monitor" element={<AdminTradingMonitor />} />
           <Route path="trading-monitor/:userId" element={<AdminTraderDetail />} />
           <Route path="users" element={<AdminUsers />} />
+          <Route path="bulk-import" element={<AdminBulkImport />} />
+          <Route path="profit-commission-adjust" element={<AdminProfitCommissionAdjust />} />
           <Route path="ib-commission" element={<AdminIbCommission />} />
           <Route path="audit" element={<AdminAuditLog />} />
-          <Route path="pamm" element={<AdminPamm />} />
+          <Route path="bullrun" element={<AdminBullRun />} />
           <Route path="liquidity" element={<AdminLiquidity />} />
           <Route path="leads" element={<AdminLeads />} />
           <Route path="tickets" element={<AdminTickets />} />
@@ -91,6 +98,9 @@ function App() {
           <Route path="market" element={<AdminMarket />} />
           <Route path="logs" element={<AdminLogs />} />
           <Route path="settings" element={<AdminSettings />} />
+          <Route path="accounts-command-center" element={<AdminAccountsCommandCenter />} />
+          <Route path="fraud-dashboard" element={<AdminFraudDashboard />} />
+          <Route path="alerts" element={<AdminAlerts />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

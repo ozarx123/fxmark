@@ -3,10 +3,15 @@ import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.resolve(__dirname, '../.env') });
+// Load backend/.env first, then root .env overrides (so root wins when both exist)
+const backendEnv = path.resolve(__dirname, '../.env');
+const rootEnv = path.resolve(__dirname, '../../.env');
+dotenv.config({ path: backendEnv });
+dotenv.config({ path: rootEnv, override: true });
 
 console.log('FINNHUB KEY:', process.env.FINNHUB_API_KEY ? 'LOADED' : 'MISSING');
-console.log('[env] loaded from', path.resolve(__dirname, '../.env'));
+const gmailUser = (process.env.GMAIL_USER || '').trim();
+console.log('[env] Gmail:', gmailUser ? `${gmailUser.replace(/(.{2}).*(@.*)/, '$1***$2')} (configured)` : 'NOT SET — verification/notification emails disabled');
 
 import express from 'express';
 import cors from 'cors';
@@ -32,6 +37,7 @@ import {
 import { getDb } from '../config/mongo.js';
 import apiRoutes from '../core/routes.js';
 import middleware from '../core/middleware.js';
+import { startDailyWalletLedgerReconciliation } from '../modules/finance/reconciliation-daily.cron.js';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
@@ -390,4 +396,5 @@ server.listen(PORT, async () => {
   // Priority 3 — REST poller (TP/SL, feed logging, fallback; broadcasts only when both WS offline)
   runQuotePoller();
 
+  startDailyWalletLedgerReconciliation();
 });

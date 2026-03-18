@@ -53,9 +53,11 @@ export default function Ib() {
   const [referrals, setReferrals] = useState([]);
   const [joinings, setJoinings] = useState([]);
   const [commissions, setCommissions] = useState([]);
+  const [pammCommissions, setPammCommissions] = useState([]);
   const [payouts, setPayouts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [pammCommissionsError, setPammCommissionsError] = useState('');
   const [registerModal, setRegisterModal] = useState(false);
   const [registering, setRegistering] = useState(false);
   const [payouting, setPayouting] = useState(false);
@@ -65,7 +67,7 @@ export default function Ib() {
   const referralCode = profile?.referralCode?.trim() || '';
   const referralLink =
     typeof window !== 'undefined' && referralCode
-      ? `${window.location.origin}/auth?ref=${encodeURIComponent(referralCode)}&redirect=${encodeURIComponent('/pamm-ai')}`
+      ? `${window.location.origin}/auth?ref=${encodeURIComponent(referralCode)}&redirect=${encodeURIComponent('/dashboard')}`
       : '';
 
   const handleCopyLink = useCallback(async () => {
@@ -90,14 +92,19 @@ export default function Ib() {
     if (!isAuthenticated) return;
     setLoading(true);
     setError('');
+    setPammCommissionsError('');
     try {
-      const [profRes, balRes, statsRes, refRes, joinRes, commRes, payRes] = await Promise.all([
+      const [profRes, balRes, statsRes, refRes, joinRes, commRes, pammRes, payRes] = await Promise.all([
         ibApi.getMyProfile().catch(() => null),
         ibApi.getBalance().catch(() => null),
         ibApi.getStats().catch(() => null),
         ibApi.listReferrals().catch(() => []),
         ibApi.listReferralJoinings().catch(() => []),
         ibApi.listCommissions().catch(() => []),
+        ibApi.listPammCommissions().catch((e) => {
+          setPammCommissionsError(e?.message || 'Could not load PAMM commission');
+          return [];
+        }),
         ibApi.listPayouts().catch(() => []),
       ]);
       setProfile(profRes);
@@ -106,6 +113,8 @@ export default function Ib() {
       setReferrals(Array.isArray(refRes) ? refRes : []);
       setJoinings(Array.isArray(joinRes) ? joinRes : []);
       setCommissions(Array.isArray(commRes) ? commRes : []);
+      const pammList = Array.isArray(pammRes) ? pammRes : [];
+      setPammCommissions(pammList);
       setPayouts(Array.isArray(payRes) ? payRes : []);
     } catch (e) {
       setError(e.message || 'Failed to load IB data');
@@ -371,6 +380,51 @@ export default function Ib() {
                       <td>{formatCurrency(r.totalCommission, currency)}</td>
                     </tr>
                   ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div className="section-block">
+          <h2>PAMM commission</h2>
+          <p className="muted">Commission from referred clients who invest in PAMM Bull Run (last 30 days). Credited to your wallet when their trades close in profit.</p>
+          {pammCommissionsError && <p className="form-error">{pammCommissionsError}</p>}
+          {pammCommissions.filter((c) => (c.commission_amount ?? 0) > 0).length > 0 && (
+            <div className="card" style={{ marginBottom: '1rem', maxWidth: '16rem' }}>
+              <h3>PAMM total (30d)</h3>
+              <p className="card-value">
+                {formatCurrency(
+                  pammCommissions
+                    .filter((c) => (c.commission_amount ?? 0) > 0)
+                    .reduce((s, c) => s + (c.commission_amount ?? 0), 0),
+                  currency
+                )}
+              </p>
+            </div>
+          )}
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Level</th>
+                  <th>Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pammCommissions.filter((c) => (c.commission_amount ?? 0) > 0).length === 0 ? (
+                  <tr><td colSpan={3} className="empty-cell">{pammCommissionsError ? '—' : 'No PAMM commission yet'}</td></tr>
+                ) : (
+                  pammCommissions
+                    .filter((c) => (c.commission_amount ?? 0) > 0)
+                    .slice(0, 50)
+                    .map((c) => (
+                      <tr key={c.id}>
+                        <td>{formatDate(c.created_at)}</td>
+                        <td>L{c.level_number ?? '—'}</td>
+                        <td>{formatCurrency(c.commission_amount, currency)}</td>
+                      </tr>
+                    ))
                 )}
               </tbody>
             </table>

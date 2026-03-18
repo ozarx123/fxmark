@@ -28,6 +28,18 @@ export default function ProfileSettings() {
   const [kycLoading, setKycLoading] = useState(false);
   const [kycSubmitLoading, setKycSubmitLoading] = useState(false);
 
+  const [mainPasswordCurrent, setMainPasswordCurrent] = useState('');
+  const [mainPasswordNew, setMainPasswordNew] = useState('');
+  const [mainPasswordConfirm, setMainPasswordConfirm] = useState('');
+  const [mainPasswordLoading, setMainPasswordLoading] = useState(false);
+  const [mainPasswordMessage, setMainPasswordMessage] = useState({ type: '', text: '' });
+
+  const [investorPasswordCurrent, setInvestorPasswordCurrent] = useState('');
+  const [investorPasswordNew, setInvestorPasswordNew] = useState('');
+  const [investorPasswordConfirm, setInvestorPasswordConfirm] = useState('');
+  const [investorPasswordLoading, setInvestorPasswordLoading] = useState(false);
+  const [investorPasswordMessage, setInvestorPasswordMessage] = useState({ type: '', text: '' });
+
   useEffect(() => {
     if (user) {
       setName(user.name || '');
@@ -110,6 +122,74 @@ export default function ProfileSettings() {
       setError(err.message);
     } finally {
       setKycSubmitLoading(false);
+    }
+  };
+
+  const handleChangeMainPassword = async (e) => {
+    e.preventDefault();
+    setMainPasswordMessage({ type: '', text: '' });
+    if (mainPasswordNew !== mainPasswordConfirm) {
+      setMainPasswordMessage({ type: 'error', text: 'New password and confirmation do not match.' });
+      return;
+    }
+    if (mainPasswordNew.length < 6) {
+      setMainPasswordMessage({ type: 'error', text: 'New password must be at least 6 characters.' });
+      return;
+    }
+    setMainPasswordLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/auth/change-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+        body: JSON.stringify({ currentPassword: mainPasswordCurrent, newPassword: mainPasswordNew }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setMainPasswordMessage({ type: 'success', text: 'Main password updated successfully.' });
+        setMainPasswordCurrent('');
+        setMainPasswordNew('');
+        setMainPasswordConfirm('');
+      } else {
+        setMainPasswordMessage({ type: 'error', text: data.error || data.message || 'Failed to change password.' });
+      }
+    } catch (err) {
+      setMainPasswordMessage({ type: 'error', text: err.message || 'Request failed.' });
+    } finally {
+      setMainPasswordLoading(false);
+    }
+  };
+
+  const handleChangeInvestorPassword = async (e) => {
+    e.preventDefault();
+    setInvestorPasswordMessage({ type: '', text: '' });
+    if (investorPasswordNew !== investorPasswordConfirm) {
+      setInvestorPasswordMessage({ type: 'error', text: 'New password and confirmation do not match.' });
+      return;
+    }
+    if (investorPasswordNew.length < 6) {
+      setInvestorPasswordMessage({ type: 'error', text: 'New password must be at least 6 characters.' });
+      return;
+    }
+    setInvestorPasswordLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/auth/change-investor-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+        body: JSON.stringify({ currentInvestorPassword: investorPasswordCurrent, newInvestorPassword: investorPasswordNew }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setInvestorPasswordMessage({ type: 'success', text: 'Investor password updated successfully.' });
+        setInvestorPasswordCurrent('');
+        setInvestorPasswordNew('');
+        setInvestorPasswordConfirm('');
+      } else {
+        setInvestorPasswordMessage({ type: 'error', text: data.error || data.message || 'Failed to change investor password.' });
+      }
+    } catch (err) {
+      setInvestorPasswordMessage({ type: 'error', text: err.message || 'Request failed.' });
+    } finally {
+      setInvestorPasswordLoading(false);
     }
   };
 
@@ -210,6 +290,60 @@ export default function ProfileSettings() {
               {loading ? 'Saving…' : 'Save changes'}
             </button>
           </form>
+
+          <div className="section-block password-block" style={{ marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border-color, #e5e7eb)' }}>
+            <h2 className="text-lg font-semibold mb-3">Password settings</h2>
+            <p className="muted" style={{ marginBottom: '1rem', fontSize: '0.875rem' }}>Change your main login password or your investor (trader) password.</p>
+
+            <form onSubmit={handleChangeMainPassword} style={{ marginBottom: '1.5rem' }}>
+              <h3 className="text-base font-medium mb-2">Change main password</h3>
+              <div className="profile-settings-grid" style={{ maxWidth: '28rem' }}>
+                <label className="profile-settings-label">
+                  Current password
+                  <input type="password" value={mainPasswordCurrent} onChange={(e) => setMainPasswordCurrent(e.target.value)} className="profile-settings-input" placeholder="••••••••" autoComplete="current-password" required />
+                </label>
+                <label className="profile-settings-label">
+                  New password
+                  <input type="password" value={mainPasswordNew} onChange={(e) => setMainPasswordNew(e.target.value)} className="profile-settings-input" placeholder="••••••••" autoComplete="new-password" minLength={6} required />
+                </label>
+                <label className="profile-settings-label">
+                  Confirm new password
+                  <input type="password" value={mainPasswordConfirm} onChange={(e) => setMainPasswordConfirm(e.target.value)} className="profile-settings-input" placeholder="••••••••" autoComplete="new-password" minLength={6} required />
+                </label>
+              </div>
+              {mainPasswordMessage.text && (
+                <p className={mainPasswordMessage.type === 'error' ? 'profile-settings-error' : 'profile-settings-success'} style={{ marginTop: '0.5rem', marginBottom: '0.5rem' }}>{mainPasswordMessage.text}</p>
+              )}
+              <button type="submit" className="btn btn-primary btn-sm" disabled={mainPasswordLoading}>
+                {mainPasswordLoading ? 'Updating…' : 'Update main password'}
+              </button>
+            </form>
+
+            <form onSubmit={handleChangeInvestorPassword}>
+              <h3 className="text-base font-medium mb-2">Change investor password</h3>
+              <p className="muted" style={{ marginBottom: '0.75rem', fontSize: '0.8125rem' }}>Used for trader/assistant access to your account.</p>
+              <div className="profile-settings-grid" style={{ maxWidth: '28rem' }}>
+                <label className="profile-settings-label">
+                  Current investor password
+                  <input type="password" value={investorPasswordCurrent} onChange={(e) => setInvestorPasswordCurrent(e.target.value)} className="profile-settings-input" placeholder="••••••••" autoComplete="current-password" required />
+                </label>
+                <label className="profile-settings-label">
+                  New investor password
+                  <input type="password" value={investorPasswordNew} onChange={(e) => setInvestorPasswordNew(e.target.value)} className="profile-settings-input" placeholder="••••••••" autoComplete="new-password" minLength={6} required />
+                </label>
+                <label className="profile-settings-label">
+                  Confirm new investor password
+                  <input type="password" value={investorPasswordConfirm} onChange={(e) => setInvestorPasswordConfirm(e.target.value)} className="profile-settings-input" placeholder="••••••••" autoComplete="new-password" minLength={6} required />
+                </label>
+              </div>
+              {investorPasswordMessage.text && (
+                <p className={investorPasswordMessage.type === 'error' ? 'profile-settings-error' : 'profile-settings-success'} style={{ marginTop: '0.5rem', marginBottom: '0.5rem' }}>{investorPasswordMessage.text}</p>
+              )}
+              <button type="submit" className="btn btn-primary btn-sm" disabled={investorPasswordLoading}>
+                {investorPasswordLoading ? 'Updating…' : 'Update investor password'}
+              </button>
+            </form>
+          </div>
 
           <div className="section-block kyc-block" style={{ marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border-color, #e5e7eb)' }}>
             <h2 className="text-lg font-semibold mb-3">KYC status</h2>

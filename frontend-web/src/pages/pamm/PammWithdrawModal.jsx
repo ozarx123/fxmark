@@ -2,62 +2,58 @@ import React, { useState } from 'react';
 
 export default function PammWithdrawModal({ allocationId, managerName, maxAmount, onConfirm, onClose }) {
   const [amount, setAmount] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
-  const max = Number(maxAmount || 0);
+  const max = Number(maxAmount) || 0;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const val = parseFloat(amount) || 0;
-    if (val <= 0) {
-      setError('Enter a valid amount');
+    const num = Number(amount);
+    if (!Number.isFinite(num) || num < 0.01) {
+      setError('Enter a valid amount.');
       return;
     }
-    if (val > max) {
-      setError(`Maximum: $${max.toLocaleString()}`);
+    if (num > max) {
+      setError(`Maximum withdrawable: $${max.toFixed(2)}`);
       return;
     }
-    setLoading(true);
     setError('');
+    setSubmitting(true);
     try {
-      await onConfirm(allocationId, val);
+      await onConfirm(allocationId, num);
       onClose();
     } catch (err) {
       setError(err.message || 'Failed to withdraw');
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h2>Withdraw — {managerName}</h2>
-          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">&times;</button>
-        </div>
+    <div className="modal-overlay bullrun-modal" onClick={onClose}>
+      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+        <h3>Withdraw — {managerName}</h3>
+        <p className="muted">Withdrawal is sent to your Live Trading Account. Max: ${max.toFixed(2)}.</p>
         <form onSubmit={handleSubmit}>
-          <p className="muted" style={{ marginBottom: '1rem' }}>Available: ${max.toLocaleString()}</p>
-          <label>
-            <span className="form-label">Amount to withdraw (USD)</span>
+          <div className="filter-group">
+            <label>Amount (USD)</label>
             <input
               type="number"
-              min={1}
+              min="0.01"
               max={max}
-              step={100}
+              step="0.01"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
-              className="form-input"
-              placeholder={`Max ${max}`}
-              disabled={loading}
+              className="filter-input"
+              placeholder={`Max ${max.toFixed(2)}`}
             />
-          </label>
+          </div>
           {error && <p className="form-error">{error}</p>}
           <div className="modal-actions">
-            <button type="button" className="btn btn-secondary" onClick={onClose} disabled={loading}>Cancel</button>
-            <button type="submit" className="btn btn-primary" disabled={loading}>
-              {loading ? 'Processing…' : 'Withdraw'}
+            <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+            <button type="submit" className="btn btn-primary" disabled={submitting}>
+              {submitting ? 'Submitting…' : 'Withdraw'}
             </button>
           </div>
         </form>

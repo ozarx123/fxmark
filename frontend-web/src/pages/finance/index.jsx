@@ -222,7 +222,7 @@ export default function Finance() {
 
       <section className="page-content">
         {(error || orderError) && <p className="form-error">{error || orderError}</p>}
-        {hasDiscrepancy && (
+        {hasDiscrepancy && activeAccount?.type === 'live' && (
           <div className="alert alert-warning">
             Reconciliation mismatch: Wallet {formatCurrency(reconciliation.walletBalance)} vs Ledger {formatCurrency(reconciliation.ledgerBalance)}. <Link to="/wallet">Wallet</Link>
           </div>
@@ -231,8 +231,17 @@ export default function Finance() {
         <div className="finance-summary-cards">
           <div className="card card-highlight">
             <h3>Trade account equity</h3>
-            <p className="card-value">{loading ? '…' : formatCurrency(walletBalance)}</p>
-            <p className="card-label muted" style={{ marginTop: '0.25rem', fontSize: '0.85rem' }}>Available balance · same as Trading & Wallet</p>
+            {activeAccount?.type === 'live' ? (
+              <>
+                <p className="card-value">{loading ? '…' : formatCurrency(walletBalance)}</p>
+                <p className="card-label muted" style={{ marginTop: '0.25rem', fontSize: '0.85rem' }}>Available balance · same as Trading & Wallet</p>
+              </>
+            ) : (
+              <>
+                <p className="card-value">—</p>
+                <p className="card-label muted" style={{ marginTop: '0.25rem', fontSize: '0.85rem' }}>Wallet balance only shown for Live account</p>
+              </>
+            )}
             <div className="card-actions">
               <Link to="/wallet" className="btn btn-sm btn-primary">Manage</Link>
             </div>

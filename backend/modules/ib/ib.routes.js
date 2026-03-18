@@ -14,6 +14,7 @@ router.patch('/profile', controller.updateProfile);
 router.get('/balance', controller.getBalance);
 router.get('/stats', controller.getStats);
 router.get('/commissions', controller.listCommissions);
+router.get('/pamm-commissions', controller.listPammCommissions);
 router.get('/payouts', controller.listPayouts);
 router.get('/referrals', controller.listReferrals);
 router.get('/referrals/joinings', controller.listReferralJoinings);
