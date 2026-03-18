@@ -31,6 +31,99 @@ function mergePositionWithPrice(pos, ticks) {
   };
 }
 
+function PositionCard({ position, onClose, onPartialClose, onModifySLTP, isClosing }) {
+  const [showPartial, setShowPartial] = useState(false);
+  const [partialVol, setPartialVol] = useState('');
+  const [showModify, setShowModify] = useState(false);
+  const [modifySL, setModifySL] = useState('');
+  const [modifyTP, setModifyTP] = useState('');
+  const symbol = position.symbol ?? '';
+  const isGold = symbol.includes('XAU');
+  const fmt = (p) => (p != null && Number.isFinite(p) ? Number(p).toFixed(isGold ? 2 : 4) : '—');
+  const side = position.side || position.type || 'BUY';
+  const vol = position.volume ?? position.lots ?? 0;
+  const openPrice = position.openPrice ?? position.open_price ?? 0;
+  const pnl = position.floatingPnL ?? position.floating_pnl ?? position.pnl ?? 0;
+  const profit = (pnl ?? 0) >= 0;
+  const sl = position.sl ?? position.sl_price ?? position.stopLoss;
+  const tp = position.tp ?? position.tp_price ?? position.takeProfit;
+  const handlePartial = () => {
+    const v = parseFloat(partialVol);
+    if (Number.isFinite(v) && v > 0 && v < vol && position.id) {
+      onPartialClose?.(position.id, v);
+      setPartialVol('');
+      setShowPartial(false);
+    }
+  };
+  const openModify = () => {
+    setModifySL(sl != null ? String(sl) : '');
+    setModifyTP(tp != null ? String(tp) : '');
+    setShowModify(true);
+  };
+  const handleModify = () => {
+    if (!position.id || !onModifySLTP) return;
+    const newSL = modifySL.trim() === '' ? null : parseFloat(modifySL);
+    const newTP = modifyTP.trim() === '' ? null : parseFloat(modifyTP);
+    if (newSL !== null && !Number.isFinite(newSL)) return;
+    if (newTP !== null && !Number.isFinite(newTP)) return;
+    onModifySLTP(position.id, { stopLoss: newSL ?? undefined, takeProfit: newTP ?? undefined });
+    setShowModify(false);
+  };
+  return (
+    <li className="position-card">
+      <div className="position-card__row position-card__header">
+        <span className="position-card__symbol">{symbol}</span>
+        <span className={`position-card__side position-card__side--${side.toLowerCase()}`}>{side}</span>
+      </div>
+      <div className="position-card__row">
+        <span className="position-card__label">Lot</span>
+        <span className="position-card__value">{Number(vol).toFixed(2)}</span>
+      </div>
+      <div className="position-card__row">
+        <span className="position-card__label">Entry</span>
+        <span className="position-card__value">{fmt(openPrice)}</span>
+      </div>
+      <div className="position-card__row">
+        <span className="position-card__label">PnL</span>
+        <span className={`position-card__pnl position-card__pnl--${profit ? 'profit' : 'loss'}`}>
+          {profit ? '+' : ''}{Number(pnl ?? 0).toFixed(2)}
+        </span>
+      </div>
+      {showPartial && (
+        <div className="position-card__partial">
+          <input
+            type="number"
+            step={0.01}
+            min={0}
+            max={vol}
+            value={partialVol}
+            onChange={(e) => setPartialVol(e.target.value)}
+            placeholder="Volume"
+            className="position-card__input"
+          />
+          <button type="button" className="position-card__btn position-card__btn--primary" onClick={handlePartial}>Close partial</button>
+          <button type="button" className="position-card__btn" onClick={() => setShowPartial(false)}>Cancel</button>
+        </div>
+      )}
+      {showModify && (
+        <div className="position-card__partial">
+          <input type="number" step={isGold ? 0.01 : 0.0001} placeholder="SL" value={modifySL} onChange={(e) => setModifySL(e.target.value)} className="position-card__input" />
+          <input type="number" step={isGold ? 0.01 : 0.0001} placeholder="TP" value={modifyTP} onChange={(e) => setModifyTP(e.target.value)} className="position-card__input" />
+          <button type="button" className="position-card__btn position-card__btn--primary" onClick={handleModify}>Save</button>
+          <button type="button" className="position-card__btn" onClick={() => setShowModify(false)}>Cancel</button>
+        </div>
+      )}
+      <div className="position-card__actions">
+        <button type="button" className="position-card__btn position-card__btn--sell" onClick={() => position.id && onClose?.(position.id)} disabled={isClosing}>
+          Close
+        </button>
+        <button type="button" className="position-card__btn" onClick={() => setShowPartial(true)}>Partial</button>
+        <button type="button" className="position-card__btn" onClick={openModify}>SL/TP</button>
+      </div>
+    </li>
+  );
+}
+
 export default function PositionsPanel({
   accountId,
   accountNumber,
@@ -40,6 +133,7 @@ export default function PositionsPanel({
   filterSymbol = '',
   sortBy = 'symbol',
   sortDir = 'asc',
+  mobileCards = false,
   className = '',
 }) {
   const [internalPositions, setInternalPositions] = useState([]);
@@ -173,6 +267,33 @@ export default function PositionsPanel({
       setError(e.message);
     }
   };
+
+  if (mobileCards) {
+    return (
+      <div className={`terminal-positions-panel terminal-positions-panel--mobile-cards ${className}`}>
+        {loading ? (
+          <p className="terminal-positions-panel__empty">Loading…</p>
+        ) : error ? (
+          <p className="terminal-positions-panel__error">{error}</p>
+        ) : filteredAndSorted.length === 0 ? (
+          <p className="terminal-positions-panel__empty">No open positions</p>
+        ) : (
+          <ul className="terminal-positions-panel__cards">
+            {filteredAndSorted.map((pos) => (
+              <PositionCard
+                key={pos.id}
+                position={pos}
+                onClose={handleClose}
+                onPartialClose={handlePartialClose}
+                onModifySLTP={handleModifySLTP}
+                isClosing={closingId === pos.id}
+              />
+            ))}
+          </ul>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className={`terminal-positions-panel ${className}`}>

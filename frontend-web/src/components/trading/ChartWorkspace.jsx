@@ -40,6 +40,7 @@ export default function ChartWorkspace({
   onDrawingsChange,
   onAddPriceAlert,
   onBreakout,
+  compactMobile = false,
   className = '',
 }) {
   const timeframe = controlledTimeframe ?? '1m';
@@ -175,7 +176,8 @@ export default function ChartWorkspace({
           )}
         </div>
       </div>
-      {onIndicatorsChange && (
+      )}
+      {!compactMobile && onIndicatorsChange && (
         <div className="terminal-chart-workspace__indicators">
           <label className="terminal-chart-workspace__indicator">
             <input
@@ -244,7 +246,7 @@ export default function ChartWorkspace({
           </label>
         </div>
       )}
-      {onDrawingsChange && (
+      {!compactMobile && onDrawingsChange && (
         <div className="terminal-chart-workspace__drawings">
           <span className="terminal-chart-workspace__drawings-label">Draw:</span>
           <button type="button" className="terminal-chart-workspace__draw-btn" title="Horizontal line at current price" onClick={() => addDrawing('horizontal')}>
@@ -309,7 +311,8 @@ export default function ChartWorkspace({
         <button type="button" className="terminal-chart-workspace__util-btn" title="Zoom out" onClick={zoomOut}>−</button>
         <button type="button" className="terminal-chart-workspace__util-btn" title="Reset chart" onClick={resetChart}>Reset</button>
       </div>
-      {symbolPositions.length > 0 && (
+      )}
+      {!compactMobile && symbolPositions.length > 0 && (
         <div className="chart-position-chips">
           {symbolPositions.map((p) => {
             const side = (p.side || p.type || 'BUY').toUpperCase();

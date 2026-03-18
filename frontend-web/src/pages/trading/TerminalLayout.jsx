@@ -4,6 +4,7 @@ import { useMarketData } from '../../hooks/useMarketData';
 import { useMarketDataContext } from '../../context/MarketDataContext';
 import { useTradingSocket } from '../../services/tradingSocket';
 import { useTradeNotifications } from '../../hooks/useTradeNotifications';
+import { useIsMobile } from '../../hooks/useMediaQuery';
 import { getDatafeedSocket } from '../../lib/datafeedSocket';
 import * as tradingApi from '../../api/tradingApi';
 import { computeFloatingPnL, getPriceDifference } from '../../lib/positionPnL';
@@ -16,6 +17,7 @@ import RiskRadar from '../../components/trading/RiskRadar';
 import TradeAssistantPanel from '../../components/trading/TradeAssistantPanel';
 import TerminalTabs from '../../components/trading/TerminalTabs';
 import ToastList from '../../components/trading/ToastList';
+import MobileTerminalView from '../../components/trading/MobileTerminalView';
 
 const SYMBOLS = [
   { value: 'XAU/USD', label: 'XAU/USD (Gold)' },
@@ -473,6 +475,100 @@ export default function TerminalLayout() {
   const formatPrice = (p) => (p != null && Number.isFinite(Number(p)))
     ? (symbol?.includes('XAU') ? Number(p).toFixed(2) : Number(p).toFixed(4))
     : '—';
+
+  const handlePlaceOrder = useCallback(
+    async ({ side, volume: vol, stopLoss, takeProfit }) => {
+      if (!accountId && !accountNumber) {
+        setOrderError('Select a trading account first.');
+        return;
+      }
+      const volumeNum = Number(vol);
+      if (!Number.isFinite(volumeNum) || volumeNum <= 0) {
+        setOrderError('Invalid volume');
+        return;
+      }
+      if (!marketPrice || !Number.isFinite(Number(marketPrice))) {
+        setOrderError('Market price not available.');
+        return;
+      }
+      setOrderError(null);
+      try {
+        await tradingApi.placeOrder(
+          {
+            symbol: symbol.replace(/\//g, ''),
+            side: side === 'buy' ? 'buy' : 'sell',
+            type: side === 'buy' ? 'MARKET_BUY' : 'MARKET_SELL',
+            marketOrder: true,
+            volume: volumeNum,
+            lots: volumeNum,
+            price: marketPrice,
+            stopLoss: stopLoss != null && Number.isFinite(stopLoss) ? stopLoss : undefined,
+            takeProfit: takeProfit != null && Number.isFinite(takeProfit) ? takeProfit : undefined,
+          },
+          { accountId, accountNumber },
+        );
+        loadTradingData();
+      } catch (e) {
+        throw e;
+      }
+    },
+    [accountId, accountNumber, symbol, marketPrice, loadTradingData],
+  );
+
+  const isMobile = useIsMobile();
+  if (isMobile) {
+    return (
+      <>
+        <MobileTerminalView
+          symbol={symbol}
+          setSymbol={setSymbol}
+          symbols={SYMBOLS}
+          marketPrice={marketPrice}
+          volume={volume}
+          setVolume={setVolume}
+          chartSlot={chartSlots[0]}
+          setChartSlot={(updates) => setChartSlot(0, updates)}
+          chartType={chartType}
+          setChartType={setChartType}
+          positions={positions}
+          positionsWithPnl={positionsWithPnl}
+          orders={orders}
+          history={history}
+          pendingOrders={pendingOrders}
+          accountId={accountId}
+          accountNumber={accountNumber}
+          summary={summary}
+          onClosePosition={handleClosePositionFromChart}
+          onPartialClose={async (positionId, vol) => {
+            const pos = positions.find((p) => p.id === positionId);
+            const key = pos ? String(pos.symbol || '').replace(/\//g, '').toUpperCase() : '';
+            const tick = key ? ticks?.[key] : null;
+            const closePrice = tick?.close ?? tick?.price ?? pos?.currentPrice ?? pos?.openPrice;
+            try {
+              await tradingApi.closePosition(positionId, vol, closePrice, { accountId, accountNumber });
+              loadTradingData();
+            } catch (e) {
+              setOrderError(e?.message ?? 'Failed');
+            }
+          }}
+          onModifySLTP={handleModifySLTPFromChart}
+          onBreakEven={handleBreakEvenFromChart}
+          onPlaceOrder={handlePlaceOrder}
+          onRefresh={refreshTradingAndWallet}
+          addToast={addToast}
+          orderError={orderError}
+          setOrderError={setOrderError}
+          marketConnected={marketConnected}
+          tradingConnected={tradingConnected}
+          addPriceAlert={addPriceAlert}
+          alerts={alerts}
+          onRemoveAlert={removeAlert}
+          quickOrderLoading={quickOrderLoading}
+        />
+        <ToastList toasts={toasts} onDismiss={dismissToast} autoDismissMs={5000} />
+      </>
+    );
+  }
 
   return (
     <div className="terminal-layout">
