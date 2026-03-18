@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import ChartWorkspace from './ChartWorkspace';
 import OrderBottomSheet from './OrderBottomSheet';
 import RiskSectionMobile from './RiskSectionMobile';
@@ -62,6 +62,15 @@ export default function MobileTerminalView({
   const [orderSheetSide, setOrderSheetSide] = useState('buy');
   const [chartFullscreen, setChartFullscreen] = useState(false);
   const [showSymbolPicker, setShowSymbolPicker] = useState(false);
+  const [chartHeight, setChartHeight] = useState(() =>
+    typeof window !== 'undefined' ? Math.max(280, Math.round(window.innerHeight * 0.65)) : 400
+  );
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onResize = () => setChartHeight(Math.max(280, Math.round(window.innerHeight * 0.65)));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   const formatPrice = (p) =>
     p != null && Number.isFinite(Number(p))
@@ -160,6 +169,7 @@ export default function MobileTerminalView({
           </button>
         </div>
         <div className="mobile-terminal__chart-wrap">
+          <div className="chart-container">
           <ChartWorkspace
             symbol={chartSlot?.symbol ?? symbol}
             onSymbolChange={(s) => { setSymbol(s); setChartSlot({ symbol: s }); }}
@@ -168,7 +178,7 @@ export default function MobileTerminalView({
             onTimeframeChange={(tf) => setChartSlot({ timeframe: tf })}
             chartType={chartType}
             onChartTypeChange={setChartType}
-            height={320}
+            height={chartHeight}
             positions={positionsWithPnl}
             pendingOrders={pendingOrders}
             onClosePosition={onClosePosition}
@@ -183,6 +193,7 @@ export default function MobileTerminalView({
             compactMobile
             className="mobile-terminal__chart-workspace"
           />
+          </div>
         </div>
         <RiskSectionMobile
           equity={equity}
