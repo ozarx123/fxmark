@@ -1,59 +1,52 @@
 import React, { useState } from 'react';
-import { ProfileAvatar } from '../../components/ui';
 
 export default function PammFollowModal({ managerName, managerId, onConfirm, onClose }) {
   const [amount, setAmount] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const val = parseFloat(amount) || 0;
-    if (val <= 0) {
-      setError('Enter a valid amount');
+    const num = Number(amount);
+    if (!Number.isFinite(num) || num < 1) {
+      setError('Enter a valid amount (min 1 USD).');
       return;
     }
-    setLoading(true);
     setError('');
+    setSubmitting(true);
     try {
-      await onConfirm(managerId, val);
+      await onConfirm(managerId, num);
       onClose();
     } catch (err) {
       setError(err.message || 'Failed to follow');
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <div className="modal-header-with-avatar">
-            <ProfileAvatar name={managerName} size={48} verified />
-            <h2>Follow {managerName}</h2>
-          </div>
-          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">&times;</button>
-        </div>
+    <div className="modal-overlay bullrun-modal" onClick={onClose}>
+      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+        <h3>Follow {managerName}</h3>
+        <p className="muted">Allocate from your Live Trading Account to this fund.</p>
         <form onSubmit={handleSubmit}>
-          <label>
-            <span className="form-label">Amount to allocate (USD)</span>
+          <div className="filter-group">
+            <label>Amount (USD)</label>
             <input
               type="number"
-              min={1}
-              step={100}
+              min="1"
+              step="1"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
-              className="form-input"
+              className="filter-input"
               placeholder="e.g. 1000"
-              disabled={loading}
             />
-          </label>
+          </div>
           {error && <p className="form-error">{error}</p>}
           <div className="modal-actions">
-            <button type="button" className="btn btn-secondary" onClick={onClose} disabled={loading}>Cancel</button>
-            <button type="submit" className="btn btn-primary" disabled={loading}>
-              {loading ? 'Following…' : 'Follow'}
+            <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+            <button type="submit" className="btn btn-primary" disabled={submitting}>
+              {submitting ? 'Submitting…' : 'Follow'}
             </button>
           </div>
         </form>

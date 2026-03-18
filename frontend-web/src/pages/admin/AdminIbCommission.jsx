@@ -4,10 +4,13 @@ import {
   getIbCommissions,
   getIbSettings,
   updateIbSettings,
+  getPammIbCommissionSettings,
+  updatePammIbCommissionSettings,
   processIbPayout,
 } from '../../api/adminApi';
 
 const DEFAULT_RATES = { 1: 7, 2: 5, 3: 3, 4: 2, 5: 1 };
+const PAMM_DEFAULTS = { 1: { daily_payout_percent: 0.25, status: 'enabled' }, 2: { daily_payout_percent: 0.15, status: 'enabled' }, 3: { daily_payout_percent: 0.10, status: 'enabled' } };
 const formatCurrency = (n) =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(Number(n));
 
@@ -15,9 +18,11 @@ export default function AdminIbCommission() {
   const [wallets, setWallets] = useState([]);
   const [ledger, setLedger] = useState([]);
   const [settings, setSettings] = useState({ ratePerLotByLevel: DEFAULT_RATES });
+  const [pammSettings, setPammSettings] = useState(null);
   const [statusFilter, setStatusFilter] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [pammSaving, setPammSaving] = useState(false);
   const [error, setError] = useState('');
   const [payoutLoading, setPayoutLoading] = useState(null);
 
@@ -25,14 +30,16 @@ export default function AdminIbCommission() {
     setError('');
     setLoading(true);
     try {
-      const [walletsRes, commissionsRes, settingsRes] = await Promise.all([
+      const [walletsRes, commissionsRes, settingsRes, pammRes] = await Promise.all([
         getIbWallets(),
         getIbCommissions({ limit: 200 }),
         getIbSettings(),
+        getPammIbCommissionSettings().catch(() => null),
       ]);
       setWallets(Array.isArray(walletsRes) ? walletsRes : []);
       setLedger(Array.isArray(commissionsRes) ? commissionsRes : []);
       setSettings(settingsRes?.ratePerLotByLevel ? { ratePerLotByLevel: settingsRes.ratePerLotByLevel } : { ratePerLotByLevel: DEFAULT_RATES });
+      setPammSettings(pammRes?.levels ? { levels: pammRes.levels } : null);
     } catch (e) {
       setError(e.message || 'Failed to load data');
       setWallets([]);
@@ -81,6 +88,37 @@ export default function AdminIbCommission() {
         [level]: v,
       },
     }));
+  };
+
+  const setPammLevelPercent = (level, value) => {
+    const v = value === '' ? '' : Number(value);
+    setPammSettings((prev) => {
+      const levels = { ...(prev?.levels || PAMM_DEFAULTS) };
+      levels[level] = { ...(levels[level] || PAMM_DEFAULTS[level]), daily_payout_percent: v };
+      return { levels };
+    });
+  };
+
+  const setPammLevelStatus = (level, status) => {
+    setPammSettings((prev) => {
+      const levels = { ...(prev?.levels || PAMM_DEFAULTS) };
+      levels[level] = { ...(levels[level] || PAMM_DEFAULTS[level]), status: status === 'disabled' ? 'disabled' : 'enabled' };
+      return { levels };
+    });
+  };
+
+  const handleSavePammRates = async () => {
+    if (!pammSettings?.levels) return;
+    setPammSaving(true);
+    setError('');
+    try {
+      await updatePammIbCommissionSettings(pammSettings.levels);
+      await loadData();
+    } catch (e) {
+      setError(e.message || 'Failed to save PAMM commission settings');
+    } finally {
+      setPammSaving(false);
+    }
   };
 
   const filteredLedger = statusFilter
@@ -134,6 +172,53 @@ export default function AdminIbCommission() {
           </div>
         </div>
       </section>
+
+      {/* Super Admin: PAMM Bull Run investor IB commission (levels 1–3, % of active capital) */}
+      {pammSettings && (
+        <section className="admin-section-block">
+          <h2 className="section-title">PAMM Investor Commission (Bull Run)</h2>
+          <p className="muted" style={{ marginBottom: '0.75rem' }}>
+            Max daily payout % of active investor capital. Level 1 = direct referrer, 2 = parent IB, 3 = grandparent. Commission runs when a Bull Run trade closes.
+          </p>
+          <div className="settings-card">
+            <div className="filter-group" style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'center' }}>
+              {[1, 2, 3].map((level) => {
+                const cfg = pammSettings.levels?.[level] || PAMM_DEFAULTS[level];
+                const percent = cfg?.daily_payout_percent ?? PAMM_DEFAULTS[level].daily_payout_percent;
+                const status = cfg?.status === 'disabled' ? 'disabled' : 'enabled';
+                return (
+                  <div key={level} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <span>Level {level}:</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={0.01}
+                      value={percent === '' ? '' : percent}
+                      onChange={(e) => setPammLevelPercent(level, e.target.value)}
+                      className="filter-input"
+                      style={{ width: '4.5rem' }}
+                    />
+                    <span className="muted">%</span>
+                    <button
+                      type="button"
+                      className={`btn ${status === 'enabled' ? 'btn-secondary' : 'btn-primary'}`}
+                      onClick={() => setPammLevelStatus(level, status === 'enabled' ? 'disabled' : 'enabled')}
+                    >
+                      {status === 'enabled' ? 'Disable' : 'Enable'}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ marginTop: '1rem' }}>
+              <button type="button" className="btn btn-primary" onClick={handleSavePammRates} disabled={pammSaving}>
+                {pammSaving ? 'Saving…' : 'Save PAMM commission'}
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
 
       {loading ? (
         <p className="muted">Loading…</p>

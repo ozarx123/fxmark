@@ -1,6 +1,7 @@
 /**
  * Position repository — MongoDB positions collection
  */
+import { randomUUID } from 'crypto';
 import { getDb } from '../../config/mongo.js';
 import { ObjectId } from 'mongodb';
 
@@ -113,4 +114,212 @@ async function update(id, userId, update, accountId = null) {
   return result ? { id: result._id.toString(), ...result, _id: undefined } : null;
 }
 
-export default { create, findById, listOpen, listClosed, listTopUsersByOpenPositions, listOpenBySymbolWithTPLS, update };
+function userIdOrMatch(userId) {
+  const uid = String(userId);
+  return ObjectId.isValid(uid) && uid.length === 24
+    ? [{ userId: uid }, { userId: new ObjectId(uid) }]
+    : [{ userId: uid }];
+}
+
+/** After this many ms in "processing", another run may reclaim (crash). Set > max distribution duration to avoid overlap. */
+const DEFAULT_PAMM_DIST_STALE_MS = 600000;
+
+/**
+ * Atomically start or reclaim a PAMM distribution run.
+ * - completed / legacy pammDistributionProcessed → cannot start
+ * - processing + fresh heartbeat → concurrent run blocked (multi-instance safe)
+ * - processing + stale heartbeat (or legacy no-heartbeat + stale startedAt) → reclaim
+ * - idle/failed/missing status → claim with new ownerId
+ * @returns {{ started: boolean, ownerId?: string, reason: string }}
+ */
+async function tryStartPammDistribution(positionId, userId) {
+  if (!ObjectId.isValid(positionId) || userId == null) {
+    return { started: false, reason: 'invalid_args' };
+  }
+  const staleMs = Math.max(
+    60_000,
+    parseInt(process.env.PAMM_DISTRIBUTION_STALE_MS || String(DEFAULT_PAMM_DIST_STALE_MS), 10) || DEFAULT_PAMM_DIST_STALE_MS
+  );
+  const staleBefore = new Date(Date.now() - staleMs);
+  const ownerId = randomUUID();
+  const now = new Date();
+  const c = await col();
+  const userOr = userIdOrMatch(userId);
+
+  const processingStale = {
+    pammDistributionStatus: 'processing',
+    $or: [
+      { pammDistributionHeartbeatAt: { $lt: staleBefore } },
+      {
+        $and: [
+          {
+            $or: [
+              { pammDistributionHeartbeatAt: { $exists: false } },
+              { pammDistributionHeartbeatAt: null },
+            ],
+          },
+          { pammDistributionStartedAt: { $lt: staleBefore } },
+        ],
+      },
+    ],
+  };
+
+  const updated = await c.findOneAndUpdate(
+    {
+      _id: new ObjectId(positionId),
+      $and: [
+        { $or: userOr },
+        {
+          $nor: [{ pammDistributionStatus: 'completed' }, { pammDistributionProcessed: true }],
+        },
+        {
+          $or: [
+            { pammDistributionStatus: { $exists: false } },
+            { pammDistributionStatus: null },
+            { pammDistributionStatus: 'idle' },
+            { pammDistributionStatus: 'failed' },
+            processingStale,
+          ],
+        },
+      ],
+    },
+    {
+      $set: {
+        pammDistributionStatus: 'processing',
+        pammDistributionStartedAt: now,
+        pammDistributionOwnerId: ownerId,
+        pammDistributionHeartbeatAt: now,
+        pammDistributionError: null,
+        pammDistributionStats: { totalUsers: 0, successCount: 0, failedCount: 0 },
+        pammDistributionFailedUserIds: [],
+        updatedAt: now,
+      },
+    },
+    { returnDocument: 'after' }
+  );
+
+  if (updated) {
+    return { started: true, ownerId, reason: 'started' };
+  }
+
+  const doc = await c.findOne(
+    { _id: new ObjectId(positionId), $or: userOr },
+    {
+      projection: {
+        pammDistributionStatus: 1,
+        pammDistributionProcessed: 1,
+        pammDistributionStartedAt: 1,
+        pammDistributionHeartbeatAt: 1,
+      },
+    }
+  );
+  if (!doc) return { started: false, reason: 'position_not_found' };
+  if (doc.pammDistributionStatus === 'completed' || doc.pammDistributionProcessed === true) {
+    return { started: false, reason: 'completed' };
+  }
+  if (doc.pammDistributionStatus === 'processing') {
+    return { started: false, reason: 'processing_active' };
+  }
+  return { started: false, reason: 'not_eligible' };
+}
+
+async function touchPammDistributionHeartbeat(positionId, userId, ownerId) {
+  if (!ObjectId.isValid(positionId) || userId == null || !ownerId) return;
+  const c = await col();
+  await c.updateOne(
+    {
+      _id: new ObjectId(positionId),
+      $or: userIdOrMatch(userId),
+      pammDistributionOwnerId: String(ownerId),
+      pammDistributionStatus: 'processing',
+    },
+    { $set: { pammDistributionHeartbeatAt: new Date(), updatedAt: new Date() } }
+  );
+}
+
+async function setPammDistributionStats(positionId, userId, ownerId, stats) {
+  if (!ObjectId.isValid(positionId) || userId == null || !ownerId) return;
+  const c = await col();
+  const failedUserIds = Array.isArray(stats.failedUserIds)
+    ? stats.failedUserIds.slice(0, 50).map(String)
+    : [];
+  await c.updateOne(
+    {
+      _id: new ObjectId(positionId),
+      $or: userIdOrMatch(userId),
+      pammDistributionOwnerId: String(ownerId),
+      pammDistributionStatus: 'processing',
+    },
+    {
+      $set: {
+        pammDistributionStats: {
+          totalUsers: Number(stats.totalUsers) || 0,
+          successCount: Number(stats.successCount) || 0,
+          failedCount: Number(stats.failedCount) || 0,
+        },
+        pammDistributionFailedUserIds: failedUserIds,
+        updatedAt: new Date(),
+      },
+    }
+  );
+}
+
+async function markPammDistributionCompleted(positionId, userId, ownerId) {
+  if (!ObjectId.isValid(positionId) || userId == null || !ownerId) return;
+  const c = await col();
+  const now = new Date();
+  await c.updateOne(
+    {
+      _id: new ObjectId(positionId),
+      $or: userIdOrMatch(userId),
+      pammDistributionOwnerId: String(ownerId),
+      pammDistributionStatus: 'processing',
+    },
+    {
+      $set: {
+        pammDistributionStatus: 'completed',
+        pammDistributionCompletedAt: now,
+        pammDistributionProcessed: true,
+        pammDistributionError: null,
+        pammDistributionHeartbeatAt: now,
+        updatedAt: now,
+      },
+    }
+  );
+}
+
+async function markPammDistributionFailed(positionId, userId, errorMessage, ownerId) {
+  if (!ObjectId.isValid(positionId) || userId == null) return;
+  const c = await col();
+  const msg = String(errorMessage || 'unknown').slice(0, 500);
+  const filter = {
+    _id: new ObjectId(positionId),
+    $or: userIdOrMatch(userId),
+    pammDistributionStatus: 'processing',
+  };
+  if (ownerId) filter.pammDistributionOwnerId = String(ownerId);
+  const now = new Date();
+  await c.updateOne(filter, {
+    $set: {
+      pammDistributionStatus: 'failed',
+      pammDistributionError: msg,
+      pammDistributionHeartbeatAt: now,
+      updatedAt: now,
+    },
+  });
+}
+
+export default {
+  create,
+  findById,
+  listOpen,
+  listClosed,
+  listTopUsersByOpenPositions,
+  listOpenBySymbolWithTPLS,
+  update,
+  tryStartPammDistribution,
+  touchPammDistributionHeartbeat,
+  setPammDistributionStats,
+  markPammDistributionCompleted,
+  markPammDistributionFailed,
+};

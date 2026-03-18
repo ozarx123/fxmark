@@ -30,8 +30,9 @@ const CACHE_PREFIX = 'cache:';
 function getRedisConfig() {
   const url = (process.env.REDIS_URL || '').trim();
   const prefix = (process.env.REDIS_PREFIX || 'fxmark:').trim() || undefined;
+  const connectTimeout = 10000; // 10s — avoid hanging on unreachable Redis
   if (url) {
-    return { url, keyPrefix: prefix, maxRetriesPerRequest: 3, lazyConnect: true };
+    return { url, keyPrefix: prefix, maxRetriesPerRequest: 3, lazyConnect: true, connectTimeout };
   }
   const host = (process.env.REDIS_HOST || '').trim();
   if (!host) return null;
@@ -42,6 +43,7 @@ function getRedisConfig() {
     db: parseInt(process.env.REDIS_DB || '0', 10),
     keyPrefix: prefix,
     maxRetriesPerRequest: 3,
+    connectTimeout,
     retryStrategy(times) {
       if (times > 3) return null;
       return Math.min(times * 200, 2000);

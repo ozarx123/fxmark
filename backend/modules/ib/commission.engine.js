@@ -81,4 +81,8 @@ async function calculateForHierarchy(trade, ibIds, clientUserId = null) {
   return results;
 }
 
-export default { calculate, calculateForHierarchy, DEFAULT_RATE_PER_LOT_BY_LEVEL };
+export default {
+  calculate,
+  calculateForHierarchy,
+  DEFAULT_RATE_PER_LOT_BY_LEVEL,
+};

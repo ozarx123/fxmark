@@ -24,6 +24,10 @@ export default function ProtectedRoute({
     return <Navigate to="/auth" state={{ from: location }} replace />;
   }
 
+  if (requireAuth && isAuthenticated && user?.emailVerified !== true) {
+    return <Navigate to="/auth/verify-email" replace />;
+  }
+
   if (!skipProfileCheck && isAuthenticated && user?.profileComplete !== true) {
     return <Navigate to="/auth/profile-setup" replace />;
   }

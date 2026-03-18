@@ -146,6 +146,28 @@ async function getStats(req, res, next) {
   }
 }
 
+async function listPammCommissions(req, res, next) {
+  try {
+    const rawId = req.user?.id;
+    if (rawId == null) return res.status(401).json({ error: 'Unauthorized' });
+    const userId = (rawId?.toString?.() ?? String(rawId)).trim();
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const profile = await ibRepo.getProfileByUserId(userId) || await ibRepo.getProfileById(userId);
+    const effectiveIbId = profile?.userId != null ? String(profile.userId) : userId;
+
+    const { from, to, limit } = req.query;
+    const options = {};
+    if (from) options.from = new Date(from);
+    if (to) options.to = new Date(to);
+    if (limit != null) options.limit = Math.min(parseInt(limit, 10) || 100, 200);
+    const list = await ibRepo.listPammIbCommissionLogsForIb(effectiveIbId, options);
+    res.json(list);
+  } catch (e) {
+    next(e);
+  }
+}
+
 export default {
   getMyProfile,
   registerAsIb,
@@ -157,4 +179,5 @@ export default {
   listReferrals,
   listReferralJoinings,
   getStats,
+  listPammCommissions,
 };

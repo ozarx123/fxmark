@@ -7,7 +7,7 @@
 /** All system roles with descriptions (RBAC) */
 export const ROLES = [
   { value: 'super_admin', label: 'Super Admin', category: 'internal', description: 'Full system access, A/B-Book routing, LP management, AI engine, override withdrawals/commissions, audit logs.' },
-  { value: 'admin', label: 'Admin', category: 'internal', description: 'Manage clients and accounts, approve deposits/withdrawals, assign IB codes, PAMM, financial and trading reports.' },
+  { value: 'admin', label: 'Admin', category: 'internal', description: 'Manage clients and accounts, approve deposits/withdrawals, assign IB codes, financial and trading reports.' },
   { value: 'dealing_desk', label: 'Dealing Desk', category: 'internal', description: 'Monitor live trades, manage exposure and hedging, manual intervention.' },
   { value: 'risk_manager', label: 'Risk Manager', category: 'internal', description: 'Monitor exposure and margin, configure stop-out and risk parameters, AI risk switch, slippage and lot limits.' },
   { value: 'finance_manager', label: 'Finance Manager', category: 'internal', description: 'Deposits and withdrawals, IB commission calculation and payout, revenue and profit reports, accounting export.' },
@@ -15,8 +15,7 @@ export const ROLES = [
   { value: 'support_manager', label: 'Support Manager', category: 'internal', description: 'Client tickets, WhatsApp/Telegram support, escalate technical issues.' },
   { value: 'master_ib', label: 'Master IB', category: 'ib', description: 'View referral tree, multi-level commissions, request commission withdrawal.' },
   { value: 'sub_ib', label: 'Sub IB', category: 'ib', description: 'View direct referrals, track commission earnings.' },
-  { value: 'trader', label: 'Trader / Client', category: 'client', description: 'Deposit and withdraw, trading history and P&L, AI trading or PAMM, account statements.' },
-  { value: 'pamm_manager', label: 'PAMM Manager', category: 'client', description: 'View investor list and total capital, allocation percentages, performance fees.' },
+  { value: 'trader', label: 'Trader / Client', category: 'client', description: 'Deposit and withdraw, trading history and P&L, account statements.' },
   { value: 'investor', label: 'Investor (View Only)', category: 'client', description: 'Personal P&L and performance, monthly reports. No broker internal data.' },
 ];
 
@@ -36,5 +35,4 @@ export const initialUsers = [
   { id: 7, email: 'ib.beta@partner.com', name: 'IB Beta', role: 'sub_ib', approvalStatus: 'pending', balance: 0, numberOfTrades: 0, createdAt: '2025-02-10' },
   { id: 8, email: 'finance@fxmark.com', name: 'Finance Team', role: 'finance_manager', approvalStatus: 'approved', balance: 0, numberOfTrades: 0, createdAt: '2024-10-01' },
   { id: 9, email: 'compliance@fxmark.com', name: 'Compliance Officer', role: 'compliance_officer', approvalStatus: 'approved', balance: 0, numberOfTrades: 0, createdAt: '2024-10-01' },
-  { id: 10, email: 'pamm.master@example.com', name: 'PAMM Master', role: 'pamm_manager', approvalStatus: 'approved', balance: 0, numberOfTrades: 0, createdAt: '2025-01-05' },
 ];

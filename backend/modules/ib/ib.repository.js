@@ -19,6 +19,15 @@ const COMMISSIONS_COLLECTION = 'ib_commissions';
 const PAYOUTS_COLLECTION = 'ib_payouts';
 const SETTINGS_COLLECTION = 'ib_settings';
 const SETTINGS_ID = 'default';
+const PAMM_IB_COMMISSION_SETTINGS_ID = 'pamm_ib_commission';
+const PAMM_IB_COMMISSION_LOGS_COLLECTION = 'pamm_ib_commission_logs';
+const PAMM_INVESTOR_DAILY_PROFIT_COLLECTION = 'pamm_investor_daily_profit';
+const COMPANY_COMMISSION_POOL_COLLECTION = 'company_commission_pool';
+
+function getTodayUtcString() {
+  const d = new Date();
+  return d.toISOString().slice(0, 10);
+}
 
 async function profilesCol() {
   const db = await getDb();
@@ -72,15 +81,20 @@ async function getProfileByReferralCode(referralCode) {
 }
 
 async function getProfileByUserId(userId) {
+  if (userId == null) return null;
   const col = await profilesCol();
-  let p = await col.findOne({ userId });
+  const idStr = String(userId).trim();
+  let p = await col.findOne({ userId: idStr });
+  if (!p && ObjectId.isValid(idStr) && idStr.length === 24) {
+    p = await col.findOne({ userId: new ObjectId(idStr) });
+  }
   if (!p) return null;
   if (!p.referralCode) {
     const referralCode = generateReferralCode();
     const existing = await col.findOne({ referralCode });
     if (!existing) {
-      await col.updateOne({ userId }, { $set: { referralCode, updatedAt: new Date() } });
-      p = await col.findOne({ userId });
+      await col.updateOne({ _id: p._id }, { $set: { referralCode, updatedAt: new Date() } });
+      p = await col.findOne({ _id: p._id });
     }
   }
   return p ? { id: p._id.toString(), ...p, _id: undefined } : null;
@@ -149,6 +163,301 @@ async function updateSettings(ratePerLotByLevel) {
   return ratePerLotByLevel;
 }
 
+// ---------- PAMM Bull Run investor IB commission (active capital × level %) ----------
+const PAMM_IB_DEFAULT_LEVELS = {
+  1: { daily_payout_percent: 0.25, status: 'enabled' },
+  2: { daily_payout_percent: 0.15, status: 'enabled' },
+  3: { daily_payout_percent: 0.10, status: 'enabled' },
+};
+
+async function pammIbCommissionLogsCol() {
+  const db = await getDb();
+  return db.collection(PAMM_IB_COMMISSION_LOGS_COLLECTION);
+}
+
+let pammIbPayoutIndexEnsured = false;
+async function ensurePammIbPayoutUniqueIndex() {
+  if (pammIbPayoutIndexEnsured) return;
+  const col = await pammIbCommissionLogsCol();
+  try {
+    await col.createIndex(
+      { trade_id: 1, investor_id: 1, ib_id: 1, level_number: 1 },
+      {
+        unique: true,
+        name: 'pamm_ib_payout_trade_investor_ib_level',
+        partialFilterExpression: { commission_amount: { $gte: 0.001 } },
+      }
+    );
+  } catch (e) {
+    if (e?.code !== 11000) console.warn('[ib] pamm_ib payout unique index:', e.message);
+  }
+  pammIbPayoutIndexEnsured = true;
+}
+
+/** Paid PAMM IB row for this trade / investor / IB / level (commission_amount >= 0.001). */
+async function findPammIbPayoutLog(tradeId, investorId, ibId, levelNumber) {
+  await ensurePammIbPayoutUniqueIndex();
+  const col = await pammIbCommissionLogsCol();
+  return col.findOne({
+    trade_id: tradeId,
+    investor_id: String(investorId),
+    ib_id: String(ibId),
+    level_number: levelNumber,
+    commission_amount: { $gte: 0.001 },
+  });
+}
+
+/** Get PAMM investor IB commission settings (levels 1–3 only). */
+async function getPammIbCommissionSettings() {
+  const col = await settingsCol();
+  const doc = await col.findOne({ _id: PAMM_IB_COMMISSION_SETTINGS_ID });
+  if (!doc || !doc.levels) return { levels: { ...PAMM_IB_DEFAULT_LEVELS } };
+  const levels = { ...PAMM_IB_DEFAULT_LEVELS };
+  for (const [k, v] of Object.entries(doc.levels || {})) {
+    const levelNum = parseInt(k, 10);
+    if (levelNum >= 1 && levelNum <= 3 && v && typeof v === 'object') {
+      levels[levelNum] = {
+        daily_payout_percent: Number(v.daily_payout_percent) ?? PAMM_IB_DEFAULT_LEVELS[levelNum]?.daily_payout_percent ?? 0,
+        status: v.status === 'disabled' ? 'disabled' : 'enabled',
+        updated_by: v.updated_by || null,
+        updated_at: v.updated_at || null,
+      };
+    }
+  }
+  return { levels };
+}
+
+/** Update PAMM investor IB commission settings. levels: { 1: { daily_payout_percent, status }, 2: {...}, 3: {...} }, updatedBy: userId */
+async function updatePammIbCommissionSettings(levels, updatedBy) {
+  const col = await settingsCol();
+  const now = new Date();
+  const normalized = {};
+  for (const [k, v] of Object.entries(levels || {})) {
+    const levelNum = parseInt(k, 10);
+    if (levelNum < 1 || levelNum > 3) continue;
+    const percent = Number(v?.daily_payout_percent);
+    const status = v?.status === 'disabled' ? 'disabled' : 'enabled';
+    normalized[levelNum] = {
+      daily_payout_percent: Number.isFinite(percent) ? percent : (PAMM_IB_DEFAULT_LEVELS[levelNum]?.daily_payout_percent ?? 0),
+      status,
+      updated_by: updatedBy || null,
+      updated_at: now,
+    };
+  }
+  const doc = await col.findOne({ _id: PAMM_IB_COMMISSION_SETTINGS_ID });
+  const merged = doc?.levels ? { ...doc.levels } : { ...PAMM_IB_DEFAULT_LEVELS };
+  for (const [k, val] of Object.entries(normalized)) merged[k] = val;
+  await col.updateOne(
+    { _id: PAMM_IB_COMMISSION_SETTINGS_ID },
+    { $set: { levels: merged, updatedAt: now } },
+    { upsert: true }
+  );
+  return getPammIbCommissionSettings();
+}
+
+/** Create PAMM IB commission log entry. */
+async function createPammIbCommissionLog(doc) {
+  await ensurePammIbPayoutUniqueIndex();
+  const col = await pammIbCommissionLogsCol();
+  const toInsert = { ...doc, created_at: new Date() };
+  const { insertedId } = await col.insertOne(toInsert);
+  return insertedId.toString();
+}
+
+/** Insert overflow from PAMM IB daily cap into company commission pool. */
+async function createCompanyCommissionPoolEntry(doc) {
+  const db = await getDb();
+  const col = db.collection(COMPANY_COMMISSION_POOL_COLLECTION);
+  const toInsert = { ...doc, created_at: doc.created_at || new Date() };
+  const { insertedId } = await col.insertOne(toInsert);
+  return insertedId.toString();
+}
+
+/**
+ * List company commission pool (common pool) entries — overflow from PAMM IB daily cap.
+ * @param {object} options - { from?: Date, to?: Date, limit?: number }
+ * @returns {Promise<{ entries: object[], totalAmount: number }>}
+ */
+async function listCompanyCommissionPoolEntries(options = {}) {
+  const db = await getDb();
+  const col = db.collection(COMPANY_COMMISSION_POOL_COLLECTION);
+  const { from, to, limit = 500 } = options;
+  const filter = {};
+  if (from != null || to != null) {
+    filter.created_at = {};
+    if (from != null) filter.created_at.$gte = new Date(from);
+    if (to != null) filter.created_at.$lte = new Date(to);
+  }
+  const list = await col
+    .find(filter)
+    .sort({ created_at: -1 })
+    .limit(limit)
+    .toArray();
+  const entries = list.map((c) => ({
+    id: c._id?.toString(),
+    source: c.source,
+    ib_id: c.ib_id,
+    investor_id: c.investor_id,
+    trade_id: c.trade_id,
+    level_number: c.level_number,
+    amount: c.amount,
+    created_at: c.created_at,
+  }));
+  const totalAmount = list.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+  return { entries, totalAmount: Math.round(totalAmount * 100) / 100 };
+}
+
+async function pammInvestorDailyProfitCol() {
+  const db = await getDb();
+  return db.collection(PAMM_INVESTOR_DAILY_PROFIT_COLLECTION);
+}
+
+/**
+ * Increment today's credited profit for an investor (Bull Run). Used for progressive IB payout.
+ * @param {string} investorId - normalized user id
+ * @param {number} amount - profit credited this trade
+ * @returns {Promise<number>} new total credited today for this investor
+ */
+async function incrementPammInvestorDailyCreditedProfit(investorId, amount) {
+  if (!investorId || amount == null) return 0;
+  const col = await pammInvestorDailyProfitCol();
+  const todayStr = getTodayUtcString();
+  const inc = Number(amount) || 0;
+  const result = await col.findOneAndUpdate(
+    { investor_id: String(investorId), date_utc: todayStr },
+    { $inc: { credited_profit: inc } },
+    { upsert: true, returnDocument: 'after' }
+  );
+  return Number(result?.credited_profit) ?? 0;
+}
+
+/**
+ * Get today's total credited profit for an investor (Bull Run). UTC day.
+ */
+async function getPammInvestorDailyCreditedProfit(investorId) {
+  if (!investorId) return 0;
+  const col = await pammInvestorDailyProfitCol();
+  const todayStr = getTodayUtcString();
+  const doc = await col.findOne({ investor_id: String(investorId), date_utc: todayStr });
+  return Number(doc?.credited_profit) ?? 0;
+}
+
+/**
+ * Sum of PAMM IB commission already paid today for (investor, ib). UTC day. Used for progressive cap.
+ */
+async function getPammIbCommissionPaidToday(investorId, ibId) {
+  if (!investorId || !ibId) return 0;
+  const col = await pammIbCommissionLogsCol();
+  const now = new Date();
+  const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000 - 1);
+  const idStr = String(investorId);
+  const ibStr = String(ibId);
+  const investorOr = ObjectId.isValid(idStr) && idStr.length === 24
+    ? [{ investor_id: idStr }, { investor_id: new ObjectId(idStr) }]
+    : [{ investor_id: idStr }];
+  const ibOr = ObjectId.isValid(ibStr) && ibStr.length === 24
+    ? [{ ib_id: ibStr }, { ib_id: new ObjectId(ibStr) }]
+    : [{ ib_id: ibStr }];
+  const result = await col.aggregate([
+    {
+      $match: {
+        $and: [
+          { $or: investorOr },
+          { $or: ibOr },
+          { created_at: { $gte: startOfDay, $lte: endOfDay } },
+        ],
+      },
+    },
+    { $group: { _id: null, total: { $sum: '$commission_amount' } } },
+  ]).next();
+  return result ? Math.round((result.total || 0) * 100) / 100 : 0;
+}
+
+/**
+ * List PAMM IB commission log entries, optionally filtered by date.
+ * @param {object} options - { from?: Date, to?: Date, limit?: number }. If from/to omitted, uses today (UTC).
+ * @returns {Promise<object[]>} Logs with id, ib_id, investor_id, pool_id, trade_id, active_capital_base, commission_percent, commission_amount, level_number, created_at
+ */
+async function listPammIbCommissionLogs(options = {}) {
+  const col = await pammIbCommissionLogsCol();
+  const { from, to, limit = 500 } = options;
+  const filter = {};
+  if (from != null || to != null) {
+    filter.created_at = {};
+    if (from != null) filter.created_at.$gte = new Date(from);
+    if (to != null) filter.created_at.$lte = new Date(to);
+  } else {
+    const now = new Date();
+    const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000 - 1);
+    filter.created_at = { $gte: startOfDay, $lte: endOfDay };
+  }
+  const list = await col
+    .find(filter)
+    .sort({ created_at: -1 })
+    .limit(limit)
+    .toArray();
+  return list.map((c) => ({
+    id: c._id?.toString(),
+    ib_id: c.ib_id,
+    investor_id: c.investor_id,
+    pool_id: c.pool_id,
+    trade_id: c.trade_id,
+    active_capital_base: c.active_capital_base,
+    commission_percent: c.commission_percent,
+    commission_amount: c.commission_amount,
+    level_number: c.level_number,
+    created_at: c.created_at,
+  }));
+}
+
+/**
+ * List PAMM IB commission logs for a specific IB (for IB dashboard).
+ * @param {string} ibId - IB user id
+ * @param {object} options - { from?: Date, to?: Date, limit?: number }. Default last 30 days if from/to omitted.
+ * @returns {Promise<object[]>} Same shape as listPammIbCommissionLogs
+ */
+async function listPammIbCommissionLogsForIb(ibId, options = {}) {
+  if (!ibId) return [];
+  const col = await pammIbCommissionLogsCol();
+  const { from, to, limit = 200 } = options;
+  const idStr = String(ibId).trim();
+  const orConditions = [{ ib_id: idStr }];
+  if (ObjectId.isValid(idStr) && idStr.length === 24) {
+    orConditions.push({ ib_id: new ObjectId(idStr) });
+  }
+  const filter = { $or: orConditions };
+  if (from != null || to != null) {
+    filter.created_at = {};
+    if (from != null) filter.created_at.$gte = new Date(from);
+    if (to != null) filter.created_at.$lte = new Date(to);
+  } else {
+    const now = new Date();
+    const startOfTodayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const start = new Date(startOfTodayUtc.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const endWithBuffer = new Date(now.getTime() + 60 * 1000);
+    filter.created_at = { $gte: start, $lte: endWithBuffer };
+  }
+  const list = await col
+    .find(filter)
+    .sort({ created_at: -1 })
+    .limit(limit)
+    .toArray();
+  return list.map((c) => ({
+    id: c._id?.toString(),
+    ib_id: c.ib_id != null ? String(c.ib_id) : undefined,
+    investor_id: c.investor_id != null ? String(c.investor_id) : undefined,
+    pool_id: c.pool_id,
+    trade_id: c.trade_id,
+    active_capital_base: c.active_capital_base,
+    commission_percent: c.commission_percent,
+    commission_amount: c.commission_amount,
+    level_number: c.level_number,
+    created_at: c.created_at,
+  }));
+}
+
 /** Get hierarchy depth (level) for an IB: 1 = top, 2 = under level 1, etc. */
 async function getHierarchyDepth(userId) {
   const col = await profilesCol();
@@ -162,6 +471,28 @@ async function getHierarchyDepth(userId) {
 }
 
 /**
+ * Resolve a PAMM followerId to the canonical user _id string for IB chain lookup.
+ * Handles ObjectId/string mismatch so getUplineChainForClient receives users._id.
+ * @param {*} followerId - alloc.followerId (may be ObjectId or string)
+ * @returns {Promise<string|null>} String(user._id) or null if user not found
+ */
+async function resolveUserIdFromFollowerId(followerId) {
+  if (followerId == null) return null;
+  const idStr = String(followerId).trim();
+  if (!idStr) return null;
+  const db = await getDb();
+  const usersCol = db.collection('users');
+  let user = null;
+  if (ObjectId.isValid(idStr) && idStr.length === 24) {
+    user = await usersCol.findOne({ _id: new ObjectId(idStr) }, { projection: { _id: 1 } });
+  }
+  if (!user) {
+    user = await usersCol.findOne({ _id: idStr }, { projection: { _id: 1 } });
+  }
+  return user ? String(user._id) : null;
+}
+
+/**
  * Get IB upline chain for a client (trader): [direct referrer, parent IB, grandparent IB, ...].
  * @param {string} clientUserId - user who traded (must have referrerId in users)
  * @returns {Promise<string[]>} IB userIds from direct to top
@@ -170,31 +501,49 @@ async function getUplineChainForClient(clientUserId) {
   if (!clientUserId) return [];
   const db = await getDb();
   const usersCol = db.collection('users');
-  const uid = ObjectId.isValid(clientUserId) ? new ObjectId(clientUserId) : null;
-  if (!uid) return [];
-  const user = await usersCol.findOne({ _id: uid }, { projection: { referrerId: 1 } });
+  const idStr = String(clientUserId);
+  let user = null;
+  if (ObjectId.isValid(idStr) && idStr.length === 24) {
+    user = await usersCol.findOne({ _id: new ObjectId(idStr) }, { projection: { referrerId: 1 } });
+  }
+  if (!user) {
+    user = await usersCol.findOne({ _id: idStr }, { projection: { referrerId: 1 } });
+  }
   if (!user?.referrerId) return [];
   const chain = [];
-  let currentId = user.referrerId;
+  const visited = new Set();
+  let currentId = user.referrerId != null ? String(user.referrerId) : null;
   const col = await profilesCol();
   while (currentId) {
-    const profile = await col.findOne({ userId: currentId });
+    if (visited.has(currentId)) break;
+    visited.add(currentId);
+    const profileQuery = currentId.length === 24 && ObjectId.isValid(currentId)
+      ? { $or: [{ userId: currentId }, { userId: new ObjectId(currentId) }] }
+      : { userId: currentId };
+    const profile = await col.findOne(profileQuery);
     if (!profile) break;
-    chain.push(profile.userId);
-    currentId = profile.parentId || null;
+    const uid = profile.userId != null ? String(profile.userId) : '';
+    if (!uid || chain.includes(uid)) break;
+    chain.push(uid);
+    currentId = profile.parentId != null ? String(profile.parentId) : null;
+    if (currentId && (visited.has(currentId) || chain.includes(currentId))) break;
   }
   return chain;
 }
 
 // ---------- Commissions ----------
-async function createCommission(doc) {
+async function createCommission(doc, options = {}) {
   const col = await commissionsCol();
   const now = new Date();
-  const { insertedId } = await col.insertOne({
-    ...doc,
-    status: 'pending',
-    createdAt: now,
-  });
+  const insertOpts = options.session ? { session: options.session } : {};
+  const { insertedId } = await col.insertOne(
+    {
+      ...doc,
+      status: 'pending',
+      createdAt: now,
+    },
+    insertOpts
+  );
   return insertedId.toString();
 }
 
@@ -218,6 +567,18 @@ async function sumPendingByIb(ibId) {
     { $match: { ibId, status: 'pending' } },
     { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } },
   ]).next();
+  return result ? { total: result.total, count: result.count } : { total: 0, count: 0 };
+}
+
+/** Platform-wide pending IB commission (company obligation) */
+async function sumAllPendingCommissions() {
+  const col = await commissionsCol();
+  const result = await col
+    .aggregate([
+      { $match: { status: 'pending' } },
+      { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } },
+    ])
+    .next();
   return result ? { total: result.total, count: result.count } : { total: 0, count: 0 };
 }
 
@@ -356,11 +717,13 @@ export default {
   getProfileByReferralCode,
   updateProfile,
   getHierarchyDepth,
+  resolveUserIdFromFollowerId,
   getUplineChainForClient,
   createCommission,
   listCommissionsByIb,
   listCommissionsAll,
   sumPendingByIb,
+  sumAllPendingCommissions,
   markCommissionsPaid,
   markAllPendingPaid,
   createPayout,
@@ -374,4 +737,15 @@ export default {
   listAllProfiles,
   getSettings,
   updateSettings,
+  getPammIbCommissionSettings,
+  updatePammIbCommissionSettings,
+  createPammIbCommissionLog,
+  findPammIbPayoutLog,
+  createCompanyCommissionPoolEntry,
+  listCompanyCommissionPoolEntries,
+  listPammIbCommissionLogs,
+  listPammIbCommissionLogsForIb,
+  incrementPammInvestorDailyCreditedProfit,
+  getPammInvestorDailyCreditedProfit,
+  getPammIbCommissionPaidToday,
 };

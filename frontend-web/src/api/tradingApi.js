@@ -14,6 +14,20 @@ function getAccountHeaders(accountId, accountNumber) {
   return h;
 }
 
+/** Parse error message from failed response for consistent user-facing messages. */
+async function parseErrorResponse(res, fallback = 'Request failed') {
+  try {
+    const body = await res.json();
+    if (body && typeof body.error === 'string') return body.error;
+    if (body && typeof body.message === 'string') return body.message;
+  } catch (_) { /* ignore */ }
+  if (res.status === 401) return 'Session expired or unauthorized';
+  if (res.status === 403) return 'Access denied';
+  if (res.status === 404) return 'Resource not found';
+  if (res.status >= 500) return 'Server error. Try again later.';
+  return fallback;
+}
+
 async function fetchWithAuth(url, options = {}, accountId = null, accountNumber = null) {
   const token = getToken();
   const headers = { 'Content-Type': 'application/json', ...getAccountHeaders(accountId, accountNumber), ...options.headers };
@@ -50,7 +64,7 @@ export async function placeOrder(payload, opts = {}) {
   if (payload.stopLoss != null && payload.stopLoss !== '') body.stopLoss = Number(payload.stopLoss);
   if (payload.takeProfit != null && payload.takeProfit !== '') body.takeProfit = Number(payload.takeProfit);
   const res = await fetchWithAuth('/trading/orders', { method: 'POST', body: JSON.stringify(body) }, accountId, accountNumber);
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to place order');
+  if (!res.ok) throw new Error(await parseErrorResponse(res, 'Failed to place order'));
   return res.json();
 }
 
@@ -63,7 +77,7 @@ export async function listOrders(params = {}, opts = {}) {
   if (params.limit) q.set('limit', params.limit);
   const url = `/trading/orders${q.toString() ? `?${q}` : ''}`;
   const res = await fetchWithAuth(url, {}, accountId, accountNumber);
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to load orders');
+  if (!res.ok) throw new Error(await parseErrorResponse(res, 'Failed to load orders'));
   return res.json();
 }
 
@@ -72,7 +86,7 @@ export async function getOrder(orderId, opts = {}) {
   const { accountId, accountNumber } = opts;
   const res = await fetchWithAuth(`/trading/orders/${orderId}`, {}, accountId, accountNumber);
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to load order');
+  if (!res.ok) throw new Error(await parseErrorResponse(res, 'Failed to load order'));
   return res.json();
 }
 
@@ -80,7 +94,7 @@ export async function getOrder(orderId, opts = {}) {
 export async function cancelOrder(orderId, opts = {}) {
   const { accountId, accountNumber } = opts;
   const res = await fetchWithAuth(`/trading/orders/${orderId}/cancel`, { method: 'POST' }, accountId, accountNumber);
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to cancel order');
+  if (!res.ok) throw new Error(await parseErrorResponse(res, 'Failed to cancel order'));
   return res.json();
 }
 
@@ -93,7 +107,7 @@ export async function updateOrderPrice(orderId, price, opts = {}) {
     accountId,
     accountNumber
   );
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to update order');
+  if (!res.ok) throw new Error(await parseErrorResponse(res, 'Failed to update order'));
   return res.json();
 }
 
@@ -107,7 +121,7 @@ export async function getOpenPositions(params = {}, opts = {}) {
   if (params.limit) q.set('limit', params.limit);
   const url = `/trading/positions${q.toString() ? `?${q}` : ''}`;
   const res = await fetchWithAuth(url, {}, accountId, accountNumber);
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to load positions');
+  if (!res.ok) throw new Error(await parseErrorResponse(res, 'Failed to load positions'));
   return res.json();
 }
 
@@ -121,7 +135,7 @@ export async function getClosedPositions(params = {}, opts = {}) {
   if (params.limit) q.set('limit', params.limit);
   const url = `/trading/positions/closed${q.toString() ? `?${q}` : ''}`;
   const res = await fetchWithAuth(url, {}, accountId, accountNumber);
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to load history');
+  if (!res.ok) throw new Error(await parseErrorResponse(res, 'Failed to load history'));
   return res.json();
 }
 
@@ -132,7 +146,7 @@ export async function updatePositionTPLS(positionId, { takeProfit, stopLoss }, o
   if (takeProfit !== undefined) body.takeProfit = takeProfit == null ? null : Number(takeProfit);
   if (stopLoss !== undefined) body.stopLoss = stopLoss == null ? null : Number(stopLoss);
   const res = await fetchWithAuth(`/trading/positions/${positionId}`, { method: 'PATCH', body: JSON.stringify(body) }, accountId, accountNumber);
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to update TP/SL');
+  if (!res.ok) throw new Error(await parseErrorResponse(res, 'Failed to update TP/SL'));
   return res.json();
 }
 
@@ -143,7 +157,7 @@ export async function closePosition(positionId, volume, closePrice, opts = {}) {
   if (volume != null) body.volume = Number(volume);
   if (closePrice != null) body.closePrice = Number(closePrice);
   const res = await fetchWithAuth(`/trading/positions/${positionId}/close`, { method: 'POST', body: JSON.stringify(body) }, accountId, accountNumber);
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to close position');
+  if (!res.ok) throw new Error(await parseErrorResponse(res, 'Failed to close position'));
   return res.json();
 }
 
@@ -152,14 +166,14 @@ export async function closePosition(positionId, volume, closePrice, opts = {}) {
 /** List trading accounts */
 export async function listTradingAccounts() {
   const res = await fetchWithAuth('/trading/accounts');
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to load accounts');
+  if (!res.ok) throw new Error(await parseErrorResponse(res, 'Failed to load accounts'));
   return res.json();
 }
 
 /** Create trading account */
 export async function createTradingAccount(body) {
   const res = await fetchWithAuth('/trading/accounts', { method: 'POST', body: JSON.stringify(body) });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to create account');
+  if (!res.ok) throw new Error(await parseErrorResponse(res, 'Failed to create account'));
   return res.json();
 }
 
@@ -167,7 +181,7 @@ export async function createTradingAccount(body) {
 export async function getTradingAccount(accountId) {
   const res = await fetchWithAuth(`/trading/accounts/${accountId}`);
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to load account');
+  if (!res.ok) throw new Error(await parseErrorResponse(res, 'Failed to load account'));
   return res.json();
 }
 
@@ -176,9 +190,6 @@ export async function getAccountSummary(opts = {}) {
   const { accountId, accountNumber } = opts;
   const res = await fetchWithAuth('/trading/account-summary', {}, accountId, accountNumber);
   if (res.status === 404) return null;
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || err.message || 'Failed to load account summary');
-  }
+  if (!res.ok) throw new Error(await parseErrorResponse(res, 'Failed to load account summary'));
   return res.json();
 }

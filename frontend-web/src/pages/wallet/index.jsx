@@ -69,9 +69,7 @@ export default function Wallet() {
     return () => document.removeEventListener('visibilitychange', onVisibilityChange);
   }, [isAuthenticated, loadWalletData]);
 
-  const displayBalance = isAuthenticated && activeAccount?.type === 'live' && walletBalance != null
-    ? walletBalance
-    : balance;
+  const displayBalance = isAuthenticated && walletBalance != null ? walletBalance : balance;
 
   const handleDepositConfirm = async (data) => {
     if (!isAuthenticated) return;
@@ -139,14 +137,15 @@ export default function Wallet() {
           <div className="card wallet-balance-card">
             <h3>Available balance</h3>
             <p className="card-value">
-              {loading && isAuthenticated ? '…' : formatCurrency(displayBalance)}
+              {loading && isAuthenticated ? '…' : displayBalance != null ? formatCurrency(displayBalance) : '—'}
             </p>
+            <p className="card-label muted" style={{ marginTop: '0.25rem', fontSize: '0.85rem' }}>Live wallet balance</p>
             <div className="card-actions">
               <button
                 type="button"
                 className="btn btn-primary"
                 onClick={() => setDepositModalOpen(true)}
-                disabled={!isAuthenticated}
+                disabled={!isAuthenticated || activeAccount?.type === 'demo'}
               >
                 Deposit
               </button>
@@ -154,7 +153,7 @@ export default function Wallet() {
                 type="button"
                 className="btn btn-secondary"
                 onClick={() => setWithdrawModalOpen(true)}
-                disabled={!isAuthenticated}
+                disabled={!isAuthenticated || activeAccount?.type === 'demo'}
               >
                 Withdraw
               </button>
@@ -162,12 +161,13 @@ export default function Wallet() {
                 type="button"
                 className="btn btn-secondary"
                 onClick={() => setTransferModalOpen(true)}
-                disabled={!isAuthenticated}
+                disabled={!isAuthenticated || activeAccount?.type === 'demo'}
               >
                 Transfer
               </button>
             </div>
             {!isAuthenticated && <p className="muted" style={{ marginTop: '0.5rem' }}>Sign in to deposit or withdraw</p>}
+            {isAuthenticated && activeAccount?.type === 'demo' && <p className="muted" style={{ marginTop: '0.5rem' }}>Switch to Live account to deposit or withdraw</p>}
           </div>
           <div className="card wallet-transfer-card">
             <h3>Internal & external transfer</h3>
@@ -176,7 +176,7 @@ export default function Wallet() {
               type="button"
               className="btn btn-secondary"
               onClick={() => setTransferModalOpen(true)}
-              disabled={!isAuthenticated}
+              disabled={!isAuthenticated || activeAccount?.type === 'demo'}
             >
               Transfer funds
             </button>

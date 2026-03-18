@@ -15,14 +15,6 @@ export const ADMIN_ROLES = [
   'support_manager',
 ];
 
-/** Roles that can access PAMM Manager (/pamm/manager) — trader/investor can create fund, then get pamm_manager */
-export const PAMM_MANAGER_ROLES = [
-  'pamm_manager',
-  'trader',
-  'investor',
-  ...ADMIN_ROLES,
-];
-
 /** Roles that can access IB section (/ib) */
 export const IB_ROLES = [
   'master_ib',
@@ -33,7 +25,6 @@ export const IB_ROLES = [
 /** Roles that can access Copy Manager (/copy/manager) – masters; for now any authenticated can view, restrict later if needed */
 export const COPY_MANAGER_ROLES = [
   'trader',
-  'pamm_manager',
   'investor',
   'master_ib',
   'sub_ib',
@@ -52,7 +43,6 @@ export const CLIENT_ROLES = [
   'master_ib',
   'sub_ib',
   'trader',
-  'pamm_manager',
   'investor',
 ];
 

@@ -1,14 +1,15 @@
 /**
  * Positions service — open/closed positions, close (full or partial), post P&L to ledger and wallet
+ * PAMM accounts: on full close, distribute P&L via PAMM distribution service (Bull Run 1% cap, reserve, etc.)
  */
 import positionRepo from './position.repository.js';
 import tradingAccountRepo from './trading-account.repository.js';
 import ledgerService from '../finance/ledger.service.js';
 import walletRepo from '../wallet/wallet.repository.js';
-import distributionService from '../pamm/distribution.service.js';
 import commissionEngine from '../ib/commission.engine.js';
 import ibRepo from '../ib/ib.repository.js';
 import { checkTradingAllowed } from '../admin/trading-limits.service.js';
+import distributionService from '../pamm/distribution.service.js';
 
 /** XAU/USD and GOLD: 100 oz per lot. All other symbols: 100k units (forex). */
 function getContractSize(symbol) {
@@ -61,10 +62,15 @@ async function getTopTradersWithPositions(limit = 10) {
 async function getClosedPositions(userId, options = {}) {
   const { from, to, limit, symbol, accountId } = options;
   const list = await positionRepo.listClosed(userId, { from, to, limit, symbol, accountId });
-  return list.map((p) => ({
-    ...p,
-    closePrice: p.closePrice ?? (p.pnl != null ? deriveClosePrice(p) : null),
-  }));
+  return list.map((p) => {
+    const realizedPnl = p.realizedPnl != null ? Number(p.realizedPnl) : (p.pnl != null ? Number(p.pnl) : null);
+    return {
+      ...p,
+      closePrice: p.closePrice ?? (p.pnl != null ? deriveClosePrice(p) : null),
+      pnl: realizedPnl ?? p.pnl,
+      realizedPnl,
+    };
+  });
 }
 
 async function getPosition(userId, positionId, accountId = null) {
@@ -93,16 +99,40 @@ async function closePosition(userId, positionId, options = {}) {
   const now = new Date();
   const isFull = closeVol >= pos.volume;
 
+  let resolvedClosePrice = closePrice != null ? Number(closePrice) : null;
   let pnl = pnlParam != null ? Number(pnlParam) : (pos.pnl != null ? pos.pnl : 0);
-  const resolvedClosePrice = closePrice != null ? Number(closePrice) : null;
-  if (resolvedClosePrice != null && isFull) {
-    pnl = computePnL(pos, resolvedClosePrice);
+  if (isFull) {
+    if (resolvedClosePrice != null) {
+      pnl = computePnL(pos, resolvedClosePrice);
+    } else if (Number(pos.currentPrice) || Number(pos.openPrice)) {
+      // Fallback: use position's currentPrice (or openPrice) so PnL is persisted even when client omits closePrice
+      const fallbackPrice = Number(pos.currentPrice) || Number(pos.openPrice);
+      resolvedClosePrice = fallbackPrice;
+      pnl = computePnL(pos, resolvedClosePrice);
+    }
   }
-  const account = (pos.accountId || accountId)
+  let account = (pos.accountId || accountId)
     ? await tradingAccountRepo.findById(pos.accountId || accountId, userId)
     : null;
+  if (!account && Math.abs(Number(pnlParam ?? pos.pnl ?? 0)) > 0.001) {
+    const userAccounts = await tradingAccountRepo.listByUser(userId);
+    const liveAcc = userAccounts.find((a) => a.type === 'live');
+    if (liveAcc) account = liveAcc;
+  }
   const isLive = account?.type === 'live';
   const willPostPnl = isFull && isLive && Math.abs(pnl) > 0.001;
+  // Diagnostic: log why ledger/wallet may be skipped (so "no data to db" can be traced)
+  // eslint-disable-next-line no-console
+  console.log('[position] close resolution', {
+    positionId,
+    posAccountId: pos.accountId ?? null,
+    requestAccountId: accountId ?? null,
+    accountType: account?.type ?? 'none',
+    isFull,
+    isLive,
+    willPostPnl,
+    pnl: Math.abs(pnl) > 0.001 ? pnl : 0,
+  });
   if (!bypassAdmin && willPostPnl) {
     await checkTradingAllowed(userId, pnl);
   } else if (!bypassAdmin) {
@@ -110,7 +140,14 @@ async function closePosition(userId, positionId, options = {}) {
   }
 
   if (isFull) {
-    const update = { closedAt: now, closedVolume: pos.volume, pnl };
+    const realizedPnl = Number(pnl);
+    const update = {
+      closedAt: now,
+      closedVolume: pos.volume,
+      pnl: realizedPnl,
+      realizedPnl,
+      status: 'closed',
+    };
     if (resolvedClosePrice != null) update.closePrice = resolvedClosePrice;
     await positionRepo.update(positionId, userId, update, accountId);
 
@@ -150,17 +187,31 @@ async function closePosition(userId, positionId, options = {}) {
     if (Math.abs(pnl) > 0.001) {
       const targetAccountId = pos.accountId || accountId;
 
-      if (account?.type === 'pamm') {
-        try {
-          await distributionService.distributePammPnl(userId, positionId, pnl, targetAccountId, pos);
-        } catch (e) {
-          console.warn('[positions] PAMM distribution failed:', e.message);
-          await tradingAccountRepo.updateBalance(targetAccountId, userId, pnl);
-        }
-      } else if (account?.type === 'demo') {
+      if (account?.type === 'demo') {
         // Demo only: update trading account balance; do not touch ledger or real wallet
         if (targetAccountId) {
           await tradingAccountRepo.updateBalance(targetAccountId, userId, pnl);
+        }
+      } else if (account?.type === 'pamm') {
+        // PAMM/Bull Run: distribute P&L to fund (manager account + investors via distribution service)
+        try {
+          await distributionService.distributePammPnl(
+            userId,
+            positionId,
+            pnl,
+            targetAccountId,
+            {
+              symbol: pos.symbol,
+              side: pos.side,
+              volume: pos.volume,
+              openPrice: pos.openPrice,
+              closedAt: now,
+              pnl,
+              closePrice: resolvedClosePrice ?? pos.closePrice,
+            }
+          );
+        } catch (e) {
+          console.warn('[positions] PAMM distribution failed:', e.message);
         }
       } else {
         // Live only: post P&L to ledger and update real wallet (exclude demo from real wallet)
@@ -168,7 +219,7 @@ async function closePosition(userId, positionId, options = {}) {
         if (isLive) {
           await ledgerService.postTradingPnl(userId, Math.abs(pnl), 'USD', positionId, pnl > 0);
           await walletRepo.updateBalance(userId, 'USD', pnl);
-          await walletRepo.createTransaction({
+          const txId = await walletRepo.createTransaction({
             userId,
             type: 'trade',
             amount: pnl,
@@ -177,6 +228,8 @@ async function closePosition(userId, positionId, options = {}) {
             reference: positionId,
             completedAt: now,
           });
+          // eslint-disable-next-line no-console
+          console.log('[position] wallet trade tx', { positionId, userId: String(userId), pnl, txId });
         } else if (!targetAccountId) {
           // Legacy: no account id — do not post to ledger or wallet (avoid demo leaking into real)
         }

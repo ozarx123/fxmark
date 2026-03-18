@@ -1,8 +1,9 @@
 import React from 'react';
 import { Outlet, NavLink, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
-import { hasRole, ADMIN_ROLES, PAMM_MANAGER_ROLES, IB_ROLES } from './config/roleRoutes';
+import { hasRole, ADMIN_ROLES, IB_ROLES } from './config/roleRoutes';
 import WalletBalanceSync from './components/WalletBalanceSync';
+import AccountTypeToggle from './components/AccountTypeToggle';
 import { ListIcon, XIcon } from './components/Icons.jsx';
 import FxmarkLogo from './components/FxmarkLogo';
 
@@ -11,7 +12,6 @@ export default function AppLayout() {
   const { user, logout } = useAuth();
   const [navOpen, setNavOpen] = React.useState(false);
   const canAccessAdmin = hasRole(user?.role, ADMIN_ROLES);
-  const canAccessPammManager = hasRole(user?.role, PAMM_MANAGER_ROLES);
   const canAccessIb = hasRole(user?.role, IB_ROLES);
 
   const displayName = user?.name || user?.fullName || user?.profileName || (user?.email ? user.email.split('@')[0] : '');
@@ -39,6 +39,11 @@ export default function AppLayout() {
           {navOpen ? <XIcon size={24} /> : <ListIcon size={24} />}
         </button>
         <nav className={`nav ${navOpen ? 'nav-open' : ''}`}>
+        {user && (
+          <div className="nav-account-toggle">
+            <AccountTypeToggle />
+          </div>
+        )}
         <NavLink to="/dashboard" end className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')} onClick={closeNav}>
           <span>Dashboard</span>
         </NavLink>
@@ -48,17 +53,9 @@ export default function AppLayout() {
         <NavLink to="/trading" className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')} onClick={closeNav}>
           <span>Trading</span>
         </NavLink>
-        <NavLink to="/pamm" className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')} onClick={closeNav}>
-          <span>PAMM</span>
-        </NavLink>
         <NavLink to="/pamm-ai" className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')} onClick={closeNav}>
           <span>PAMM AI</span>
         </NavLink>
-        {canAccessPammManager && (
-        <NavLink to="/pamm/manager" className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')} onClick={closeNav} title="Create and manage your PAMM fund">
-          <span>PAMM Manager</span>
-        </NavLink>
-        )}
         <NavLink to="/copy" className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')} onClick={closeNav}>
           <span>Copy Trading</span>
         </NavLink>

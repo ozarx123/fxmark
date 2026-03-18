@@ -13,6 +13,7 @@ router.use(resolveTradingAccount);
 
 // Trading accounts
 router.get('/accounts', accountController.listAccounts);
+router.get('/account-summary', accountController.getAccountSummary);
 router.post('/accounts', accountController.createAccount);
 router.get('/accounts/:accountId', accountController.getAccount);
 

@@ -12,7 +12,6 @@ const EDITABLE_ROLES = [
   { value: 'trader', label: 'Trader', category: 'client' },
   { value: 'master_ib', label: 'Master IB', category: 'ib' },
   { value: 'sub_ib', label: 'Sub IB', category: 'ib' },
-  { value: 'pamm_manager', label: 'PAMM Manager', category: 'client' },
 ];
 
 export default function AdminUsers() {
@@ -172,6 +171,7 @@ export default function AdminUsers() {
           <table className="table kpi-table users-table">
             <thead>
               <tr>
+                <th>User ID</th>
                 <th>User</th>
                 <th>Role</th>
                 <th>Approval</th>
@@ -183,19 +183,24 @@ export default function AdminUsers() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="empty-cell">
+                  <td colSpan={7} className="empty-cell">
                     Loading…
                   </td>
                 </tr>
               ) : users.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="empty-cell">
+                  <td colSpan={7} className="empty-cell">
                     No users match the filters.
                   </td>
                 </tr>
               ) : (
                 users.map((user) => (
                   <tr key={user.id}>
+                    <td className="admin-user-id-cell">
+                      <code className="admin-user-id" title={user.id}>
+                        {user.id}
+                      </code>
+                    </td>
                     <td>
                       <div className="user-cell">
                         <strong>{user.name || user.email?.split('@')[0] || '—'}</strong>
@@ -306,6 +311,9 @@ function AddFundsModal({ user, onSave, onClose, saving }) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content admin-modal" onClick={(e) => e.stopPropagation()}>
         <h3>Add funds to {user?.email}</h3>
+        <p className="modal-subtitle muted">
+          User ID: <code className="admin-user-id">{user?.id}</code>
+        </p>
         <p className="modal-subtitle">
           Current balance: {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(user?.balance ?? 0)}
         </p>
@@ -374,6 +382,9 @@ function UserFormModal({ user, onSave, onClose, roles, approvalStatuses, saving 
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content admin-modal user-form-modal" onClick={(e) => e.stopPropagation()}>
         <h3>Edit user: {user?.email}</h3>
+        <p className="modal-subtitle muted" style={{ marginBottom: '1rem' }}>
+          User ID: <code className="admin-user-id">{user?.id}</code>
+        </p>
         <form onSubmit={handleSubmit}>
           <div className="form-row">
             <div className="filter-group">

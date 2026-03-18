@@ -144,6 +144,8 @@ async function closePosition(req, res, next) {
     const { positionId } = req.params;
     const { volume, pnl, closePrice } = req.body;
     const accountId = req.activeAccount?.id;
+    // Diagnostic: log which account the middleware resolved (missing X-Account-Id => default demo)
+    console.log('[trading] closePosition', { userId, positionId, activeAccountId: accountId, activeAccountType: req.activeAccount?.type ?? null });
     const result = await positionsService.closePosition(userId, positionId, { volume, pnl, closePrice, accountId });
     emitTradeUpdate(userId, null).catch(() => {});
     res.json(result);

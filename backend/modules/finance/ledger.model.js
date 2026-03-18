@@ -26,3 +26,14 @@ export const ledgerIndexes = [
   { keys: { createdAt: -1 }, options: {} },
   { keys: { entityId: 1, createdAt: -1 }, options: {} },
 ];
+
+/**
+ * Unique index for WALLET ledger idempotency (DB-level duplicate prevention).
+ * One event per (accountCode, entityId, referenceType, referenceId).
+ * Do NOT add to ledgerIndexes in ensure-indexes.js — create only after duplicates
+ * are resolved via scripts/ensure-wallet-ledger-unique-index.js.
+ */
+export const WALLET_LEDGER_UNIQUE_INDEX = {
+  keys: { accountCode: 1, entityId: 1, referenceType: 1, referenceId: 1 },
+  options: { unique: true, name: 'wallet_event_unique' },
+};

@@ -28,7 +28,7 @@ export async function executeMarketOrder(order, executionPrice) {
     takeProfit: order.takeProfit ?? null,
     stopLoss: order.stopLoss ?? null,
   });
-  await orderRepo.updateStatus(order.id, order.userId, 'filled', { filledVolume: order.volume }, order.accountId);
+  await orderRepo.updateStatus(order.id, order.userId, 'filled', { filledVolume: order.volume, price }, order.accountId);
   return { positionId: position?.id, executionPrice: price };
 }
 

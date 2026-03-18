@@ -2,6 +2,7 @@
  * Trade Manager / PAMM controller
  */
 import pammService from './pamm.service.js';
+import pammFlagsRepo from './pamm.flags.repository.js';
 
 async function listManagers(req, res, next) {
   try {
@@ -131,6 +132,22 @@ async function follow(req, res, next) {
   }
 }
 
+async function acceptTerms(req, res, next) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const { fundId } = req.body;
+    if (!fundId) {
+      return res.status(400).json({ error: 'fundId is required' });
+    }
+    const ipAddress = req.ip || req.headers?.['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || null;
+    const result = await pammService.recordAcceptance(userId, fundId, ipAddress);
+    res.status(201).json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
 async function unfollow(req, res, next) {
   try {
     const userId = req.user?.id;
@@ -215,6 +232,21 @@ async function getMyInvestors(req, res, next) {
   }
 }
 
+async function getInvestorDetail(req, res, next) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const fundId = req.query.fundId || null;
+    const followerId = req.query.followerId || null;
+    if (!fundId || !followerId) return res.status(400).json({ error: 'fundId and followerId required' });
+    const detail = await pammService.getInvestorDetail(fundId, followerId, userId);
+    if (!detail) return res.status(404).json({ error: 'Investor not found or access denied' });
+    res.json(detail);
+  } catch (e) {
+    next(e);
+  }
+}
+
 async function getMyTrades(req, res, next) {
   try {
     const userId = req.user?.id;
@@ -244,6 +276,20 @@ async function getTrades(req, res, next) {
   }
 }
 
+async function getConfig(req, res, next) {
+  try {
+    const killSwitch = await pammFlagsRepo.getFlag('pamm_global_kill_switch', false);
+    const envEnabled = process.env.PAMM_ENABLED !== 'false';
+    const enabledForUsers = envEnabled && !killSwitch;
+    res.json({
+      enabledForUsers,
+      message: enabledForUsers ? 'PAMM is enabled for users.' : 'PAMM is temporarily disabled for users.',
+    });
+  } catch (e) {
+    next(e);
+  }
+}
+
 export default {
   listManagers,
   getManager,
@@ -255,12 +301,15 @@ export default {
   getPammTradingAccount,
   updateManagerProfile,
   follow,
+  acceptTerms,
   unfollow,
   addFunds,
   withdraw,
   getMyAllocations,
   getMyFollowerTrades,
   getMyInvestors,
+  getInvestorDetail,
   getMyTrades,
   getTrades,
+  getConfig,
 };

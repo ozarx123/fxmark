@@ -89,14 +89,6 @@ export const PERMISSION_GROUPS = [
     ],
   },
   {
-    id: 'pamm',
-    label: 'PAMM',
-    permissions: [
-      { id: 'pamm.view', label: 'View PAMM / investors' },
-      { id: 'pamm.manage', label: 'Manage allocation & fees' },
-    ],
-  },
-  {
     id: 'system',
     label: 'System & settings',
     permissions: [
@@ -127,7 +119,6 @@ export function getDefaultRolePermissions() {
     master_ib: ['ib.view_tree', 'ib.commissions', 'ib.withdraw'],
     sub_ib: ['ib.commissions', 'ib.view_tree'],
     trader: [],
-    pamm_manager: ['pamm.view', 'pamm.manage'],
-    investor: ['pamm.view'],
+    investor: [],
   };
 }

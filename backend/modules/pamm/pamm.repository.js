@@ -7,6 +7,7 @@ import { ObjectId } from 'mongodb';
 const MANAGERS_COLLECTION = 'pamm_managers';
 const ALLOCATIONS_COLLECTION = 'pamm_allocations';
 const TRADES_COLLECTION = 'manager_trades';
+const ACCEPTANCE_COLLECTION = 'pamm_investor_acceptance';
 
 async function managersCol() {
   const db = await getDb();
@@ -21,6 +22,11 @@ async function allocationsCol() {
 async function tradesCol() {
   const db = await getDb();
   return db.collection(TRADES_COLLECTION);
+}
+
+async function acceptanceCol() {
+  const db = await getDb();
+  return db.collection(ACCEPTANCE_COLLECTION);
 }
 
 // ---------- Managers ----------
@@ -57,8 +63,13 @@ async function getManagerById(id) {
 }
 
 async function getFundByTradingAccountId(tradingAccountId) {
+  if (tradingAccountId == null || tradingAccountId === '') return null;
   const col = await managersCol();
-  const m = await col.findOne({ tradingAccountId });
+  const idStr = String(tradingAccountId);
+  let m = await col.findOne({ tradingAccountId: idStr });
+  if (!m && ObjectId.isValid(idStr) && idStr.length === 24) {
+    m = await col.findOne({ tradingAccountId: new ObjectId(idStr) });
+  }
   return m ? { id: m._id.toString(), ...m, _id: undefined } : null;
 }
 
@@ -127,6 +138,49 @@ async function getAllocationById(id, followerId) {
   return a ? { id: a._id.toString(), ...a, _id: undefined, realizedPnl: a.realizedPnl != null ? Number(a.realizedPnl) : 0 } : null;
 }
 
+/** Admin: load allocation by id only (caller must verify follower). */
+async function getAllocationByIdOnly(allocationId, options = {}) {
+  if (!ObjectId.isValid(allocationId)) return null;
+  const col = await allocationsCol();
+  const q = { _id: new ObjectId(allocationId) };
+  const opts = options.session ? { session: options.session } : {};
+  const a = await col.findOne(q, opts);
+  return a
+    ? { id: a._id.toString(), ...a, _id: undefined, realizedPnl: a.realizedPnl != null ? Number(a.realizedPnl) : 0 }
+    : null;
+}
+
+function followerIdMatches(docFollowerId, userId) {
+  const u = String(userId ?? '');
+  const f = docFollowerId;
+  if (f == null) return false;
+  if (String(f) === u) return true;
+  try {
+    if (ObjectId.isValid(u) && u.length === 24 && f?.equals && f.equals(new ObjectId(u))) return true;
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
+/** Allocations for a user (followerId stored as string or ObjectId). */
+async function listAllocationsByFollowerFlexible(userId, options = {}) {
+  const col = await allocationsCol();
+  const { status, limit = 50 } = options;
+  const uid = String(userId ?? '');
+  const followerOr = [{ followerId: uid }];
+  if (ObjectId.isValid(uid) && uid.length === 24) followerOr.push({ followerId: new ObjectId(uid) });
+  const filter = { $or: followerOr };
+  if (status) filter.status = status;
+  const list = await col.find(filter).sort({ createdAt: -1 }).limit(limit).toArray();
+  return list.map((a) => ({
+    id: a._id.toString(),
+    ...a,
+    _id: undefined,
+    realizedPnl: a.realizedPnl != null ? Number(a.realizedPnl) : 0,
+  }));
+}
+
 async function getActiveAllocation(followerId, managerId) {
   const col = await allocationsCol();
   const a = await col.findOne({ followerId, managerId, status: 'active' });
@@ -148,9 +202,13 @@ async function listAllocationsByFollower(followerId, options = {}) {
 }
 
 async function listAllocationsByManager(managerId, options = {}) {
+  if (managerId == null || managerId === '') return [];
   const col = await allocationsCol();
   const { status, limit = 50 } = options;
-  const filter = { managerId };
+  const idStr = String(managerId);
+  const filter = idStr.length === 24 && ObjectId.isValid(idStr)
+    ? { $or: [{ managerId: idStr }, { managerId: new ObjectId(idStr) }] }
+    : { managerId: idStr };
   if (status) filter.status = status;
   const list = await col.find(filter).sort({ createdAt: -1 }).limit(limit).toArray();
   return list.map((a) => ({
@@ -173,13 +231,15 @@ async function updateAllocation(id, update) {
 }
 
 /** Increment realized P&L on an allocation (when PAMM distributes P&L to investor) */
-async function incrementAllocationRealizedPnl(allocationId, amount) {
+async function incrementAllocationRealizedPnl(allocationId, amount, options = {}) {
   if (!ObjectId.isValid(allocationId)) return null;
   const col = await allocationsCol();
+  const opts = { returnDocument: 'after' };
+  if (options.session) opts.session = options.session;
   const result = await col.findOneAndUpdate(
     { _id: new ObjectId(allocationId) },
     { $inc: { realizedPnl: Number(amount) || 0 }, $set: { updatedAt: new Date() } },
-    { returnDocument: 'after' }
+    opts
   );
   return result ? { id: result._id.toString(), ...result, _id: undefined } : null;
 }
@@ -211,12 +271,74 @@ async function getFundCumulativePnl(fundId) {
   return result ? (result.total || 0) : 0;
 }
 
+/** Trades for Bull Run: today's PnL sum and monthly PnL by month (year-month key). */
+async function getFundTradesPnLByPeriod(fundId) {
+  const col = await tradesCol();
+  const trades = await col.find({ managerId: fundId }).sort({ createdAt: 1 }).toArray();
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let todayProfit = 0;
+  const byMonth = {};
+  for (const t of trades) {
+    const pnl = Number(t.pnl) || 0;
+    const created = t.createdAt ? new Date(t.createdAt) : null;
+    if (created && created >= todayStart) todayProfit += pnl;
+    if (created) {
+      const key = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, '0')}`;
+      if (!byMonth[key]) byMonth[key] = { sum: 0, month: created.toLocaleString('en-US', { month: 'long' }), year: created.getFullYear() };
+      byMonth[key].sum += pnl;
+    }
+  }
+  const monthlyPerformance = Object.entries(byMonth)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .slice(-12)
+    .map(([, v]) => ({ month: v.month, year: v.year, profit: v.sum, profitPercent: null }));
+  return { todayProfit, monthlyPerformance, allTrades: trades };
+}
+
 /** Resolve PAMM fund id from a closed position id (manager_trades stores positionId). */
 async function getFundIdByPositionId(positionId) {
   if (!positionId) return null;
   const col = await tradesCol();
   const t = await col.findOne({ positionId: String(positionId) });
   return t?.managerId ?? null;
+}
+
+/** Increment Bull Run reserve (fundType 'ai'). Uses $inc for reserveBalance on pamm_managers. */
+async function incrementFundReserve(fundId, amount) {
+  if (!ObjectId.isValid(fundId) || !Number.isFinite(amount)) return null;
+  const col = await managersCol();
+  const result = await col.findOneAndUpdate(
+    { _id: new ObjectId(fundId) },
+    { $inc: { reserveBalance: Number(amount) }, $set: { updatedAt: new Date() } },
+    { returnDocument: 'after' }
+  );
+  return result ? (result.reserveBalance != null ? Number(result.reserveBalance) : 0) : null;
+}
+
+// ---------- Investor terms acceptance (Bull Run) ----------
+/** Record that investor accepted terms for a strategy/fund before following. */
+async function recordAcceptance(investorId, strategyId, acceptedTerms, ipAddress) {
+  const col = await acceptanceCol();
+  const now = new Date();
+  await col.insertOne({
+    investorId: String(investorId),
+    strategyId: String(strategyId),
+    acceptedTerms: !!acceptedTerms,
+    acceptanceTimestamp: now,
+    ipAddress: ipAddress || null,
+  });
+}
+
+/** Check if investor has already accepted terms for this strategy/fund. */
+async function hasAccepted(investorId, strategyId) {
+  const col = await acceptanceCol();
+  const doc = await col.findOne({
+    investorId: String(investorId),
+    strategyId: String(strategyId),
+    acceptedTerms: true,
+  });
+  return !!doc;
 }
 
 export default {
@@ -231,6 +353,9 @@ export default {
   updateManagerById,
   createAllocation,
   getAllocationById,
+  getAllocationByIdOnly,
+  followerIdMatches,
+  listAllocationsByFollowerFlexible,
   getActiveAllocation,
   listAllocationsByFollower,
   listAllocationsByManager,
@@ -239,5 +364,9 @@ export default {
   createTrade,
   listTradesByManager,
   getFundCumulativePnl,
+  getFundTradesPnLByPeriod,
   getFundIdByPositionId,
+  incrementFundReserve,
+  recordAcceptance,
+  hasAccepted,
 };

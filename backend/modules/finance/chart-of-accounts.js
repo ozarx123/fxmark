@@ -6,6 +6,17 @@
  * Revenue (4xxx): credit normal
  * Expenses (5xxx): debit normal
  */
+
+/**
+ * Company entity — the platform's own ledger and wallet.
+ * All company income, expenses, assets and liabilities post to this entity.
+ * Not owned by any user; superadmins (and admin-panel roles) have full access.
+ */
+export const ENTITY_COMPANY = 'company';
+
+/** @deprecated Use ENTITY_COMPANY. Kept for compatibility; same value. */
+export const SYSTEM_ACCOUNT_ID = ENTITY_COMPANY;
+
 export const ACCOUNTS = {
   // Assets
   CASH_BANK: '1200',       // External cash/bank (deposits in, withdrawals out)
