@@ -75,12 +75,31 @@ $deployArgs = @(
     "--platform=managed",
     "--allow-unauthenticated",
     "--port=8080",
-    "--set-env-vars=NODE_ENV=production,TWELVE_DATA_WS=false",
     "--timeout=3600",
     "--no-use-http2",
     "--cpu-boost",
     "--memory=512Mi"
 )
+
+$envPairs = @("NODE_ENV=production", "TWELVE_DATA_WS=false")
+$ErrorActionPreference = "SilentlyContinue"
+gcloud compute networks vpc-access connectors describe fxmark-run-connector --region=$Region 2>$null | Out-Null
+$hasVpcConnector = $LASTEXITCODE -eq 0
+gcloud redis instances describe fxmark-redis --region=$Region 2>$null | Out-Null
+$hasRedisInst = $LASTEXITCODE -eq 0
+$ErrorActionPreference = "Stop"
+if ($hasVpcConnector) {
+    $deployArgs += "--vpc-connector=fxmark-run-connector"
+    $deployArgs += "--vpc-egress=private-ranges-only"
+}
+if ($hasVpcConnector -and $hasRedisInst) {
+    $redisHost = (gcloud redis instances describe fxmark-redis --region=$Region --format="value(host)" 2>$null)
+    if ($redisHost) {
+        $envPairs += "REDIS_HOST=$redisHost"
+        $envPairs += "REDIS_PORT=6379"
+    }
+}
+$deployArgs += "--update-env-vars=" + ($envPairs -join ",")
 
 # Add secrets if they exist in Secret Manager
 $prevErr = $ErrorActionPreference
@@ -91,10 +110,17 @@ gcloud secrets describe jwt-secret 2>$null | Out-Null
 $hasJwt = $LASTEXITCODE -eq 0
 gcloud secrets describe twelve-data-api-key 2>$null | Out-Null
 $hasTwelveData = $LASTEXITCODE -eq 0
+gcloud secrets describe finnhub-api-key 2>$null | Out-Null
+$hasFinnhub = $LASTEXITCODE -eq 0
 $ErrorActionPreference = $prevErr
-if ($hasMongo) { $deployArgs += "--set-secrets=CONNECTION_STRING=mongo-uri:latest" }
-if ($hasJwt) { $deployArgs += "--set-secrets=JWT_SECRET=jwt-secret:latest" }
-if ($hasTwelveData) { $deployArgs += "--set-secrets=TWELVE_DATA_API_KEY=twelve-data-api-key:latest" }
+$secretPairs = @()
+if ($hasMongo) { $secretPairs += "CONNECTION_STRING=mongo-uri:latest" }
+if ($hasJwt) { $secretPairs += "JWT_SECRET=jwt-secret:latest" }
+if ($hasTwelveData) { $secretPairs += "TWELVE_DATA_API_KEY=twelve-data-api-key:latest" }
+if ($hasFinnhub) { $secretPairs += "FINNHUB_API_KEY=finnhub-api-key:latest" }
+if ($secretPairs.Count -gt 0) {
+    $deployArgs += "--set-secrets=" + ($secretPairs -join ",")
+}
 
 & gcloud @deployArgs
 if ($LASTEXITCODE -ne 0) { exit 1 }
@@ -104,6 +130,5 @@ Write-Host "=== Deployment complete ===" -ForegroundColor Green
 $url = gcloud run services describe $ServiceName --region=$Region --format='value(status.url)' 2>$null
 if ($url) { Write-Host ('Service URL: ' + $url) -ForegroundColor Cyan }
 Write-Host ""
-Write-Host "If CONNECTION_STRING/JWT_SECRET/TWELVE_DATA_API_KEY are not set, add them via:"
-Write-Host "  gcloud run services update $ServiceName --region=$Region --set-env-vars=CONNECTION_STRING=...,JWT_SECRET=...,TWELVE_DATA_API_KEY=..."
-Write-Host "  Or use Secret Manager: scripts/setup-secrets.ps1"
+Write-Host "If secrets/env vars are missing, use Secret Manager: scripts\setup-secrets.ps1"
+Write-Host "  Or: gcloud run services update $ServiceName --region=$Region --update-secrets=FINNHUB_API_KEY=finnhub-api-key:latest"

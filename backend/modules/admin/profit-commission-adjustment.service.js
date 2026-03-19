@@ -2,12 +2,12 @@
  * Superadmin: manual PAMM realized P&L, wallet profit credit, IB pending commission — single transaction.
  */
 import { randomBytes } from 'crypto';
-import { withTransaction } from '../../config/mongo.js';
 import userRepo from '../users/user.repository.js';
 import pammRepo from '../pamm/pamm.repository.js';
 import ibRepo from '../ib/ib.repository.js';
 import walletRepo from '../wallet/wallet.repository.js';
 import ledgerService from '../finance/ledger.service.js';
+import financialTransactionService from '../finance/financial-transaction.service.js';
 import audit from './audit.logs.js';
 
 const MAX_WALLET = 500_000;
@@ -200,12 +200,18 @@ export async function applyAdjustment(params) {
       await ledgerService.postCommissionEarned(ibUserId, ibAmt, 'USD', commissionId, null, { session });
       result.ibCommissionId = commissionId;
     }
-  });
+  }, { label: 'profit_commission_adjustment' });
 
   audit.log(String(adminUserId), 'profit_commission_adjustment', `user:${targetUserId}`, {
     reason: r,
     ...result,
   });
+
+  if (hasWallet) {
+    await financialTransactionService.verifyWalletLedgerAfterMutation(targetUserId, 'USD', {
+      flow: 'profit_commission_adjustment',
+    });
+  }
 
   return { success: true, message: 'Adjustment applied', details: result };
 }

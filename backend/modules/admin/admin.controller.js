@@ -2,7 +2,6 @@
  * Admin controller
  * Leads, tickets, KYC override, PAMM privacy, broadcast, users, PAMM approval, IB commission, trading monitor
  */
-import { withTransaction } from '../../config/mongo.js';
 import userRepo from '../users/user.repository.js';
 import tradingAccountRepo from '../trading/trading-account.repository.js';
 import positionsService from '../trading/positions.service.js';
@@ -25,6 +24,7 @@ import alertService from './alert.service.js';
 import * as profitCommissionAdjustment from './profit-commission-adjustment.service.js';
 import * as companyFinancialsService from './company-financials.service.js';
 import ledgerRepo from '../finance/ledger.repository.js';
+import financialTransactionService from '../finance/financial-transaction.service.js';
 import { ACCOUNT_NAMES, ACCOUNTS, ENTITY_COMPANY } from '../finance/chart-of-accounts.js';
 
 async function getLeads(req, res, next) {
@@ -115,18 +115,24 @@ async function createPammFund(req, res, next) {
     if (initialDeposit > 0) {
       const wallet = await walletRepo.getOrCreateWallet(userId, 'USD');
       if ((wallet.balance ?? 0) >= initialDeposit) {
-        await walletRepo.updateBalance(userId, 'USD', -initialDeposit);
-        await walletRepo.createTransaction({
-          userId,
-          type: 'pamm_manager_cap_in',
-          amount: -initialDeposit,
-          currency: 'USD',
-          status: 'completed',
-          reference: id,
-          destination: `pamm:${id}`,
-          completedAt: new Date(),
-        });
-        await ledgerService.postPammManagerCapitalAdd(userId, initialDeposit, 'USD', id, id);
+        await financialTransactionService.runPairedWithTransaction(async (session) => {
+          await financialTransactionService.syncWalletToLedgerAfterMutation(session, userId, 'USD', async (s) => {
+            await ledgerService.postPammManagerCapitalAdd(userId, initialDeposit, 'USD', id, id, { session: s });
+          });
+          await walletRepo.createTransaction(
+            {
+              userId,
+              type: 'pamm_manager_cap_in',
+              amount: -initialDeposit,
+              currency: 'USD',
+              status: 'completed',
+              reference: id,
+              destination: `pamm:${id}`,
+              completedAt: new Date(),
+            },
+            { session }
+          );
+        }, { label: 'admin_pamm_fund_create_cap' });
       }
     }
 
@@ -757,7 +763,7 @@ async function addFundsToWallet(req, res, next) {
     }
     const user = await userRepo.findById(userId);
     if (!user) return res.status(404).json({ error: 'User not found' });
-    const wallet = await withTransaction(async (session) => {
+    const wallet = await financialTransactionService.runPairedWithTransaction(async (session) => {
       const txId = await walletRepo.createTransaction({
         userId,
         type: 'admin_credit',
@@ -771,6 +777,9 @@ async function addFundsToWallet(req, res, next) {
       await ledgerService.postAdminCredit(userId, amt, currency || 'USD', txId, { session });
       const w = await walletRepo.updateBalance(userId, currency || 'USD', amt, { session });
       return w;
+    }, { label: 'admin_add_funds' });
+    await financialTransactionService.verifyWalletLedgerAfterMutation(userId, currency || 'USD', {
+      flow: 'admin_credit',
     });
     res.json({
       success: true,

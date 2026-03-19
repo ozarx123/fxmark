@@ -4,12 +4,14 @@
  */
 import bcrypt from 'bcryptjs';
 import userRepo from '../users/user.repository.js';
-import walletRepo from '../wallet/wallet.repository.js';
-import ledgerService from '../finance/ledger.service.js';
+import financialTransactionService from '../finance/financial-transaction.service.js';
 
 const SALT_ROUNDS = 10;
 const CURRENCY = 'USD';
-const IMPORT_REFERENCE = 'bulk_import';
+/** Per-user so ledger unique key (accountCode, entityId, referenceType, referenceId) is not shared across imports. */
+function importOpeningBalanceReferenceId(userId) {
+  return `bulk_import:${String(userId)}`;
+}
 
 /** Default main password for all imported users (hashed; never stored plaintext). */
 const DEFAULT_MAIN_PASSWORD =
@@ -156,37 +158,44 @@ export async function runBulkImport(rows, dryRun = true) {
     const updatedAt = parsedDate || new Date();
 
     try {
-      const userId = await userRepo.createOne({
-        accountNo: row.account_no,
-        name: row.full_name || row.email.split('@')[0],
-        email: row.email,
-        phone: row.mobile || undefined,
-        passwordHash: defaultMainHash,
-        investorPasswordHash: defaultInvestorHash,
-        referralCode: referralCodeToSet,
-        role: 'user',
-        kycStatus: 'pending',
-        profileComplete: false,
-        emailVerified: true, // all imported users: email treated as verified so they can log in immediately
-        isActive: row.is_active,
-        createdAt,
-        updatedAt,
-      });
-
       const balance = Number(row.wallet_balance) || 0;
+      const userId = await financialTransactionService.runPairedWithTransaction(async (session) => {
+        const uid = await userRepo.createOne(
+          {
+            accountNo: row.account_no,
+            name: row.full_name || row.email.split('@')[0],
+            email: row.email,
+            phone: row.mobile || undefined,
+            passwordHash: defaultMainHash,
+            investorPasswordHash: defaultInvestorHash,
+            referralCode: referralCodeToSet,
+            role: 'user',
+            kycStatus: 'pending',
+            profileComplete: false,
+            emailVerified: true, // all imported users: email treated as verified so they can log in immediately
+            isActive: row.is_active,
+            createdAt,
+            updatedAt,
+          },
+          { session }
+        );
+        if (balance > 0) {
+          await financialTransactionService.atomicImportOpeningBalanceInSession(
+            session,
+            uid,
+            balance,
+            CURRENCY,
+            importOpeningBalanceReferenceId(uid)
+          );
+        }
+        return uid;
+      }, { label: 'bulk_import_user_row' });
+
       if (balance > 0) {
-        await walletRepo.getOrCreateWallet(userId, CURRENCY);
-        await walletRepo.updateBalance(userId, CURRENCY, balance);
-        await walletRepo.createTransaction({
-          userId,
-          type: 'import_opening_balance',
-          amount: balance,
-          currency: CURRENCY,
-          status: 'completed',
-          reference: IMPORT_REFERENCE,
-          completedAt: new Date(),
+        await financialTransactionService.verifyWalletLedgerAfterMutation(userId, CURRENCY, {
+          flow: 'bulk_import_opening_balance',
+          reference: importOpeningBalanceReferenceId(userId),
         });
-        await ledgerService.postImportOpeningBalance(userId, balance, CURRENCY, IMPORT_REFERENCE);
       }
 
       report.created.push({

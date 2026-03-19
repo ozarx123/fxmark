@@ -15,5 +15,9 @@ dist/
 build/
 .env
 .env.local
+
+# Backend local scratch probes (never deploy)
+backend/_*.mjs
+backend/_*.json
 *.log
 .DS_Store

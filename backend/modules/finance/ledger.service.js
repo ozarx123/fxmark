@@ -189,13 +189,39 @@ async function postAdminCredit(userId, amount, currency, referenceId, options = 
 
 /**
  * Post bulk import opening balance: Cash/Bank (debit) -> Wallet (credit).
- * referenceType: import_opening_balance, referenceId: bulk_import (or custom).
+ * referenceType: import_opening_balance. Idempotent per (userId, referenceId, amount).
  */
-async function postImportOpeningBalance(userId, amount, currency, referenceId) {
-  return post([
-    { accountCode: ACCOUNTS.CASH_BANK, entityId: SYSTEM_ACCOUNT_ID, debit: amount, credit: 0, currency, referenceType: 'import_opening_balance', referenceId },
-    { accountCode: ACCOUNTS.WALLET, entityId: userId, debit: 0, credit: amount, currency, referenceType: 'import_opening_balance', referenceId },
-  ]);
+async function postImportOpeningBalance(userId, amount, currency, referenceId, options = {}) {
+  const amt = Number(amount) || 0;
+  if (amt < 0.001) return { ids: [], entries: [] };
+  const exists = await ledgerRepo.existsWalletEntryForEvent(userId, 'import_opening_balance', referenceId, amt, 0, options);
+  if (exists) {
+    logLedgerIdempotencySkip('import_opening_balance', referenceId, userId, amt, 0);
+    return { ids: [], entries: [] };
+  }
+  return post(
+    [
+      {
+        accountCode: ACCOUNTS.CASH_BANK,
+        entityId: SYSTEM_ACCOUNT_ID,
+        debit: amt,
+        credit: 0,
+        currency,
+        referenceType: 'import_opening_balance',
+        referenceId,
+      },
+      {
+        accountCode: ACCOUNTS.WALLET,
+        entityId: userId,
+        debit: 0,
+        credit: amt,
+        currency,
+        referenceType: 'import_opening_balance',
+        referenceId,
+      },
+    ],
+    options
+  );
 }
 
 /**

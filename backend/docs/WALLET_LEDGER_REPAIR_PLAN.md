@@ -106,7 +106,7 @@ For each mismatched user output:
 
 ## 5. DB unique index (wallet ledger idempotency)
 
-- **Index:** Unique on `(accountCode, entityId, referenceType, referenceId)` for ledger_entries. Defined in `ledger.model.js` as `WALLET_LEDGER_UNIQUE_INDEX`; **not** applied by `ensure-indexes.js` (so existing deployments are not broken if duplicates exist).
+- **Index:** Partial unique `wallet_event_unique` on `(accountCode, entityId, referenceType, referenceId)` for **WALLET (`2110`)** rows only (`partialFilterExpression`). Defined in `ledger.model.js` as `WALLET_LEDGER_UNIQUE_INDEX`; **not** applied by `ensure-indexes.js` (so existing deployments are not broken if duplicates exist).
 - **Creation:** Run `node scripts/ensure-wallet-ledger-unique-index.js` to **report** duplicate WALLET entries by that business key. Run with `--create` to create the index **only when no duplicates exist**; otherwise the script exits with a report and does not create the index.
 - **If duplicates exist:** Index creation is blocked. Resolve by: (1) running the repair script (`--dry-run` then `--apply`) to correct wallet balances; (2) optionally resolving duplicate ledger rows via a separate, approved process (this plan does not delete ledger rows); (3) re-run `ensure-wallet-ledger-unique-index.js --create`.
 - **Credit/debit not in key:** One economic event = one wallet leg; the same (entityId, referenceType, referenceId) must not appear more than once for WALLET. Including amount would allow same event with different amounts to be stored multiple times; we prevent any second row for the same event.

@@ -101,15 +101,17 @@ async function listTopUsersByOpenPositions(limit = 10) {
   return list.map((x) => ({ userId: x.userId, count: x.count || 0, totalVolume: x.totalVolume || 0 }));
 }
 
-async function update(id, userId, update, accountId = null) {
+async function update(id, userId, update, accountId = null, options = {}) {
   if (!ObjectId.isValid(id)) return null;
   const c = await col();
   const filter = { _id: new ObjectId(id), userId };
   if (accountId) filter.$or = [{ accountId }, { accountId: { $exists: false } }, { accountId: null }];
+  const opts = { returnDocument: 'after' };
+  if (options.session) opts.session = options.session;
   const result = await c.findOneAndUpdate(
     filter,
     { $set: { ...update, updatedAt: new Date() } },
-    { returnDocument: 'after' }
+    opts
   );
   return result ? { id: result._id.toString(), ...result, _id: undefined } : null;
 }

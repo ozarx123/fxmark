@@ -111,12 +111,12 @@ export default function JournalPanel({
         {filtered.length === 0 ? (
           <p className="journal-panel__empty">No events yet. Order and position events will appear here.</p>
         ) : (
-          filtered.map((e) => {
+          filtered.map((e, i) => {
             const entryId = e.id;
             const note = entryId ? notes[entryId] : '';
             const isEditing = editingNoteId === entryId;
             return (
-              <div key={e.id || Math.random()} className={`journal-panel__entry journal-panel__entry--${e.severity || 'info'}`}>
+              <div key={e.id || `entry-${i}`} className={`journal-panel__entry journal-panel__entry--${e.severity || 'info'}`}>
                 <span className="journal-panel__entry-time">{e.time}</span>
                 <span className="journal-panel__entry-type">{EVENT_TYPES[e.type] || e.type}</span>
                 <span className="journal-panel__entry-msg">{e.message || JSON.stringify(e)}</span>

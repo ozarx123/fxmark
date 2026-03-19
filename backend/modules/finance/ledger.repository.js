@@ -96,8 +96,8 @@ async function listByEntity(entityId, options = {}) {
   return list.map((e) => ({ id: e._id.toString(), ...e, _id: undefined }));
 }
 
-/** Get balance for account + entity. For ENTITY_COMPANY includes legacy SYSTEM_ACCOUNT. */
-async function getBalance(entityId, accountCode, asOf = null) {
+/** Get balance for account + entity. For ENTITY_COMPANY includes legacy SYSTEM_ACCOUNT. options.session for transactions. */
+async function getBalance(entityId, accountCode, asOf = null, options = {}) {
   const c = await col();
   const filter = { ...entityMatch(entityId), accountCode };
   if (asOf) filter.createdAt = { $lte: new Date(asOf) };
@@ -105,7 +105,8 @@ async function getBalance(entityId, accountCode, asOf = null) {
     { $match: filter },
     { $group: { _id: null, debit: { $sum: '$debit' }, credit: { $sum: '$credit' } } },
   ];
-  const r = await c.aggregate(pipeline).next();
+  const aggOpts = options.session ? { session: options.session } : {};
+  const r = await c.aggregate(pipeline, aggOpts).next();
   if (!r) return 0;
   const first = accountCode[0];
   if (first === '1' || first === '5') return (r.debit || 0) - (r.credit || 0);

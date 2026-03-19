@@ -1,5 +1,5 @@
 /**
- * Email service — Gmail SMTP via Nodemailer.
+ * Email service — Gmail SMTP via Nodemailer (App Password).
  * Used for verification emails and notification emails.
  */
 import nodemailer from 'nodemailer';
@@ -9,11 +9,15 @@ let transporter = null;
 
 function getTransporter() {
   if (transporter) return transporter;
-  // Prefer config (from env.config.js); fallback to process.env in case env was loaded after config cache
-  const user = (config.gmailUser || (process.env.GMAIL_USER || '').trim().toLowerCase()) || '';
-  const pass = (config.gmailAppPassword || (process.env.GMAIL_APP_PASSWORD || '').replace(/\s+/g, '').trim()) || '';
+  const user =
+    (config.gmailUser || (process.env.GMAIL_USER || '').trim().toLowerCase()) || '';
+  const pass =
+    (config.gmailAppPassword || (process.env.GMAIL_APP_PASSWORD || '').replace(/\s+/g, '').trim()) ||
+    '';
   if (!user || !pass) {
-    console.warn('[email] GMAIL_USER or GMAIL_APP_PASSWORD not set; email sending disabled.');
+    console.warn(
+      '[email] Gmail not configured: set GMAIL_USER and GMAIL_APP_PASSWORD (see .env.example).'
+    );
     return null;
   }
   transporter = nodemailer.createTransport({

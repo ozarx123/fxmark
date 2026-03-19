@@ -118,6 +118,7 @@ export const errorHandler = (err, req, res, next) => {
         requestId: req.id,
       };
   if (status === 403 && err.code) body.code = err.code;
+  if (body.stack) delete body.stack;
   res.status(status).json(body);
 };
 

@@ -176,7 +176,6 @@ export default function ChartWorkspace({
           )}
         </div>
       </div>
-      )}
       {!compactMobile && onIndicatorsChange && (
         <div className="terminal-chart-workspace__indicators">
           <label className="terminal-chart-workspace__indicator">
@@ -311,7 +310,6 @@ export default function ChartWorkspace({
         <button type="button" className="terminal-chart-workspace__util-btn" title="Zoom out" onClick={zoomOut}>−</button>
         <button type="button" className="terminal-chart-workspace__util-btn" title="Reset chart" onClick={resetChart}>Reset</button>
       </div>
-      )}
       {!compactMobile && symbolPositions.length > 0 && (
         <div className="chart-position-chips">
           {symbolPositions.map((p) => {

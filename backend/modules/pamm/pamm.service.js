@@ -7,6 +7,7 @@ import pammFlagsRepo from './pamm.flags.repository.js';
 import tradingAccountRepo from '../trading/trading-account.repository.js';
 import walletRepo from '../wallet/wallet.repository.js';
 import ledgerService from '../finance/ledger.service.js';
+import financialTransactionService from '../finance/financial-transaction.service.js';
 import positionRepo from '../trading/position.repository.js';
 import userRepo from '../users/user.repository.js';
 
@@ -221,18 +222,24 @@ async function registerAsManager(userId, payload) {
   if (initialDeposit > 0) {
     const wallet = await walletRepo.getOrCreateWallet(userId, 'USD');
     if ((wallet.balance ?? 0) >= initialDeposit) {
-      await walletRepo.updateBalance(userId, 'USD', -initialDeposit);
-      await walletRepo.createTransaction({
-        userId,
-        type: 'pamm_manager_cap_in',
-        amount: -initialDeposit,
-        currency: 'USD',
-        status: 'completed',
-        reference: id,
-        destination: `pamm:${id}`,
-        completedAt: new Date(),
-      });
-      await ledgerService.postPammManagerCapitalAdd(userId, initialDeposit, 'USD', id, id);
+      await financialTransactionService.runPairedWithTransaction(async (session) => {
+        await financialTransactionService.syncWalletToLedgerAfterMutation(session, userId, 'USD', async (s) => {
+          await ledgerService.postPammManagerCapitalAdd(userId, initialDeposit, 'USD', id, id, { session: s });
+        });
+        await walletRepo.createTransaction(
+          {
+            userId,
+            type: 'pamm_manager_cap_in',
+            amount: -initialDeposit,
+            currency: 'USD',
+            status: 'completed',
+            reference: id,
+            destination: `pamm:${id}`,
+            completedAt: new Date(),
+          },
+          { session }
+        );
+      }, { label: 'pamm_register_manager_cap' });
     }
   }
   const manager = await pammRepo.getManagerById(id);
@@ -335,33 +342,47 @@ async function updateManagerProfile(userId, payload) {
       if (delta > 0) {
         const wallet = await walletRepo.getOrCreateWallet(uid, 'USD');
         if ((wallet.balance ?? 0) >= delta) {
-          await walletRepo.updateBalance(uid, 'USD', -delta);
-          await walletRepo.createTransaction({
-            userId: uid,
-            type: 'pamm_manager_cap_in',
-            amount: -delta,
-            currency: 'USD',
-            status: 'completed',
-            reference: current.id,
-            destination: `pamm:${current.id}`,
-            completedAt: new Date(),
-          });
-          await ledgerService.postPammManagerCapitalAdd(userId, delta, 'USD', current.id, current.id);
+          await financialTransactionService.runPairedWithTransaction(async (session) => {
+            await financialTransactionService.syncWalletToLedgerAfterMutation(session, uid, 'USD', async (s) => {
+              await ledgerService.postPammManagerCapitalAdd(userId, delta, 'USD', current.id, current.id, { session: s });
+            });
+            await walletRepo.createTransaction(
+              {
+                userId: uid,
+                type: 'pamm_manager_cap_in',
+                amount: -delta,
+                currency: 'USD',
+                status: 'completed',
+                reference: current.id,
+                destination: `pamm:${current.id}`,
+                completedAt: new Date(),
+              },
+              { session }
+            );
+          }, { label: 'pamm_manager_cap_in' });
           await tradingAccountRepo.updateBalance(current.tradingAccountId, userId, delta);
         }
       } else if (delta < 0) {
         const withdrawAmount = -delta;
-        await ledgerService.postPammManagerCapitalWithdraw(userId, withdrawAmount, 'USD', current.id, current.id);
-        await walletRepo.updateBalance(uid, 'USD', withdrawAmount);
-        await walletRepo.createTransaction({
-          userId: uid,
-          type: 'pamm_manager_cap_out',
-          amount: withdrawAmount,
-          currency: 'USD',
-          status: 'completed',
-          reference: current.id,
-          completedAt: new Date(),
-        });
+        await financialTransactionService.runPairedWithTransaction(async (session) => {
+          await financialTransactionService.syncWalletToLedgerAfterMutation(session, uid, 'USD', async (s) => {
+            await ledgerService.postPammManagerCapitalWithdraw(userId, withdrawAmount, 'USD', current.id, current.id, {
+              session: s,
+            });
+          });
+          await walletRepo.createTransaction(
+            {
+              userId: uid,
+              type: 'pamm_manager_cap_out',
+              amount: withdrawAmount,
+              currency: 'USD',
+              status: 'completed',
+              reference: current.id,
+              completedAt: new Date(),
+            },
+            { session }
+          );
+        }, { label: 'pamm_manager_cap_out' });
         await tradingAccountRepo.updateBalance(current.tradingAccountId, userId, -withdrawAmount);
       }
     }
@@ -431,18 +452,24 @@ async function follow(followerId, managerId, allocatedBalance = 0) {
     err.statusCode = 400;
     throw err;
   }
-  await walletRepo.updateBalance(uid, 'USD', -amount);
-  await walletRepo.createTransaction({
-    userId: uid,
-    type: 'pamm_alloc',
-    amount: -amount,
-    currency: 'USD',
-    status: 'completed',
-    reference: fundId,
-    destination: `pamm:${fundId}`,
-    completedAt: new Date(),
-  });
-  await ledgerService.postPammAllocation(followerId, amount, 'USD', fundId, fundId);
+  await financialTransactionService.runPairedWithTransaction(async (session) => {
+    await financialTransactionService.syncWalletToLedgerAfterMutation(session, uid, 'USD', async (s) => {
+      await ledgerService.postPammAllocation(followerId, amount, 'USD', fundId, fundId, { session: s });
+    });
+    await walletRepo.createTransaction(
+      {
+        userId: uid,
+        type: 'pamm_alloc',
+        amount: -amount,
+        currency: 'USD',
+        status: 'completed',
+        reference: fundId,
+        destination: `pamm:${fundId}`,
+        completedAt: new Date(),
+      },
+      { session }
+    );
+  }, { label: 'pamm_follow_alloc' });
   const managerUserId = manager.userId;
   await tradingAccountRepo.updateBalance(manager.tradingAccountId, managerUserId, amount);
   const id = await pammRepo.createAllocation(followerId, fundId, amount);
@@ -483,17 +510,26 @@ async function unfollow(followerId, allocationId) {
     const manager = await pammRepo.getManagerById(allocation.managerId);
     if (manager?.tradingAccountId) {
       const managerUserId = manager.userId;
-      await walletRepo.updateBalance(String(followerId || ''), 'USD', amount);
-      await walletRepo.createTransaction({
-        userId: String(followerId || ''),
-        type: 'pamm_unalloc',
-        amount,
-        currency: 'USD',
-        status: 'completed',
-        reference: allocationId,
-        completedAt: new Date(),
-      });
-      await ledgerService.postPammUnallocation(followerId, amount, 'USD', allocationId, allocation.managerId);
+      const fid = String(followerId || '');
+      await financialTransactionService.runPairedWithTransaction(async (session) => {
+        await financialTransactionService.syncWalletToLedgerAfterMutation(session, fid, 'USD', async (s) => {
+          await ledgerService.postPammUnallocation(followerId, amount, 'USD', allocationId, allocation.managerId, {
+            session: s,
+          });
+        });
+        await walletRepo.createTransaction(
+          {
+            userId: fid,
+            type: 'pamm_unalloc',
+            amount,
+            currency: 'USD',
+            status: 'completed',
+            reference: allocationId,
+            completedAt: new Date(),
+          },
+          { session }
+        );
+      }, { label: 'pamm_unfollow_unalloc' });
       await tradingAccountRepo.updateBalance(manager.tradingAccountId, managerUserId, -amount);
     }
   }
@@ -536,18 +572,26 @@ async function addFunds(followerId, allocationId, amount) {
     err.statusCode = 400;
     throw err;
   }
-  await walletRepo.updateBalance(uid, 'USD', -addAmount);
-  await walletRepo.createTransaction({
-    userId: uid,
-    type: 'pamm_alloc',
-    amount: -addAmount,
-    currency: 'USD',
-    status: 'completed',
-    reference: allocationId,
-    destination: `pamm:${allocation.managerId}`,
-    completedAt: new Date(),
-  });
-  await ledgerService.postPammAllocation(followerId, addAmount, 'USD', allocationId, allocation.managerId);
+  await financialTransactionService.runPairedWithTransaction(async (session) => {
+    await financialTransactionService.syncWalletToLedgerAfterMutation(session, uid, 'USD', async (s) => {
+      await ledgerService.postPammAllocation(followerId, addAmount, 'USD', allocationId, allocation.managerId, {
+        session: s,
+      });
+    });
+    await walletRepo.createTransaction(
+      {
+        userId: uid,
+        type: 'pamm_alloc',
+        amount: -addAmount,
+        currency: 'USD',
+        status: 'completed',
+        reference: allocationId,
+        destination: `pamm:${allocation.managerId}`,
+        completedAt: new Date(),
+      },
+      { session }
+    );
+  }, { label: 'pamm_add_funds_alloc' });
   await tradingAccountRepo.updateBalance(manager.tradingAccountId, manager.userId, addAmount);
   const newBalance = (allocation.allocatedBalance || 0) + addAmount;
   await pammRepo.updateAllocation(allocationId, { allocatedBalance: newBalance });
@@ -588,17 +632,25 @@ async function requestWithdraw(followerId, allocationId, amount) {
     throw err;
   }
   const uid = String(followerId || '');
-  await walletRepo.updateBalance(uid, 'USD', withdrawAmount);
-  await walletRepo.createTransaction({
-    userId: uid,
-    type: 'pamm_unalloc',
-    amount: withdrawAmount,
-    currency: 'USD',
-    status: 'completed',
-    reference: allocationId,
-    completedAt: new Date(),
-  });
-  await ledgerService.postPammUnallocation(followerId, withdrawAmount, 'USD', allocationId, allocation.managerId);
+  await financialTransactionService.runPairedWithTransaction(async (session) => {
+    await financialTransactionService.syncWalletToLedgerAfterMutation(session, uid, 'USD', async (s) => {
+      await ledgerService.postPammUnallocation(followerId, withdrawAmount, 'USD', allocationId, allocation.managerId, {
+        session: s,
+      });
+    });
+    await walletRepo.createTransaction(
+      {
+        userId: uid,
+        type: 'pamm_unalloc',
+        amount: withdrawAmount,
+        currency: 'USD',
+        status: 'completed',
+        reference: allocationId,
+        completedAt: new Date(),
+      },
+      { session }
+    );
+  }, { label: 'pamm_request_withdraw_unalloc' });
   await tradingAccountRepo.updateBalance(manager.tradingAccountId, manager.userId, -withdrawAmount);
   const newBalance = (allocation.allocatedBalance || 0) - withdrawAmount;
   if (newBalance <= 0) {

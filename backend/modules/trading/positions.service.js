@@ -1,10 +1,14 @@
 /**
  * Positions service — open/closed positions, close (full or partial), post P&L to ledger and wallet
  * PAMM accounts: on full close, distribute P&L via PAMM distribution service (Bull Run 1% cap, reserve, etc.)
+ * Live closes with P&L: ledger + wallet + position state in one Mongo transaction.
  */
 import positionRepo from './position.repository.js';
 import tradingAccountRepo from './trading-account.repository.js';
 import ledgerService from '../finance/ledger.service.js';
+import ledgerRepo from '../finance/ledger.repository.js';
+import { ACCOUNTS } from '../finance/chart-of-accounts.js';
+import financialTransactionService from '../finance/financial-transaction.service.js';
 import walletRepo from '../wallet/wallet.repository.js';
 import commissionEngine from '../ib/commission.engine.js';
 import ibRepo from '../ib/ib.repository.js';
@@ -149,7 +153,85 @@ async function closePosition(userId, positionId, options = {}) {
       status: 'closed',
     };
     if (resolvedClosePrice != null) update.closePrice = resolvedClosePrice;
-    await positionRepo.update(positionId, userId, update, accountId);
+
+    const targetAccountId = pos.accountId || accountId;
+    const hasMaterialPnl = Math.abs(pnl) > 0.001;
+
+    if (account?.type === 'live' && hasMaterialPnl) {
+      const uid = String(userId);
+      const pid = String(positionId);
+      await financialTransactionService.runPairedWithTransaction(async (session) => {
+        const before = await ledgerRepo.getBalance(uid, ACCOUNTS.WALLET, null, { session });
+        const postRes = await ledgerService.postTradingPnl(uid, Math.abs(pnl), 'USD', pid, pnl > 0, { session });
+        if (postRes.ids?.length > 0) {
+          await walletRepo.updateBalance(uid, 'USD', pnl, { session });
+          await walletRepo.createTransaction(
+            {
+              userId: uid,
+              type: 'trade',
+              amount: pnl,
+              currency: 'USD',
+              status: 'completed',
+              reference: pid,
+              completedAt: now,
+            },
+            { session }
+          );
+        } else {
+          const after = await ledgerRepo.getBalance(uid, ACCOUNTS.WALLET, null, { session });
+          const d = after - before;
+          if (Math.abs(d) > 0.001) {
+            await walletRepo.updateBalance(uid, 'USD', d, { session });
+          }
+        }
+        await positionRepo.update(positionId, userId, update, accountId, { session });
+      }, { label: 'live_trade_close' });
+      await financialTransactionService.verifyWalletLedgerAfterMutation(userId, 'USD', {
+        flow: 'live_trade_close',
+        positionId: pid,
+      });
+      try {
+        const ibIds = await ibRepo.getUplineChainForClient(userId);
+        if (ibIds.length && (Number(pos.volume) || 0) > 0) {
+          await commissionEngine.calculateForHierarchy(
+            { id: positionId, volume: pos.volume, symbol: pos.symbol || null, currency: 'USD' },
+            ibIds,
+            userId
+          );
+        }
+      } catch (e) {
+        console.error('[positions] IB commission failed:', e?.message || e);
+      }
+    } else {
+      await positionRepo.update(positionId, userId, update, accountId);
+      if (hasMaterialPnl) {
+        if (account?.type === 'demo') {
+          if (targetAccountId) {
+            await tradingAccountRepo.updateBalance(targetAccountId, userId, pnl);
+          }
+        } else if (account?.type === 'pamm') {
+          try {
+            await distributionService.distributePammPnl(
+              userId,
+              positionId,
+              pnl,
+              targetAccountId,
+              {
+                symbol: pos.symbol,
+                side: pos.side,
+                volume: pos.volume,
+                openPrice: pos.openPrice,
+                closedAt: now,
+                pnl,
+                closePrice: resolvedClosePrice ?? pos.closePrice,
+              }
+            );
+          } catch (e) {
+            console.error('[positions] PAMM distribution failed:', e?.message || e);
+          }
+        }
+      }
+    }
 
     // Emit risk_event for UI (TP/SL or forced close) and log summary.
     try {
@@ -171,7 +253,6 @@ async function closePosition(userId, positionId, options = {}) {
       // ignore emit errors
     }
 
-    // Console summary for closed trades (useful for debugging and audit during development)
     // eslint-disable-next-line no-console
     console.log('[position] closed', {
       userId,
@@ -184,72 +265,6 @@ async function closePosition(userId, positionId, options = {}) {
       closePrice: resolvedClosePrice != null ? resolvedClosePrice : pos.closePrice ?? null,
       pnl,
     });
-    if (Math.abs(pnl) > 0.001) {
-      const targetAccountId = pos.accountId || accountId;
-
-      if (account?.type === 'demo') {
-        // Demo only: update trading account balance; do not touch ledger or real wallet
-        if (targetAccountId) {
-          await tradingAccountRepo.updateBalance(targetAccountId, userId, pnl);
-        }
-      } else if (account?.type === 'pamm') {
-        // PAMM/Bull Run: distribute P&L to fund (manager account + investors via distribution service)
-        try {
-          await distributionService.distributePammPnl(
-            userId,
-            positionId,
-            pnl,
-            targetAccountId,
-            {
-              symbol: pos.symbol,
-              side: pos.side,
-              volume: pos.volume,
-              openPrice: pos.openPrice,
-              closedAt: now,
-              pnl,
-              closePrice: resolvedClosePrice ?? pos.closePrice,
-            }
-          );
-        } catch (e) {
-          console.warn('[positions] PAMM distribution failed:', e.message);
-        }
-      } else {
-        // Live only: post P&L to ledger and update real wallet (exclude demo from real wallet)
-        const isLive = account?.type === 'live';
-        if (isLive) {
-          await ledgerService.postTradingPnl(userId, Math.abs(pnl), 'USD', positionId, pnl > 0);
-          await walletRepo.updateBalance(userId, 'USD', pnl);
-          const txId = await walletRepo.createTransaction({
-            userId,
-            type: 'trade',
-            amount: pnl,
-            currency: 'USD',
-            status: 'completed',
-            reference: positionId,
-            completedAt: now,
-          });
-          // eslint-disable-next-line no-console
-          console.log('[position] wallet trade tx', { positionId, userId: String(userId), pnl, txId });
-        } else if (!targetAccountId) {
-          // Legacy: no account id — do not post to ledger or wallet (avoid demo leaking into real)
-        }
-        // IB commission only for live trades (not demo)
-        if (isLive) {
-          try {
-            const ibIds = await ibRepo.getUplineChainForClient(userId);
-            if (ibIds.length && (Number(pos.volume) || 0) > 0) {
-              await commissionEngine.calculateForHierarchy(
-                { id: positionId, volume: pos.volume, symbol: pos.symbol || null, currency: 'USD' },
-                ibIds,
-                userId
-              );
-            }
-          } catch (e) {
-            console.warn('[positions] IB commission failed:', e.message);
-          }
-        }
-      }
-    }
     return { status: 'closed', closedVolume: pos.volume, pnl };
   }
   await positionRepo.update(positionId, userId, {

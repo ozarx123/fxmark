@@ -2,9 +2,9 @@
  * Withdrawal service — request/process withdrawals, deduct balance, post to ledger
  */
 import { MongoServerError } from 'mongodb';
-import { withTransaction } from '../../config/mongo.js';
 import walletRepo from './wallet.repository.js';
 import ledgerService from '../finance/ledger.service.js';
+import financialTransactionService from '../finance/financial-transaction.service.js';
 import fraudDetection from './fraudDetection.service.js';
 import alertService from '../admin/alert.service.js';
 import withdrawalApprovalSettingsRepo from './withdrawal-approval.settings.repository.js';
@@ -207,7 +207,7 @@ async function processWithdrawal(withdrawalId, userId, clientIdempotencyKey) {
         sourceType: 'withdrawal',
         session,
       });
-    });
+    }, { label: 'withdrawal_process' });
   } catch (e) {
     if (e instanceof IdempotentReplaySignal && e.replayDoc) {
       return withdrawalProcessSuccessBody(e.replayDoc, true);
@@ -226,6 +226,10 @@ async function processWithdrawal(withdrawalId, userId, clientIdempotencyKey) {
     console.log(
       `[withdrawal] processed withdrawalId=${withdrawalId} userId=${userId} amount=${amount} ${currency}`
     );
+    await financialTransactionService.verifyWalletLedgerAfterMutation(userId, currency, {
+      flow: 'withdrawal_process',
+      withdrawalId,
+    });
     return withdrawalProcessSuccessBody(done, false);
   }
   const err = new Error('Withdrawal processing failed');

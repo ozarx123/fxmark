@@ -11,11 +11,21 @@ dotenv.config({ path: rootEnv, override: true });
 
 console.log('FINNHUB KEY:', process.env.FINNHUB_API_KEY ? 'LOADED' : 'MISSING');
 const gmailUser = (process.env.GMAIL_USER || '').trim();
-console.log('[env] Gmail:', gmailUser ? `${gmailUser.replace(/(.{2}).*(@.*)/, '$1***$2')} (configured)` : 'NOT SET — verification/notification emails disabled');
+console.log(
+  '[env] Gmail:',
+  gmailUser ? `${gmailUser.replace(/(.{2}).*(@.*)/, '$1***$2')} (configured)` : 'NOT SET — verification/notification emails disabled'
+);
 
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import sanitize from 'mongo-sanitize';
+import { createRequire } from 'module';
 import { createServer } from 'http';
+
+const require = createRequire(import.meta.url);
+const { xss } = require('express-xss-sanitizer');
 import { initWebSocket, broadcastTick } from './websocket.js';
 import { logMarketTick } from './services/marketDataLogger.js';
 import positionsService from '../modules/trading/positions.service.js';
@@ -38,11 +48,31 @@ import { getDb } from '../config/mongo.js';
 import apiRoutes from '../core/routes.js';
 import middleware from '../core/middleware.js';
 import { startDailyWalletLedgerReconciliation } from '../modules/finance/reconciliation-daily.cron.js';
+import financialTransactionService from '../modules/finance/financial-transaction.service.js';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
 const app = express();
-app.use(cors());
+
+// ── Security: Helmet (security headers) ─────────────────────────────────────
+app.use(helmet({ contentSecurityPolicy: false }));
+
+// ── CORS: allow only known origins when ALLOWED_ORIGINS is set ───────────────
+const allowedOriginsRaw = (process.env.ALLOWED_ORIGINS || '').trim();
+const allowedOrigins = allowedOriginsRaw
+  ? allowedOriginsRaw.split(',').map((o) => o.trim()).filter(Boolean)
+  : null;
+if (allowedOrigins && allowedOrigins.length > 0) {
+  app.use(cors({
+    origin: (origin, cb) => {
+      if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+      return cb(null, false);
+    },
+    credentials: true,
+  }));
+} else {
+  app.use(cors());
+}
 
 function isSocketIORequest(req) {
   const path = req.path ?? (req.url ? req.url.split('?')[0] : '');
@@ -61,6 +91,27 @@ app.use((req, res, next) => {
   if (isSocketIORequest(req)) return;
   next();
 });
+
+// ── Security: Global rate limit (skip Socket.IO; they never reach here) ───────
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_MAX_GLOBAL || '200', 10),
+  message: { error: 'Too many requests, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use(globalLimiter);
+
+// ── Security: NoSQL injection protection (sanitize after body parsed) ─────────
+app.use((req, res, next) => {
+  if (req.body && typeof req.body === 'object') sanitize(req.body);
+  if (req.query && typeof req.query === 'object') sanitize(req.query);
+  if (req.params && typeof req.params === 'object') sanitize(req.params);
+  next();
+});
+
+// ── Security: XSS protection on input ───────────────────────────────────────
+app.use(xss());
 
 // Health (root)
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
@@ -103,6 +154,16 @@ app.get('/health/redis', async (req, res) => {
 
 // Market data
 app.use('/api/market', marketRoutes);
+
+// ── Security: Stricter rate limit on auth routes (login/register brute-force) ─
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_MAX_AUTH || '10', 10),
+  message: { error: 'Too many authentication attempts, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api/auth', authLimiter);
 
 // API (auth, users, wallet, etc. from core)
 app.use('/api', apiRoutes);
@@ -381,6 +442,9 @@ server.listen(PORT, async () => {
       const db = await getDb();
       await db.admin().command({ ping: 1 });
       console.log('[server] MongoDB connected');
+      financialTransactionService.tryEnsureWalletLedgerUniqueIndexOnce().catch((e) => {
+        console.warn('[server] WALLET ledger index ensure skipped/failed:', e?.message || e);
+      });
     } catch (err) {
       console.error('[server] MongoDB connection failed:', err.message);
       console.error('[server] Fix: Check CONNECTION_STRING in backend/.env. Run: npm run check-mongo');

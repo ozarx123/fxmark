@@ -3,14 +3,14 @@
  * Runs when a Bull Run trade closes in profit and the investor receives profit.
  * Investor profit is never touched; IB commission comes from manager/system side only.
  * Idempotent per (trade_id, investor_id, ib_id, level); stable ledger reference keys.
+ * All wallet credits go through financialTransactionService.atomicPammIbCommissionCredit.
  */
 import { MongoServerError } from 'mongodb';
 import ibRepo from './ib.repository.js';
 import walletRepo from '../wallet/wallet.repository.js';
-import ledgerService from '../finance/ledger.service.js';
+import financialTransactionService from '../finance/financial-transaction.service.js';
 
 const MAX_LEVELS = 3;
-const CURRENCY = 'USD';
 const TARGET_PROFIT_PERCENT = 0.8;
 
 async function applyIbPammCredit(
@@ -32,22 +32,7 @@ async function applyIbPammCredit(
   const existingLog = await ibRepo.findPammIbPayoutLog(positionId, investorId, ibStr, levelNumber);
   if (existingLog && Number(existingLog.commission_amount) >= 0.001) {
     const amt = Number(existingLog.commission_amount);
-    await ledgerService.postPammIbCommissionToWallet(ibStr, amt, CURRENCY, stableRef, desc);
-    await walletRepo.updateBalance(ibStr, CURRENCY, amt);
-    try {
-      await walletRepo.createTransaction({
-        userId: ibStr,
-        type: 'ib_pamm_commission',
-        amount: amt,
-        currency: CURRENCY,
-        status: 'completed',
-        reference: stableRef,
-        completedAt: new Date(),
-      });
-    } catch (e) {
-      if (e instanceof MongoServerError && e.code === 11000) return;
-      throw e;
-    }
+    await financialTransactionService.atomicPammIbCommissionCredit(ibStr, amt, stableRef, desc);
     return;
   }
 
@@ -67,42 +52,14 @@ async function applyIbPammCredit(
       const ex = await ibRepo.findPammIbPayoutLog(positionId, investorId, ibStr, levelNumber);
       if (ex && !(await walletRepo.existsIbPammCommissionWallet(ibStr, stableRef))) {
         const amt = Number(ex.commission_amount);
-        await ledgerService.postPammIbCommissionToWallet(ibStr, amt, CURRENCY, stableRef, desc);
-        await walletRepo.updateBalance(ibStr, CURRENCY, amt);
-        try {
-          await walletRepo.createTransaction({
-            userId: ibStr,
-            type: 'ib_pamm_commission',
-            amount: amt,
-            currency: CURRENCY,
-            status: 'completed',
-            reference: stableRef,
-            completedAt: new Date(),
-          });
-        } catch (e2) {
-          if (!(e2 instanceof MongoServerError && e2.code === 11000)) console.warn('[pamm-ib] repair tx failed', e2.message);
-        }
+        await financialTransactionService.atomicPammIbCommissionCredit(ibStr, amt, stableRef, desc);
       }
       return;
     }
     throw e;
   }
 
-  await ledgerService.postPammIbCommissionToWallet(ibStr, paidToIb, CURRENCY, stableRef, desc);
-  await walletRepo.updateBalance(ibStr, CURRENCY, paidToIb);
-  try {
-    await walletRepo.createTransaction({
-      userId: ibStr,
-      type: 'ib_pamm_commission',
-      amount: paidToIb,
-      currency: CURRENCY,
-      status: 'completed',
-      reference: stableRef,
-      completedAt: new Date(),
-    });
-  } catch (e) {
-    console.warn('[pamm-ib] Wallet tx duplicate or failed after credit', ibStr, e.message);
-  }
+  await financialTransactionService.atomicPammIbCommissionCredit(ibStr, paidToIb, stableRef, desc);
 }
 
 /**

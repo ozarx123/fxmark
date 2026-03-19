@@ -72,14 +72,36 @@ DEPLOY_ARGS=(
     --platform=managed
     --allow-unauthenticated
     --port=8080
-    --set-env-vars=NODE_ENV=production
 )
 
+ENV_PAIRS=("NODE_ENV=production" "TWELVE_DATA_WS=false")
+if gcloud compute networks vpc-access connectors describe fxmark-run-connector --region="$REGION" &>/dev/null; then
+    DEPLOY_ARGS+=(--vpc-connector=fxmark-run-connector)
+    DEPLOY_ARGS+=(--vpc-egress=private-ranges-only)
+    REDIS_HOST_VAL=$(gcloud redis instances describe fxmark-redis --region="$REGION" --format="value(host)" 2>/dev/null || true)
+    if [[ -n "$REDIS_HOST_VAL" ]]; then
+        ENV_PAIRS+=("REDIS_HOST=$REDIS_HOST_VAL" "REDIS_PORT=6379")
+    fi
+fi
+IFS=','; UPDATE_ENV="${ENV_PAIRS[*]}"; unset IFS
+DEPLOY_ARGS+=(--update-env-vars="$UPDATE_ENV")
+
+SECRET_PAIRS=()
 if gcloud secrets describe mongo-uri 2>/dev/null; then
-    DEPLOY_ARGS+=(--set-secrets=CONNECTION_STRING=mongo-uri:latest)
+    SECRET_PAIRS+=("CONNECTION_STRING=mongo-uri:latest")
 fi
 if gcloud secrets describe jwt-secret 2>/dev/null; then
-    DEPLOY_ARGS+=(--set-secrets=JWT_SECRET=jwt-secret:latest)
+    SECRET_PAIRS+=("JWT_SECRET=jwt-secret:latest")
+fi
+if gcloud secrets describe twelve-data-api-key 2>/dev/null; then
+    SECRET_PAIRS+=("TWELVE_DATA_API_KEY=twelve-data-api-key:latest")
+fi
+if gcloud secrets describe finnhub-api-key 2>/dev/null; then
+    SECRET_PAIRS+=("FINNHUB_API_KEY=finnhub-api-key:latest")
+fi
+if [[ ${#SECRET_PAIRS[@]} -gt 0 ]]; then
+    IFS=','; SECRETS_CSV="${SECRET_PAIRS[*]}"; unset IFS
+    DEPLOY_ARGS+=(--set-secrets="$SECRETS_CSV")
 fi
 
 gcloud "${DEPLOY_ARGS[@]}"
@@ -89,6 +111,5 @@ echo "=== Deployment complete ==="
 URL=$(gcloud run services describe "$SERVICE_NAME" --region="$REGION" --format="value(status.url)" 2>/dev/null || true)
 if [[ -n "$URL" ]]; then echo "Service URL: $URL"; fi
 echo ""
-echo "If CONNECTION_STRING/JWT_SECRET are not set, add them via:"
-echo "  gcloud run services update $SERVICE_NAME --region=$REGION --set-env-vars=CONNECTION_STRING=...,JWT_SECRET=..."
-echo "  Or use Secret Manager: scripts/setup-secrets.ps1"
+echo "If secrets are missing, use: scripts/setup-secrets.ps1 (PowerShell) or create secrets with gcloud secrets create"
+echo "  Finnhub on existing service: gcloud run services update $SERVICE_NAME --region=$REGION --update-secrets=FINNHUB_API_KEY=finnhub-api-key:latest"

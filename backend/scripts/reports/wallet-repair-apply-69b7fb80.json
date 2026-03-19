@@ -1,0 +1,16 @@
+{
+  "dryRun": false,
+  "mismatches": [
+    {
+      "userId": "69b7fb805ad28a8befc6c061",
+      "currency": "USD",
+      "walletBalance": 2969.12,
+      "rawLedgerBalance": 2961.06,
+      "correctedLedgerBalance": 2961.06,
+      "duplicateAdjustmentAmount": 0,
+      "duplicateGroups": [],
+      "suggestedNewWalletBalance": 2961.06
+    }
+  ],
+  "applied": true
+}

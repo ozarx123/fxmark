@@ -20,7 +20,7 @@ function generateAccountNo() {
   return 'FX' + String(Math.floor(10000000 + Math.random() * 90000000));
 }
 
-async function createOne(doc) {
+async function createOne(doc, options = {}) {
   await ensureIndex();
   const col = await collection();
   const accountNo = doc.accountNo !== undefined && doc.accountNo !== null && doc.accountNo !== ''
@@ -29,12 +29,16 @@ async function createOne(doc) {
   const createdAt = doc.createdAt instanceof Date ? doc.createdAt : new Date();
   const updatedAt = doc.updatedAt instanceof Date ? doc.updatedAt : new Date();
   const { createdAt: _c, updatedAt: _u, ...rest } = doc;
-  const { insertedId } = await col.insertOne({
-    ...rest,
-    accountNo,
-    createdAt,
-    updatedAt,
-  });
+  const insertOpts = options.session ? { session: options.session } : {};
+  const { insertedId } = await col.insertOne(
+    {
+      ...rest,
+      accountNo,
+      createdAt,
+      updatedAt,
+    },
+    insertOpts
+  );
   return insertedId.toString();
 }
 

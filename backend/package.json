@@ -26,7 +26,8 @@
     "backfill-ledger": "node scripts/backfill-admin-credit-ledger.js",
     "fetch-pamm-commission": "node scripts/fetch-pamm-commission.js",
     "fetch-common-pool-account": "node scripts/fetch-common-pool-account.js",
-    "reconcile-wallet-ledger": "node scripts/reconcile-wallet-ledger-audit.js"
+    "reconcile-wallet-ledger": "node scripts/reconcile-wallet-ledger-audit.js",
+    "test:email": "node scripts/test-email.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
@@ -34,11 +35,15 @@
     "cors": "^2.8.6",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
+    "express-rate-limit": "^7.5.1",
+    "express-xss-sanitizer": "^2.0.1",
+    "helmet": "^7.2.0",
     "ioredis": "^5.4.1",
     "jsonwebtoken": "^9.0.3",
+    "mongo-sanitize": "^1.1.0",
     "mongodb": "^6.21.0",
-    "nodemailer": "^6.9.16",
     "node-fetch": "^3.3.2",
+    "nodemailer": "^6.9.16",
     "pdfkit": "^0.15.0",
     "socket.io": "^4.8.0",
     "ws": "^8.18.0"

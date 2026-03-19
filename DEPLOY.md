@@ -33,6 +33,56 @@ Deployments use the existing **docker** setup: `docker/Dockerfile.backend.prod` 
      --set-env-vars "CONNECTION_STRING=...,JWT_SECRET=...,MONGODB_URI=..."
    ```
 
+### Finance: wallet–ledger consistency (env)
+
+- **`FINANCE_AUTO_RECONCILE_WALLET=1`** — after each guarded money flow, if wallet ≠ ledger WALLET account, log error and **set wallet to ledger** (optional safety net).
+- **`FINANCE_ENSURE_WALLET_LEDGER_INDEX=1`** — on backend startup, create unique index on WALLET ledger rows **only if** no duplicates exist (same rules as `node scripts/ensure-wallet-ledger-unique-index.js --create`).
+
+See `backend/docs/FINANCIAL_TRANSACTION_ARCHITECTURE.md`.
+
+### Secret Manager (recommended for API keys)
+
+Enable once:
+
+```bash
+gcloud services enable secretmanager.googleapis.com
+```
+
+**Create or rotate secrets** (PowerShell from repo root):
+
+```powershell
+# Mongo + JWT (+ optional Twelve Data + Finnhub) — prompts or pass -FinnhubApiKey "..."
+.\scripts\setup-secrets.ps1 -FinnhubApiKey "YOUR_FINNHUB_KEY"
+```
+
+Or manually (Finnhub) — use **`-n`** / no trailing newline so the key is not corrupted:
+
+```bash
+# Bash (no newline)
+printf %s 'YOUR_FINNHUB_KEY' | gcloud secrets create finnhub-api-key --data-file=-
+# If the secret already exists:
+printf %s 'YOUR_FINNHUB_KEY' | gcloud secrets versions add finnhub-api-key --data-file=-
+```
+
+**Attach secret to Cloud Run** (adds env var `FINNHUB_API_KEY` from latest version):
+
+```bash
+gcloud run services update fxmark-backend --region us-central1 \
+  --update-secrets=FINNHUB_API_KEY=finnhub-api-key:latest
+```
+
+Grant the Cloud Run service account access if deploy errors on permission (replace `PROJECT_NUMBER` from Cloud Run → service details, or use Console “Secrets” → grant accessor):
+
+```bash
+gcloud secrets add-iam-policy-binding finnhub-api-key \
+  --member="serviceAccount:PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+```
+
+**From `backend/.env` without pasting in shell:** `.\scripts\fix-finnhub-secret.ps1` (reads `FINNHUB_API_KEY=` or pass `-Key`).
+
+Deploy scripts `docker/deploy.ps1` and `docker/deploy-source.ps1` automatically pass `FINNHUB_API_KEY=finnhub-api-key:latest` when that secret exists.
+
 ### Step 1: Docker → Artifact Registry (build and push)
 
 From the **repo root**:
@@ -60,6 +110,59 @@ gcloud run deploy fxmark-backend \
 ```
 
 Replace `YOUR_PROJECT_ID` with your GCP project ID. To deploy a specific build, use the `:SHORT_SHA` tag from the build step.
+
+### Redis (Memorystore) + Cloud Run
+
+Cloud Run cannot reach the public internet for a “managed Redis” — use **Memorystore for Redis** on the **same VPC** and a **Serverless VPC Access connector**.
+
+**This repo’s `fxmark` project (example):**
+
+| Resource | Value |
+|----------|--------|
+| Redis instance | `fxmark-redis` (region `us-central1`, network `default`, 1 GB basic) |
+| VPC connector | `fxmark-run-connector` (`10.8.0.0/28`, `e2-micro`) |
+| Cloud Run env | `REDIS_HOST` = instance **host** IP, `REDIS_PORT` = `6379` |
+| Cloud Run networking | `--vpc-connector=fxmark-run-connector` `--vpc-egress=private-ranges-only` |
+
+**Verify:** `GET https://YOUR_CLOUD_RUN_URL/health/redis` → `{"status":"ok","redis":"connected"}`.
+
+**Enable APIs (once):**
+
+```bash
+gcloud services enable redis.googleapis.com vpcaccess.googleapis.com compute.googleapis.com servicenetworking.googleapis.com
+```
+
+**Create Redis** (10–30+ min first time; pick a subnet range for the connector that does **not** overlap your VPC subnets, e.g. `10.8.0.0/28`):
+
+```bash
+gcloud redis instances create fxmark-redis --size=1 --region=us-central1 \
+  --redis-version=redis_7_0 --network=default --display-name="FXMARK Redis"
+
+gcloud compute networks vpc-access connectors create fxmark-run-connector \
+  --region=us-central1 --network=default --range=10.8.0.0/28 \
+  --min-instances=2 --max-instances=3 --machine-type=e2-micro
+```
+
+**Host IP** (use after instance is `READY`):
+
+```bash
+gcloud redis instances describe fxmark-redis --region=us-central1 --format='value(host)'
+```
+
+**Point Cloud Run at Redis:**
+
+```bash
+gcloud run services update fxmark-backend --region=us-central1 \
+  --vpc-connector=fxmark-run-connector \
+  --vpc-egress=private-ranges-only \
+  --update-env-vars="REDIS_HOST=PRIVATE_IP,REDIS_PORT=6379"
+```
+
+Or use `REDIS_URL=redis://PRIVATE_IP:6379` (if `REDIS_URL` is set, it takes precedence over `REDIS_HOST`).
+
+**Idempotent helper (PowerShell):** `.\scripts\enable-redis-gcp.ps1` — creates instance + connector if missing and prints the `gcloud run services update` command with the current Redis host.
+
+**Costs / notes:** Basic 1 GB Memorystore + VPC connector have ongoing cost. If you **recreate** the Redis instance, the private IP may change — update `REDIS_HOST` / `REDIS_URL` on Cloud Run. Standard tier supports AUTH/TLS; basic tier uses private network only.
 
 ---
 
@@ -103,5 +206,5 @@ Uses `docker/Dockerfile.backend` and starts backend, MongoDB, Postgres, Redis.
 
 | Component | Where        | Update latest code |
 |-----------|--------------|--------------------|
-| Backend   | GCP Cloud Run | **Step 1:** `gcloud builds submit --config=docker/cloudbuild-backend.yaml .` (Docker → Artifact Registry). **Step 2:** `gcloud run deploy fxmark-backend --image us-central1-docker.pkg.dev/PROJECT_ID/fxmark/backend:latest --region us-central1 --platform managed --allow-unauthenticated` |
+| Backend   | GCP Cloud Run | **Step 1:** `gcloud builds submit --config=docker/cloudbuild-backend.yaml .` (Docker → Artifact Registry). **Step 2:** `gcloud run deploy fxmark-backend --image us-central1-docker.pkg.dev/PROJECT_ID/fxmark/backend:latest --region us-central1 --platform managed --allow-unauthenticated`. **Redis:** Memorystore + VPC connector + `REDIS_HOST` (see above). |
 | Frontend  | Vercel       | Push to `main`/`master` (Vercel auto-deploys from GitHub) |

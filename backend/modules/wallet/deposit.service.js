@@ -2,9 +2,9 @@
  * Deposit service — create/confirm deposits, credit wallet, post to ledger
  * Payment methods and limits from payment settings (PSP); deposit always credits LIVE wallet.
  */
-import { withTransaction } from '../../config/mongo.js';
 import walletRepo from './wallet.repository.js';
 import ledgerService from '../finance/ledger.service.js';
+import financialTransactionService from '../finance/financial-transaction.service.js';
 import paymentSettingsRepo from './payment.settings.repository.js';
 
 async function createDeposit(userId, currency, amount, reference, paymentMethod = null) {
@@ -84,7 +84,7 @@ async function confirmDeposit(depositId, userId) {
     err.statusCode = 400;
     throw err;
   }
-  await withTransaction(async (session) => {
+  await financialTransactionService.runPairedWithTransaction(async (session) => {
     await walletRepo.updateBalance(userId, tx.currency || 'USD', tx.amount, { session });
     await walletRepo.updateTransaction(depositId, {
       status: 'completed',
@@ -92,6 +92,10 @@ async function confirmDeposit(depositId, userId) {
       reference: depositId,
     }, { session });
     await ledgerService.postDeposit(userId, tx.amount, tx.currency || 'USD', depositId, { session });
+  }, { label: 'deposit_confirm' });
+  await financialTransactionService.verifyWalletLedgerAfterMutation(userId, tx.currency || 'USD', {
+    flow: 'deposit_confirm',
+    depositId,
   });
   return { status: 'completed' };
 }

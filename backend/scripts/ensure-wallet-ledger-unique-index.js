@@ -3,7 +3,8 @@
  * Run from backend: node scripts/ensure-wallet-ledger-unique-index.js [--create]
  *
  * Without --create: only reports duplicate groups (no index creation).
- * With --create: creates the unique index only if no duplicates exist; otherwise exits with report.
+ * With --create: creates partial unique index wallet_event_unique on WALLET (2110) rows only
+ * if no duplicate WALLET business keys exist; otherwise exits with report.
  * Does NOT delete any ledger rows.
  */
 import 'dotenv/config';

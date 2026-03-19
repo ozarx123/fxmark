@@ -8,6 +8,7 @@ import pammRepo from './pamm.repository.js';
 import tradingAccountRepo from '../trading/trading-account.repository.js';
 import ledgerService from '../finance/ledger.service.js';
 import walletRepo from '../wallet/wallet.repository.js';
+import financialTransactionService from '../finance/financial-transaction.service.js';
 import commissionEngine from '../ib/commission.engine.js';
 import ibRepo from '../ib/ib.repository.js';
 import { processPammIbCommissionOnTradeClose } from '../ib/pamm-ib-commission.service.js';
@@ -180,17 +181,23 @@ async function distributePammPnl(managerId, positionId, pnl, accountId, position
       const feeAmount = Math.round((pnl * performanceFeePercent) / 100 * 100) / 100;
       if (feeAmount > 0.001) {
         try {
-          await ledgerService.postPammFee(managerId, feeAmount, 'USD', positionId, fundId);
-          await walletRepo.updateBalance(managerId, 'USD', feeAmount);
-          await walletRepo.createTransaction({
-            userId: managerId,
-            type: 'pamm_fee',
-            amount: feeAmount,
-            currency: 'USD',
-            status: 'completed',
-            reference: positionId,
-            completedAt: new Date(),
-          });
+          await financialTransactionService.runPairedWithTransaction(async (session) => {
+            await financialTransactionService.syncWalletToLedgerAfterMutation(session, managerId, 'USD', async (s) => {
+              await ledgerService.postPammFee(managerId, feeAmount, 'USD', positionId, fundId, { session: s });
+            });
+            await walletRepo.createTransaction(
+              {
+                userId: managerId,
+                type: 'pamm_fee',
+                amount: feeAmount,
+                currency: 'USD',
+                status: 'completed',
+                reference: positionId,
+                completedAt: new Date(),
+              },
+              { session }
+            );
+          }, { label: 'pamm_dist_performance_fee' });
         } catch (e) {
           console.warn('[pamm] Ledger/wallet post fee failed:', e.message);
         }
@@ -258,23 +265,48 @@ async function distributePammPnl(managerId, positionId, pnl, accountId, position
       }
 
       try {
-        await ledgerService.postPammDistribution(alloc.followerId, Math.abs(shareRounded), 'USD', positionId, isProfit, fundId);
-        if (await walletRepo.existsPammDistribution(alloc.followerId, positionId)) {
-          ctx.recordSuccess();
-        } else {
-          await walletRepo.updateBalance(alloc.followerId, 'USD', shareRounded);
-          await walletRepo.createTransaction({
-            userId: alloc.followerId,
-            type: 'pamm_dist',
-            amount: shareRounded,
-            currency: 'USD',
-            status: 'completed',
-            reference: positionId,
-            completedAt: new Date(),
-          });
+        let createdDistTx = false;
+        await financialTransactionService.runPairedWithTransaction(async (session) => {
+          const { delta } = await financialTransactionService.syncWalletToLedgerAfterMutation(
+            session,
+            alloc.followerId,
+            'USD',
+            async (s) => {
+              await ledgerService.postPammDistribution(
+                alloc.followerId,
+                Math.abs(shareRounded),
+                'USD',
+                positionId,
+                isProfit,
+                fundId,
+                { session: s }
+              );
+            }
+          );
+          if (await walletRepo.existsPammDistribution(alloc.followerId, positionId, { session })) {
+            return;
+          }
+          if (Math.abs(delta) < 0.001 && Math.abs(shareRounded) > 0.001) {
+            await walletRepo.updateBalance(alloc.followerId, 'USD', shareRounded, { session });
+          }
+          await walletRepo.createTransaction(
+            {
+              userId: alloc.followerId,
+              type: 'pamm_dist',
+              amount: shareRounded,
+              currency: 'USD',
+              status: 'completed',
+              reference: positionId,
+              completedAt: new Date(),
+            },
+            { session }
+          );
+          createdDistTx = true;
+        }, { label: 'pamm_dist_classic_follower' });
+        ctx.recordSuccess();
+        if (createdDistTx) {
           await pammRepo.incrementAllocationRealizedPnl(alloc.id, shareRounded);
           updatedFollowerIds.push(alloc.followerId);
-          ctx.recordSuccess();
         }
       } catch (e) {
         console.warn('[pamm] Ledger/wallet post dist for', alloc.followerId, 'failed:', e.message);
@@ -363,25 +395,50 @@ async function distributeBullRunProfit(
     }
 
     try {
-      await ledgerService.postPammDistribution(alloc.followerId, investorCredit, 'USD', positionId, true, fundId);
-      if (await walletRepo.existsPammDistribution(alloc.followerId, positionId)) {
-        ctx.recordSuccess();
-      } else {
-        await walletRepo.updateBalance(alloc.followerId, 'USD', investorCredit);
-        await walletRepo.createTransaction({
-          userId: alloc.followerId,
-          type: 'pamm_dist',
-          amount: investorCredit,
-          currency: 'USD',
-          status: 'completed',
-          reference: positionId,
-          completedAt: new Date(),
-        });
+      let createdDistTx = false;
+      await financialTransactionService.runPairedWithTransaction(async (session) => {
+        const { delta } = await financialTransactionService.syncWalletToLedgerAfterMutation(
+          session,
+          alloc.followerId,
+          'USD',
+          async (s) => {
+            await ledgerService.postPammDistribution(
+              alloc.followerId,
+              investorCredit,
+              'USD',
+              positionId,
+              true,
+              fundId,
+              { session: s }
+            );
+          }
+        );
+        if (await walletRepo.existsPammDistribution(alloc.followerId, positionId, { session })) {
+          return;
+        }
+        if (Math.abs(delta) < 0.001 && investorCredit > 0.001) {
+          await walletRepo.updateBalance(alloc.followerId, 'USD', investorCredit, { session });
+        }
+        await walletRepo.createTransaction(
+          {
+            userId: alloc.followerId,
+            type: 'pamm_dist',
+            amount: investorCredit,
+            currency: 'USD',
+            status: 'completed',
+            reference: positionId,
+            completedAt: new Date(),
+          },
+          { session }
+        );
+        createdDistTx = true;
+      }, { label: 'pamm_dist_bull_profit' });
+      ctx.recordSuccess();
+      if (createdDistTx) {
         await pammRepo.incrementAllocationRealizedPnl(alloc.id, investorCredit);
         const newBalance = balance + investorCredit;
         await pammRepo.updateAllocation(alloc.id, { allocatedBalance: newBalance });
         updatedFollowerIds.push(alloc.followerId);
-        ctx.recordSuccess();
       }
     } catch (e) {
       console.warn('[pamm] Bull Run dist for', alloc.followerId, 'failed:', e.message);
@@ -446,8 +503,24 @@ async function distributeBullRunLoss(
 
     ctx.incTotal();
     try {
-      await ledgerService.postPammDistribution(alloc.followerId, Math.abs(shareRounded), 'USD', positionId, false, fundId);
-      await walletRepo.updateBalance(alloc.followerId, 'USD', shareRounded);
+      await financialTransactionService.runPairedWithTransaction(async (session) => {
+        await financialTransactionService.syncWalletToLedgerAfterMutation(
+          session,
+          alloc.followerId,
+          'USD',
+          async (s) => {
+            await ledgerService.postPammDistribution(
+              alloc.followerId,
+              Math.abs(shareRounded),
+              'USD',
+              positionId,
+              false,
+              fundId,
+              { session: s }
+            );
+          }
+        );
+      }, { label: 'pamm_dist_bull_loss' });
       await pammRepo.incrementAllocationRealizedPnl(alloc.id, shareRounded);
       const newBalance = Math.max(0, balance + shareRounded);
       await pammRepo.updateAllocation(alloc.id, { allocatedBalance: newBalance });

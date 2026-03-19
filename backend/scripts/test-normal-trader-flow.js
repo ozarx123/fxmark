@@ -40,7 +40,7 @@ async function main() {
   // 1) Ensure wallet, deposit 1000 USD
   const walletBefore = await walletRepo.getOrCreateWallet(user.id, 'USD');
   console.log('Wallet before deposit:', walletBefore.balance);
-  await walletRepo.updateBalance(user.id, 'USD', 1000);
+  await walletRepo.updateBalance(user.id, 'USD', 1000, { bypassPairedGuard: true });
   await walletRepo.createTransaction({
     userId: user.id,
     type: 'deposit_test',
@@ -65,7 +65,7 @@ async function main() {
   console.log('New trading account:', { id: account.id, balance: account.balance, type: account.type });
 
   const transferAmount = 500;
-  await walletRepo.updateBalance(user.id, 'USD', -transferAmount);
+  await walletRepo.updateBalance(user.id, 'USD', -transferAmount, { bypassPairedGuard: true });
   await walletRepo.createTransaction({
     userId: user.id,
     type: 'internal_transfer_to_trading',

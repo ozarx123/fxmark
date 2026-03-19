@@ -3,6 +3,7 @@
  */
 import { getDb } from '../../config/mongo.js';
 import { ObjectId } from 'mongodb';
+import { assertPairedWalletLedgerAllowed } from '../finance/finance-wallet-guard.js';
 
 const WALLETS_COLLECTION = 'wallets';
 const TRANSACTIONS_COLLECTION = 'wallet_transactions';
@@ -61,18 +62,22 @@ async function ensureWithdrawalIdempotencyIndex() {
 }
 
 /** True if this user already has a pamm_dist wallet tx for this position (exactly-once per user per close). */
-async function existsPammDistribution(userId, positionId) {
+async function existsPammDistribution(userId, positionId, options = {}) {
   await ensureWithdrawalIdempotencyIndex();
   const col = await transactionsCol();
   const uid = normUserId(userId);
   const ref = positionId != null ? String(positionId) : '';
   const refConds = [{ reference: ref }];
   if (ObjectId.isValid(ref) && ref.length === 24) refConds.push({ reference: new ObjectId(ref) });
-  const doc = await col.findOne({
-    userId: uid,
-    type: 'pamm_dist',
-    $or: refConds,
-  });
+  const findOpts = options.session ? { session: options.session } : {};
+  const doc = await col.findOne(
+    {
+      userId: uid,
+      type: 'pamm_dist',
+      $or: refConds,
+    },
+    findOpts
+  );
   return !!doc;
 }
 
@@ -81,14 +86,18 @@ function ibPammCommissionReferenceKey(positionId, investorId, ibId, levelNumber)
   return `pib|${String(positionId)}|${String(investorId)}|${String(ibId)}|L${levelNumber}`;
 }
 
-async function existsIbPammCommissionWallet(userId, referenceKey) {
+async function existsIbPammCommissionWallet(userId, referenceKey, options = {}) {
   await ensureWithdrawalIdempotencyIndex();
   const col = await transactionsCol();
-  const doc = await col.findOne({
-    userId: normUserId(userId),
-    type: 'ib_pamm_commission',
-    reference: String(referenceKey),
-  });
+  const findOpts = options.session ? { session: options.session } : {};
+  const doc = await col.findOne(
+    {
+      userId: normUserId(userId),
+      type: 'ib_pamm_commission',
+      reference: String(referenceKey),
+    },
+    findOpts
+  );
   return !!doc;
 }
 
@@ -105,12 +114,13 @@ function normUserId(userId) {
   return userId == null ? '' : String(userId);
 }
 
-/** Get or create wallet for user/currency. Default balance 0. */
-async function getOrCreateWallet(userId, currency = 'USD') {
+/** Get or create wallet for user/currency. Default balance 0. options.session for transactions. */
+async function getOrCreateWallet(userId, currency = 'USD', options = {}) {
   await ensureWalletsIndex();
   const col = await walletsCol();
   const uid = normUserId(userId);
-  const existing = await col.findOne({ userId: uid, currency });
+  const findOpts = options.session ? { session: options.session } : {};
+  const existing = await col.findOne({ userId: uid, currency }, findOpts);
   if (existing) {
     return { id: existing._id.toString(), ...existing, _id: undefined };
   }
@@ -121,12 +131,35 @@ async function getOrCreateWallet(userId, currency = 'USD') {
     locked: 0,
     updatedAt: new Date(),
   };
-  const { insertedId } = await col.insertOne(doc);
+  const insertOpts = options.session ? { session: options.session } : {};
+  const { insertedId } = await col.insertOne(doc, insertOpts);
   return { id: insertedId.toString(), ...doc, _id: undefined };
+}
+
+/**
+ * Set wallet balance to an exact value (reconciliation / emergency sync only).
+ * @param {import('mongodb').ClientSession} [options.session]
+ */
+async function setBalanceAbsolute(userId, currency, newBalance, options = {}) {
+  assertPairedWalletLedgerAllowed('setBalanceAbsolute', options);
+  await ensureWalletsIndex();
+  const col = await walletsCol();
+  const uid = normUserId(userId);
+  const bal = Number(newBalance) || 0;
+  const opts = { returnDocument: 'after', upsert: true };
+  if (options.session) opts.session = options.session;
+  const result = await col.findOneAndUpdate(
+    { userId: uid, currency: currency || 'USD' },
+    { $set: { balance: bal, updatedAt: new Date() } },
+    opts
+  );
+  if (!result) return null;
+  return { id: result._id.toString(), ...result, _id: undefined };
 }
 
 /** Update balance (add delta). Returns updated wallet. options.session for transaction. */
 async function updateBalance(userId, currency, delta, options = {}) {
+  assertPairedWalletLedgerAllowed('updateBalance', options);
   await ensureWalletsIndex();
   const col = await walletsCol();
   const uid = normUserId(userId);
@@ -149,6 +182,7 @@ async function updateBalance(userId, currency, delta, options = {}) {
  * @returns {Promise<object|null>} Updated wallet or null if amount invalid, insufficient, or missing wallet
  */
 async function debitBalanceIfSufficient(userId, currency, amount, options = {}) {
+  assertPairedWalletLedgerAllowed('debitBalanceIfSufficient', options);
   const amt = Number(amount) || 0;
   if (amt <= 0) return null;
   await ensureWalletsIndex();
@@ -387,6 +421,7 @@ async function claimPendingWithdrawal(id, userId, update, options = {}) {
 
 export default {
   getOrCreateWallet,
+  setBalanceAbsolute,
   updateBalance,
   debitBalanceIfSufficient,
   listAllWallets,
