@@ -1,4 +1,5 @@
 import authService from './auth.service.js';
+import config from '../../config/env.config.js';
 
 async function register(req, res, next) {
   try {
@@ -48,6 +49,27 @@ async function me(req, res, next) {
 async function verifyEmail(req, res, next) {
   try {
     const token = req.query.token || req.body?.token;
+
+    // Old emails linked to the API URL — send users to the SPA with the same token
+    if (req.method === 'GET') {
+      if (!token || typeof token !== 'string' || !token.trim()) {
+        return res.status(400).json({
+          error: 'Verification token is required',
+          code: 'TOKEN_REQUIRED',
+          hint: 'Open the full link from your email, or open the app and use “Resend verification email”.',
+        });
+      }
+      const base = (config.frontendBaseUrl || '').replace(/\/$/, '');
+      if (!base) {
+        return res.status(503).json({
+          error: 'Email verification redirect is not configured. Set FRONTEND_URL (or WEB_APP_URL) on the server.',
+          code: 'FRONTEND_URL_MISSING',
+        });
+      }
+      const dest = `${base}/verify-email?token=${encodeURIComponent(token.trim())}`;
+      return res.redirect(302, dest);
+    }
+
     const result = await authService.verifyEmail(token);
     res.json(result);
   } catch (e) {

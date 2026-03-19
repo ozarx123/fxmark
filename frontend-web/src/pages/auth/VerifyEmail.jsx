@@ -6,11 +6,17 @@ import FxmarkLogo from '../../components/FxmarkLogo';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
+function readTokenFromUrl() {
+  if (typeof window === 'undefined') return null;
+  const q = new URLSearchParams(window.location.search).get('token');
+  return q && q.trim() ? q.trim() : null;
+}
+
 export default function VerifyEmail() {
   const [searchParams] = useSearchParams();
   const location = useLocation();
   const { user, token: authToken, login } = useAuth();
-  const token = searchParams.get('token');
+  const token = searchParams.get('token')?.trim() || readTokenFromUrl();
 
   const [status, setStatus] = useState('idle'); // 'idle' | 'verifying' | 'success' | 'error'
   const [message, setMessage] = useState('');
@@ -29,7 +35,7 @@ export default function VerifyEmail() {
   useEffect(() => {
     if (!token) {
       setStatus('error');
-      setMessage('Verification link is missing. Please use the link from your email or request a new one.');
+      setMessage('Verification link is missing. Open the link from your email (it should contain ?token=…) or request a new one below.');
       return;
     }
 
@@ -52,11 +58,26 @@ export default function VerifyEmail() {
             login(u, authToken);
           }
           setStatus('success');
-          setMessage(data.user && authToken ? "Your email is verified. You're all set." : 'Your email has been verified. You can now sign in.');
+          if (data.alreadyVerified) {
+            setMessage(data.message || 'Your email is already verified.');
+          } else {
+            setMessage(
+              data.user && authToken
+                ? "Your email is verified. You're all set."
+                : 'Your email has been verified. You can now sign in.'
+            );
+          }
           return;
         }
         setStatus('error');
-        setMessage(data.error || data.message || 'This link is invalid or has expired.');
+        const hint = data.hint ? ` ${data.hint}` : '';
+        if (data.code === 'TOKEN_EXPIRED') {
+          setMessage((data.error || data.message || 'This link has expired.') + hint);
+        } else if (data.code === 'TOKEN_INVALID') {
+          setMessage((data.error || data.message || 'This link is invalid or was already used.') + hint);
+        } else {
+          setMessage((data.error || data.message || 'Verification failed.') + hint);
+        }
       } catch {
         if (cancelled) return;
         setStatus('error');
@@ -65,6 +86,8 @@ export default function VerifyEmail() {
     })();
 
     return () => { cancelled = true; };
+  // Only re-run when URL token changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   const handleResend = async (e) => {

@@ -120,17 +120,24 @@ async function updateById(id, update) {
   if (!id) return null;
   const col = await collection();
   const _id = new ObjectId(id);
-  const result = await col.findOneAndUpdate(
-    { _id },
-    { $set: { ...update, updatedAt: new Date() } },
-    { returnDocument: 'after' }
-  );
+  const $set = { updatedAt: new Date() };
+  const $unset = {};
+  for (const [k, v] of Object.entries(update || {})) {
+    if (v === null || v === undefined) {
+      $unset[k] = '';
+    } else {
+      $set[k] = v;
+    }
+  }
+  const ops = { $set };
+  if (Object.keys($unset).length) ops.$unset = $unset;
+  const result = await col.findOneAndUpdate({ _id }, ops, { returnDocument: 'after' });
   return result ? toUser(result) : null;
 }
 
 function toUser(row) {
   if (!row) return null;
-  const { _id, passwordHash, investorPasswordHash, ...rest } = row;
+  const { _id, passwordHash, investorPasswordHash, emailVerificationToken, emailVerificationExpires, ...rest } = row;
   return { id: _id.toString(), ...rest };
 }
 
@@ -144,6 +151,63 @@ async function findByEmailWithPassword(email) {
   const col = await collection();
   const user = await col.findOne({ email: (email || '').toLowerCase().trim() });
   return user ? toUserWithHash(user) : null;
+}
+
+/**
+ * Atomically verify email: match token, not yet verified, not expired → set verified and clear token.
+ * @returns {Promise<{ ok: true, user: object } | { ok: true, alreadyVerified: true, user: object } | { ok: false, reason: 'expired'|'not_found' }>}
+ */
+async function completeEmailVerificationByToken(token) {
+  if (!token || typeof token !== 'string') return { ok: false, reason: 'not_found' };
+  const t = token.trim();
+  if (!t) return { ok: false, reason: 'not_found' };
+  const col = await collection();
+  const now = new Date();
+
+  const updated = await col.findOneAndUpdate(
+    {
+      emailVerificationToken: t,
+      emailVerified: { $ne: true },
+      emailVerificationExpires: { $gt: now },
+    },
+    {
+      $set: { emailVerified: true, updatedAt: now },
+      $unset: { emailVerificationToken: '', emailVerificationExpires: '' },
+    },
+    { returnDocument: 'after' }
+  );
+
+  if (updated) {
+    return { ok: true, user: toUser(updated) };
+  }
+
+  const still = await col.findOne(
+    { emailVerificationToken: t },
+    { projection: { emailVerified: 1, emailVerificationExpires: 1 } }
+  );
+  if (still) {
+    if (still.emailVerified === true) {
+      const full = await col.findOne(
+        { _id: still._id },
+        { projection: { passwordHash: 0, investorPasswordHash: 0 } }
+      );
+      await col.updateOne(
+        { _id: still._id },
+        { $unset: { emailVerificationToken: '', emailVerificationExpires: '' }, $set: { updatedAt: new Date() } }
+      );
+      return { ok: true, alreadyVerified: true, user: toUser(full) };
+    }
+    const exp = still.emailVerificationExpires ? new Date(still.emailVerificationExpires) : null;
+    if (!exp || exp <= now) {
+      await col.updateOne(
+        { _id: still._id },
+        { $unset: { emailVerificationToken: '', emailVerificationExpires: '' }, $set: { updatedAt: now } }
+      );
+      return { ok: false, reason: 'expired' };
+    }
+  }
+
+  return { ok: false, reason: 'not_found' };
 }
 
 /** List users (admin). Excludes passwordHash. Optional role/kycStatus filters. */
@@ -180,5 +244,6 @@ export default {
   list,
   toUser,
   findByEmailWithPassword,
+  completeEmailVerificationByToken,
   ensureAccountNo,
 };

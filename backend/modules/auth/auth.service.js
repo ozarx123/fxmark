@@ -8,21 +8,55 @@ import emailService from '../email/email.service.js';
 
 const REFRESH_COLLECTION = 'refresh_tokens';
 const VERIFICATION_COLLECTION = 'email_verification_tokens';
-const VERIFICATION_TOKEN_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+function getVerificationExpiryMs() {
+  const n = parseInt(process.env.EMAIL_VERIFICATION_EXPIRY_MS || '', 10);
+  if (!Number.isNaN(n) && n > 0) return n;
+  return 60 * 60 * 1000; // 1 hour default
+}
+
+function getWebAppBaseUrlForEmail() {
+  const base = (config.frontendBaseUrl || '').trim().replace(/\/$/, '');
+  if (!base) {
+    throw new Error('FRONTEND_URL must be set for email verification links');
+  }
+  return base;
+}
+
+function buildVerificationEmailLink(token) {
+  const base = getWebAppBaseUrlForEmail().replace(/\/$/, '');
+  return `${base}/verify-email?token=${encodeURIComponent(token)}`;
+}
 
 async function verificationCollection() {
   const db = await getDb();
   return db.collection(VERIFICATION_COLLECTION);
 }
 
-async function createVerificationToken(userId, email) {
+/** Remove legacy tokens (old flow) so only the user document token is valid. */
+async function purgeLegacyVerificationTokens(userId) {
+  if (!userId) return;
+  try {
+    const col = await verificationCollection();
+    await col.deleteMany({ userId });
+  } catch (e) {
+    console.warn('[auth] purgeLegacyVerificationTokens:', e.message);
+  }
+}
+
+/** Store a new opaque token on the user; overwrites any previous token. */
+async function assignVerificationTokenToUser(userId) {
   const token = randomBytes(32).toString('hex');
-  const expiresAt = new Date(Date.now() + VERIFICATION_TOKEN_EXPIRY_MS);
-  const col = await verificationCollection();
-  await col.insertOne({ token, userId, email: email.toLowerCase().trim(), expiresAt, createdAt: new Date() });
+  const expiresAt = new Date(Date.now() + getVerificationExpiryMs());
+  await userRepo.updateById(userId, {
+    emailVerificationToken: token,
+    emailVerificationExpires: expiresAt,
+  });
+  await purgeLegacyVerificationTokens(userId);
   return token;
 }
 
+/** Legacy: one-time token collection (still honored in verifyEmail for old links). */
 async function consumeVerificationToken(token) {
   const col = await verificationCollection();
   const doc = await col.findOneAndDelete({ token });
@@ -30,14 +64,17 @@ async function consumeVerificationToken(token) {
 }
 
 async function sendVerificationEmail(email, token) {
-  const baseUrl = (config.apiUrl || '').replace(/\/$/, '');
-  const link = `${baseUrl}/api/auth/verify-email?token=${encodeURIComponent(token)}`;
+  const link = buildVerificationEmailLink(token);
+  const expiryLabel =
+    getVerificationExpiryMs() >= 24 * 60 * 60 * 1000
+      ? `${Math.round(getVerificationExpiryMs() / (24 * 60 * 60 * 1000))} day(s)`
+      : `${Math.round(getVerificationExpiryMs() / (60 * 1000))} minutes`;
   const subject = 'Verify your email — FXMARK';
   const html = `
     <p>Thanks for signing up. Please verify your email by clicking the link below.</p>
     <p><a href="${link}">Verify email</a></p>
     <p>Link: ${link}</p>
-    <p>This link expires in 24 hours.</p>
+    <p>This link expires in ${expiryLabel}.</p>
     <p>If you didn't create an account, you can ignore this email.</p>
   `;
   const result = await emailService.sendMail({ to: email, subject, html, text: `Verify your email: ${link}` });
@@ -125,7 +162,7 @@ async function register(payload) {
   const user = await userRepo.findById(userId);
   // Send verification email (non-blocking; do not fail registration if email fails)
   try {
-    const token = await createVerificationToken(userId, email);
+    const token = await assignVerificationTokenToUser(userId);
     await sendVerificationEmail(email, token);
   } catch (e) {
     console.warn('[auth] Verification email send failed:', e.message);
@@ -261,33 +298,68 @@ async function me(userId) {
 
 function sanitizeUser(user) {
   if (!user) return null;
-  const { passwordHash, investorPasswordHash, ...safe } = user;
+  const { passwordHash, investorPasswordHash, emailVerificationToken, emailVerificationExpires, ...safe } = user;
   return safe;
 }
 
 async function verifyEmail(token) {
-  if (!token || typeof token !== 'string') {
+  if (!token || typeof token !== 'string' || !String(token).trim()) {
     const err = new Error('Verification token is required');
     err.statusCode = 400;
+    err.code = 'TOKEN_REQUIRED';
+    err.hint = 'Use the link from your email or request a new verification email.';
     throw err;
   }
-  const doc = await consumeVerificationToken(token.trim());
-  if (!doc) {
-    const err = new Error('Invalid or expired verification link');
+  const t = token.trim();
+
+  // Primary: token on user document (atomic update — safe under concurrent requests)
+  const primary = await userRepo.completeEmailVerificationByToken(t);
+  if (primary.ok) {
+    if (primary.alreadyVerified) {
+      return {
+        verified: true,
+        alreadyVerified: true,
+        message: 'Your email is already verified.',
+        user: sanitizeUser(primary.user),
+      };
+    }
+    return { verified: true, user: sanitizeUser(primary.user) };
+  }
+  if (primary.reason === 'expired') {
+    const err = new Error('This verification link has expired. Please request a new verification email.');
     err.statusCode = 400;
+    err.code = 'TOKEN_EXPIRED';
+    err.hint = 'Use “Resend verification email” on the sign-in page.';
+    throw err;
+  }
+
+  // Legacy: token in email_verification_tokens (emails sent before user-field migration)
+  const doc = await consumeVerificationToken(t);
+  if (!doc) {
+    const err = new Error('Invalid verification link. It may have been used already or is incorrect.');
+    err.statusCode = 400;
+    err.code = 'TOKEN_INVALID';
+    err.hint = 'Request a new verification email from the sign-in page.';
     throw err;
   }
   if (new Date() > new Date(doc.expiresAt)) {
-    const err = new Error('Verification link has expired');
+    const err = new Error('This verification link has expired. Please request a new verification email.');
     err.statusCode = 400;
+    err.code = 'TOKEN_EXPIRED';
+    err.hint = 'Use “Resend verification email” on the sign-in page.';
     throw err;
   }
-  const user = await userRepo.updateById(doc.userId, { emailVerified: true });
+  const user = await userRepo.updateById(doc.userId, {
+    emailVerified: true,
+    emailVerificationToken: null,
+    emailVerificationExpires: null,
+  });
   if (!user) {
     const err = new Error('User not found');
     err.statusCode = 404;
     throw err;
   }
+  await purgeLegacyVerificationTokens(doc.userId);
   return { verified: true, user: sanitizeUser(user) };
 }
 
@@ -310,7 +382,7 @@ async function resendVerificationEmail(email) {
     throw err;
   }
   try {
-    const token = await createVerificationToken(user.id, e);
+    const token = await assignVerificationTokenToUser(user.id);
     const result = await sendVerificationEmail(e, token);
     if (!result.sent) {
       const err = new Error(result.error || 'Failed to send verification email');

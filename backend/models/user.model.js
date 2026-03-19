@@ -14,6 +14,8 @@ const schema = {
 
 const indexes = [
   { keys: { email: 1 }, options: { unique: true } },
+  // One pending verification token per user; sparse so most users have no field
+  { keys: { emailVerificationToken: 1 }, options: { unique: true, sparse: true } },
 ];
 
 export { COLLECTION, schema, indexes };

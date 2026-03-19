@@ -3,11 +3,49 @@ import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// Load backend/.env first, then root .env overrides (so root wins when both exist)
+// Single source of truth: backend/.env only (no repo-root .env)
 const backendEnv = path.resolve(__dirname, '../.env');
-const rootEnv = path.resolve(__dirname, '../../.env');
 dotenv.config({ path: backendEnv });
-dotenv.config({ path: rootEnv, override: true });
+
+/** Non-local hostname in API_URL / FRONTEND_URL (email verification / public links). */
+function envUrlHostIsNonLocal(envVar) {
+  const raw = (process.env[envVar] || '').trim();
+  if (!raw) return false;
+  try {
+    const u = new URL(raw.includes('://') ? raw : `https://${raw}`);
+    const h = u.hostname.toLowerCase();
+    return h !== 'localhost' && h !== '127.0.0.1' && h !== '::1';
+  } catch {
+    return false;
+  }
+}
+
+/** Email-verification config: warn if NODE_ENV=development on a hosted or public-URL deployment. */
+function warnIfDevelopmentLooksPublic() {
+  if (process.env.NODE_ENV !== 'development') return;
+
+  const hostedPlatform =
+    !!process.env.K_SERVICE || // Cloud Run
+    !!process.env.AWS_EXECUTION_ENV ||
+    !!process.env.HEROKU_APP_NAME ||
+    !!process.env.RAILWAY_ENVIRONMENT ||
+    !!process.env.FLY_APP_NAME ||
+    !!process.env.WEBSITE_SITE_NAME || // Azure App Service
+    !!process.env.ECS_CONTAINER_METADATA_URI;
+
+  const publicUrls =
+    envUrlHostIsNonLocal('API_URL') ||
+    envUrlHostIsNonLocal('FRONTEND_URL') ||
+    envUrlHostIsNonLocal('WEB_APP_URL');
+
+  if (hostedPlatform || publicUrls) {
+    console.warn(
+      '[env][email-verification] NODE_ENV is "development" but the process looks hosted or uses non-local API_URL/FRONTEND_URL. ' +
+        'Verification links may be wrong unless FRONTEND_URL matches your public site. Prefer NODE_ENV=production on public servers.'
+    );
+  }
+}
+warnIfDevelopmentLooksPublic();
 
 console.log('FINNHUB KEY:', process.env.FINNHUB_API_KEY ? 'LOADED' : 'MISSING');
 const gmailUser = (process.env.GMAIL_USER || '').trim();
@@ -113,8 +151,21 @@ app.use((req, res, next) => {
 // ── Security: XSS protection on input ───────────────────────────────────────
 app.use(xss());
 
-// Health (root)
+// Root (browser / load balancers)
+app.get('/', (req, res) => {
+  res.json({
+    service: 'fxmark-backend',
+    ok: true,
+    message: 'Use /api/* for REST and /health for probes.',
+    health: '/health',
+    apiHealth: '/api/health',
+    api: '/api',
+  });
+});
+
+// Health — canonical + /api alias (frontend & proxies often expect /api/health)
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
+app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
 // MongoDB health (503 if CONNECTION_STRING not set or connection fails)
 app.get('/health/db', async (req, res) => {

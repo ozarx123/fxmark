@@ -117,7 +117,8 @@ export const errorHandler = (err, req, res, next) => {
         message: msg,
         requestId: req.id,
       };
-  if (status === 403 && err.code) body.code = err.code;
+  if (err.code) body.code = err.code;
+  if (err.hint) body.hint = err.hint;
   if (body.stack) delete body.stack;
   res.status(status).json(body);
 };

@@ -15,5 +15,12 @@ router.post('/change-investor-password', authenticate, controller.changeInvestor
 router.get('/verify-email', controller.verifyEmail);
 router.post('/verify-email', controller.verifyEmail);
 router.post('/resend-verification', controller.resendVerification);
+// Browsers/bookmarks hit GET — explain instead of raw "Cannot GET"
+router.get('/resend-verification', (req, res) => {
+  res.status(405).set('Allow', 'POST').json({
+    error: 'Method not allowed',
+    hint: 'Use POST /api/auth/resend-verification with JSON body: { "email": "user@example.com" }',
+  });
+});
 
 export default router;

@@ -1,9 +1,20 @@
 /**
  * Environment and feature flags
  */
+const trimmed = (v) => (v || '').trim().replace(/\/$/, '');
+
+const nodeEnvRaw = process.env.NODE_ENV;
+const isLocalDevDefault =
+  !nodeEnvRaw || nodeEnvRaw === 'development';
+
 export default {
-  nodeEnv: process.env.NODE_ENV || 'development',
-  apiUrl: process.env.API_URL || 'http://localhost:3000',
+  nodeEnv: nodeEnvRaw || 'development',
+  /** Backend base URL; localhost default only for unset or development NODE_ENV. */
+  apiUrl: trimmed(process.env.API_URL) || (isLocalDevDefault ? 'http://localhost:3000' : ''),
+  /** Public web app origin (no path). Used for email verification links and API → SPA redirects. */
+  frontendBaseUrl:
+    trimmed(process.env.FRONTEND_URL || process.env.WEB_APP_URL) ||
+    (process.env.NODE_ENV === 'development' ? 'http://localhost:5173' : ''),
   jwtSecret: process.env.JWT_SECRET || 'change-me',
   jwtExpiry: process.env.JWT_EXPIRY || '7d',
   jwtRefreshExpiry: process.env.JWT_REFRESH_EXPIRY || '30d',

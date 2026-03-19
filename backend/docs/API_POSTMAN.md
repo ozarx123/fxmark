@@ -26,8 +26,8 @@
 | GET | `/api/auth/me` | Yes | — | Current user |
 | POST | `/api/auth/change-password` | Yes | `{ currentPassword, newPassword }` | Change password |
 | POST | `/api/auth/change-investor-password` | Yes | body | Change investor password |
-| GET | `/api/auth/verify-email` | No | query: `token` | Verify email (link) |
-| POST | `/api/auth/verify-email` | No | body | Verify email |
+| GET | `/api/auth/verify-email` | No | query: `token` | Redirects browser to `{FRONTEND_URL}/verify-email?token=…` |
+| POST | `/api/auth/verify-email` | No | JSON `{ "token": "…" }` | Verify email (SPA) |
 | POST | `/api/auth/resend-verification` | No | body | Resend verification email |
 
 ---
