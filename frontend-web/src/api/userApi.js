@@ -1,7 +1,9 @@
+import { getApiBase } from '../config/apiBase.js';
+
 /**
  * User API — profile, KYC (requires Bearer token)
  */
-const API_BASE = import.meta.env.VITE_API_URL || '/api';
+const API_BASE = getApiBase();
 
 function getToken() {
   return localStorage.getItem('fxmark_token');
@@ -28,3 +30,4 @@ export async function submitKyc() {
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to submit KYC');
   return res.json();
 }
+

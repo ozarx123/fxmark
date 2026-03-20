@@ -1,7 +1,9 @@
+import { getApiBase } from '../config/apiBase.js';
+
 /**
  * Wallet API — balance, deposits, withdrawals (requires Bearer token)
  */
-const API_BASE = import.meta.env.VITE_API_URL || '/api';
+const API_BASE = getApiBase();
 
 function getToken() {
   return localStorage.getItem('fxmark_token');
@@ -127,3 +129,4 @@ export async function executeTransfer(payload) {
   }
   return res.json();
 }
+

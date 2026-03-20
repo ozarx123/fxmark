@@ -1,14 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { getApiBase } from '../../config/apiBase.js';
 
 /** Same base as other API modules — never use bare `/api/...` on Vercel (that hits the static host, 404). */
 function healthCheckUrl() {
-  const v = import.meta.env.VITE_API_URL || '';
-  if (v) {
-    const trimmed = v.replace(/\/+$/, '');
-    return trimmed.endsWith('/api') ? `${trimmed}/health` : `${trimmed}/api/health`;
-  }
-  if (import.meta.env.DEV) return 'http://localhost:3000/api/health';
-  return '/api/health';
+  const trimmed = getApiBase().replace(/\/+$/, '');
+  return trimmed.endsWith('/api') ? `${trimmed}/health` : `${trimmed}/api/health`;
 }
 
 export default function AdminMarket() {
@@ -46,3 +42,5 @@ export default function AdminMarket() {
     </div>
   );
 }
+
+

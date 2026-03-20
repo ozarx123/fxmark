@@ -5,7 +5,9 @@ param(
     [string]$ConnectionString = "",
     [string]$JwtSecret = "",
     [string]$TwelveDataApiKey = "",
-    [string]$FinnhubApiKey = ""
+    [string]$FinnhubApiKey = "",
+    [string]$ZohoMailUser = "",
+    [string]$ZohoMailPassword = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -86,5 +88,39 @@ if ($FinnhubApiKey) {
     }
 }
 
+# Zoho Mail (optional — verification / notifications SMTP)
+if ($ZohoMailUser -and $ZohoMailPassword) {
+    $ErrorActionPreference = "SilentlyContinue"
+    gcloud secrets describe zoho-mail-user 2>$null | Out-Null
+    $zuExists = $LASTEXITCODE -eq 0
+    $ErrorActionPreference = $prevErr
+    if ($zuExists) {
+        $ZohoMailUser | gcloud secrets versions add zoho-mail-user --data-file=-
+        Write-Host "Updated zoho-mail-user" -ForegroundColor Green
+    } else {
+        $ZohoMailUser | gcloud secrets create zoho-mail-user --data-file=-
+        Write-Host "Created zoho-mail-user" -ForegroundColor Green
+    }
+    $ErrorActionPreference = "SilentlyContinue"
+    gcloud secrets describe zoho-mail-password 2>$null | Out-Null
+    $zpExists = $LASTEXITCODE -eq 0
+    $ErrorActionPreference = $prevErr
+    if ($zpExists) {
+        $ZohoMailPassword | gcloud secrets versions add zoho-mail-password --data-file=-
+        Write-Host "Updated zoho-mail-password" -ForegroundColor Green
+    } else {
+        $ZohoMailPassword | gcloud secrets create zoho-mail-password --data-file=-
+        Write-Host "Created zoho-mail-password" -ForegroundColor Green
+    }
+    $projNum = (gcloud projects describe --format="value(projectNumber)" 2>$null)
+    if ($projNum) {
+        $member = "serviceAccount:${projNum}-compute@developer.gserviceaccount.com"
+        foreach ($sid in @("zoho-mail-user", "zoho-mail-password")) {
+            gcloud secrets add-iam-policy-binding $sid --member=$member --role="roles/secretmanager.secretAccessor" --quiet 2>$null | Out-Null
+        }
+    }
+}
+
 Write-Host ""
 Write-Host "Secrets ready. Run docker\deploy.ps1 or docker\deploy-source.ps1 to deploy." -ForegroundColor Cyan
+Write-Host "Zoho from backend\.env: .\scripts\fix-zoho-secrets.ps1" -ForegroundColor DarkGray

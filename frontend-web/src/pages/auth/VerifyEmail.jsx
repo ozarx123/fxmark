@@ -3,8 +3,9 @@ import { Link, useSearchParams, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { ensureUserRole } from '../../utils/authHelpers';
 import FxmarkLogo from '../../components/FxmarkLogo';
+import { getApiBase } from '../../config/apiBase.js';
 
-const API_BASE = import.meta.env.VITE_API_URL || '/api';
+const API_BASE = getApiBase();
 
 function readTokenFromUrl() {
   if (typeof window === 'undefined') return null;
@@ -180,3 +181,5 @@ export default function VerifyEmail() {
     </div>
   );
 }
+
+

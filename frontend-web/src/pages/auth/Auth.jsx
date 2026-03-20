@@ -2,10 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import FxmarkLogo from '../../components/FxmarkLogo';
+import { getApiBase } from '../../config/apiBase.js';
 
 import { ensureUserRole } from '../../utils/authHelpers';
 
-const API_BASE = import.meta.env.VITE_API_URL || '/api';
+const API_BASE = getApiBase();
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PASSWORD_MIN = 8;
 
@@ -267,3 +268,4 @@ export default function Auth() {
     </div>
   );
 }
+

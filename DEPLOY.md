@@ -71,6 +71,56 @@ gcloud run services update fxmark-backend --region us-central1 \
   --update-secrets=FINNHUB_API_KEY=finnhub-api-key:latest
 ```
 
+### Zoho Mail (SMTP — verification & notifications)
+
+Store the mailbox and password as two secrets (recommended instead of plain env vars):
+
+```powershell
+# From repo root — reads ZOHO_MAIL_USER and ZOHO_MAIL_PASSWORD from backend\.env
+.\scripts\fix-zoho-secrets.ps1
+```
+
+Or with `setup-secrets.ps1` (pass both):
+
+```powershell
+.\scripts\setup-secrets.ps1 -ZohoMailUser "noreply@yourdomain.com" -ZohoMailPassword "your-password-or-app-password"
+```
+
+Secret IDs in GCP: **`zoho-mail-user`**, **`zoho-mail-password`**.  
+Cloud Run env mapping: **`ZOHO_MAIL_USER`**, **`ZOHO_MAIL_PASSWORD`** (wired automatically by `docker/deploy.ps1` and `docker/deploy-source.ps1` when both secrets exist).
+
+Grant the Cloud Run service account **Secret Accessor** on both secrets (the scripts above try to do this), or:
+
+**PowerShell (repo root):** `.\scripts\grant-zoho-secrets-access.ps1`
+
+**Bash / one-liner per secret** (replace `PROJECT_NUMBER` — from `gcloud projects describe --format="value(projectNumber)"`):
+
+```bash
+gcloud secrets add-iam-policy-binding zoho-mail-user \
+  --member="serviceAccount:PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+gcloud secrets add-iam-policy-binding zoho-mail-password \
+  --member="serviceAccount:PROJECT_NUMBER-compute@developer.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+```
+
+If deploy still says **Permission denied**, Cloud Run may use a **custom** service account. Get it:
+
+```bash
+gcloud run services describe fxmark-backend --region us-central1 --format="value(spec.template.spec.serviceAccountName)"
+```
+
+Grant **Secret Accessor** on both Zoho secrets to **that** email (not `-compute@`).
+
+Attach to Cloud Run (merge with any other `--update-secrets` you already use):
+
+```bash
+gcloud run services update fxmark-backend --region us-central1 \
+  --update-secrets=ZOHO_MAIL_USER=zoho-mail-user:latest,ZOHO_MAIL_PASSWORD=zoho-mail-password:latest
+```
+
+Non-secret env vars (still set as normal env): `FRONTEND_URL`, `ZOHO_SMTP_HOST`, `ZOHO_SMTP_PORT`, `FROM_EMAIL`, `FROM_NAME`, `API_URL`, etc.
+
 Grant the Cloud Run service account access if deploy errors on permission (replace `PROJECT_NUMBER` from Cloud Run → service details, or use Console “Secrets” → grant accessor):
 
 ```bash

@@ -1,7 +1,9 @@
+import { getApiBase } from '../config/apiBase.js';
+
 /**
  * Admin API helpers — require Bearer token
  */
-const API_BASE = import.meta.env.VITE_API_URL || '/api';
+const API_BASE = getApiBase();
 
 function getToken() {
   return localStorage.getItem('fxmark_token');
@@ -453,4 +455,5 @@ export async function resolveAlert(id) {
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to resolve alert');
   return res.json();
 }
+
 

@@ -88,3 +88,12 @@ Use Zoho’s own wizard: **Mail Admin → Domains → your domain → SPF / DKIM
 ### 5. Links in mail
 
 - Use **HTTPS** `FRONTEND_URL` in production (already used for verification links). Mixed or broken links can hurt trust scores.
+
+## Google Cloud Run + Secret Manager
+
+For production, store **`ZOHO_MAIL_USER`** and **`ZOHO_MAIL_PASSWORD`** in **Secret Manager** instead of plain environment variables. See repo **`DEPLOY.md`** (section “Zoho Mail”) and run:
+
+`.\scripts\fix-zoho-secrets.ps1` (reads `backend/.env`) **or** pass values to `.\scripts\setup-secrets.ps1`.
+
+Deploy scripts map secrets to env vars: `zoho-mail-user` → `ZOHO_MAIL_USER`, `zoho-mail-password` → `ZOHO_MAIL_PASSWORD`.  
+Keep **`FRONTEND_URL`**, **`ZOHO_SMTP_HOST`**, **`ZOHO_SMTP_PORT`** as normal env vars on the service (not secrets unless you prefer).

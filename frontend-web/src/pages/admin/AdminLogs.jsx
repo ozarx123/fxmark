@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { fetchWithAuth } from '../../api/adminApi.js';
+import { getApiBase } from '../../config/apiBase.js';
+
+const API_BASE = getApiBase();
 
 const SOURCES = [
   { value: 'feed',   label: 'Twelve Data Feed' },
@@ -299,7 +302,7 @@ export default function AdminLogs() {
                     <td>{fmt(f.modified)}</td>
                     <td>
                       <a
-                        href={`${import.meta.env.VITE_API_URL || '/api'}/admin/logs/download?file=${encodeURIComponent(f.name)}`}
+                        href={`${API_BASE}/admin/logs/download?file=${encodeURIComponent(f.name)}`}
                         className="btn btn-secondary"
                         style={{ fontSize: '0.72rem', padding: '0.2rem 0.6rem' }}
                         download={f.name}
@@ -317,3 +320,5 @@ export default function AdminLogs() {
     </div>
   );
 }
+
+

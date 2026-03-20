@@ -98,12 +98,22 @@ gcloud secrets describe twelve-data-api-key 2>$null | Out-Null
 $hasTwelveData = $LASTEXITCODE -eq 0
 gcloud secrets describe finnhub-api-key 2>$null | Out-Null
 $hasFinnhub = $LASTEXITCODE -eq 0
+gcloud secrets describe zoho-mail-user 2>$null | Out-Null
+$hasZohoUser = $LASTEXITCODE -eq 0
+gcloud secrets describe zoho-mail-password 2>$null | Out-Null
+$hasZohoPass = $LASTEXITCODE -eq 0
 $ErrorActionPreference = $prevErr
 $secretPairs = @()
 if ($hasMongo) { $secretPairs += "CONNECTION_STRING=mongo-uri:latest" }
 if ($hasJwt) { $secretPairs += "JWT_SECRET=jwt-secret:latest" }
 if ($hasTwelveData) { $secretPairs += "TWELVE_DATA_API_KEY=twelve-data-api-key:latest" }
 if ($hasFinnhub) { $secretPairs += "FINNHUB_API_KEY=finnhub-api-key:latest" }
+if ($hasZohoUser -and $hasZohoPass) {
+    $secretPairs += "ZOHO_MAIL_USER=zoho-mail-user:latest"
+    $secretPairs += "ZOHO_MAIL_PASSWORD=zoho-mail-password:latest"
+} elseif ($hasZohoUser -or $hasZohoPass) {
+    Write-Warning "Only one of zoho-mail-user / zoho-mail-password exists in Secret Manager; skipping Zoho (create both for SMTP)."
+}
 if ($secretPairs.Count -gt 0) {
     $deployArgs += "--set-secrets=" + ($secretPairs -join ",")
 }

@@ -1,7 +1,9 @@
+import { getApiBase } from '../config/apiBase.js';
+
 /**
  * PAMM API — Bull Run (PAMM AI) fund detail, follow, add funds, withdraw, unfollow
  */
-const API_BASE = import.meta.env.VITE_API_URL || '/api';
+const API_BASE = getApiBase();
 
 function getToken() {
   return localStorage.getItem('fxmark_token');
@@ -112,3 +114,4 @@ export async function getPammConfig() {
     message: data.message,
   };
 }
+

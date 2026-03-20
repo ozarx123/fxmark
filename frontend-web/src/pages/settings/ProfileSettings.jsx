@@ -3,8 +3,9 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import ProfileAvatar from '../../components/ProfileAvatar';
 import { getKyc, submitKyc } from '../../api/userApi';
+import { getApiBase } from '../../config/apiBase.js';
 
-const API_BASE = import.meta.env.VITE_API_URL || '/api';
+const API_BASE = getApiBase();
 
 const COUNTRIES = [
   'United States', 'United Kingdom', 'Canada', 'Australia', 'Germany', 'France',
@@ -385,3 +386,4 @@ export default function ProfileSettings() {
     </div>
   );
 }
+

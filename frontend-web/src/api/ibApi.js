@@ -1,7 +1,9 @@
+import { getApiBase } from '../config/apiBase.js';
+
 /**
  * IB API — profile, balance, commissions, payouts (requires Bearer token)
  */
-const API_BASE = import.meta.env.VITE_API_URL || '/api';
+const API_BASE = getApiBase();
 
 function getToken() {
   return localStorage.getItem('fxmark_token');
@@ -131,3 +133,4 @@ export async function listReferrals(params = {}) {
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to load referrals');
   return res.json();
 }
+

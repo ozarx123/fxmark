@@ -1,7 +1,9 @@
+import { getApiBase } from '../config/apiBase.js';
+
 /**
  * Trading API — orders and positions (requires Bearer token)
  */
-const API_BASE = import.meta.env.VITE_API_URL || '/api';
+const API_BASE = getApiBase();
 
 function getToken() {
   return localStorage.getItem('fxmark_token');
@@ -193,3 +195,4 @@ export async function getAccountSummary(opts = {}) {
   if (!res.ok) throw new Error(await parseErrorResponse(res, 'Failed to load account summary'));
   return res.json();
 }
+
