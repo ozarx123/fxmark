@@ -79,7 +79,7 @@ async function verifyEmail(req, res, next) {
 
 async function resendVerification(req, res, next) {
   try {
-    const email = req.body?.email;
+    const email = req.body?.email || req.query?.email;
     const result = await authService.resendVerificationEmail(email);
     res.json(result);
   } catch (e) {
