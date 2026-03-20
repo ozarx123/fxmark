@@ -1,6 +1,6 @@
 /**
  * Notification service
- * Multi-channel: in-app, email (Gmail SMTP), WhatsApp, Telegram
+ * Multi-channel: in-app, email (Zoho Mail SMTP), WhatsApp, Telegram
  */
 import whatsapp from './whatsapp.integration.js';
 import telegram from './telegram.integration.js';

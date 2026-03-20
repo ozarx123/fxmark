@@ -1,29 +1,51 @@
 /**
- * Email service — Gmail SMTP via Nodemailer (App Password).
- * Used for verification emails and notification emails.
+ * Email service — Zoho Mail SMTP via Nodemailer.
+ * Used for verification emails, notifications, password resets, etc.
  */
 import nodemailer from 'nodemailer';
 import config from '../../config/env.config.js';
 
 let transporter = null;
+let warnedFromMismatch = false;
+
+function warnFromAlignmentOnce() {
+  if (warnedFromMismatch) return;
+  const from = (config.fromEmail || '').trim().toLowerCase();
+  const auth = (config.zohoMailUser || '').trim().toLowerCase();
+  if (from && auth && from !== auth) {
+    warnedFromMismatch = true;
+    console.warn(
+      '[email] FROM_EMAIL differs from ZOHO_MAIL_USER — use the same address or a Zoho-authorized alias, or mail may land in spam (SPF/DKIM alignment).'
+    );
+  }
+}
+
+function getSmtpOptions() {
+  const user = (config.zohoMailUser || (process.env.ZOHO_MAIL_USER || '').trim().toLowerCase()) || '';
+  const pass =
+    (config.zohoMailPassword || (process.env.ZOHO_MAIL_PASSWORD || '').replace(/\s+/g, '').trim()) || '';
+  const host = (config.zohoSmtpHost || 'smtp.zoho.com').trim();
+  const port = Number.isFinite(config.zohoSmtpPort) && config.zohoSmtpPort > 0 ? config.zohoSmtpPort : 465;
+  const secure = port === 465;
+  return {
+    host,
+    port,
+    secure,
+    auth: { user, pass },
+    ...(port === 587 && { requireTLS: true }),
+  };
+}
 
 function getTransporter() {
   if (transporter) return transporter;
-  const user =
-    (config.gmailUser || (process.env.GMAIL_USER || '').trim().toLowerCase()) || '';
-  const pass =
-    (config.gmailAppPassword || (process.env.GMAIL_APP_PASSWORD || '').replace(/\s+/g, '').trim()) ||
-    '';
-  if (!user || !pass) {
+  const opts = getSmtpOptions();
+  if (!opts.auth.user || !opts.auth.pass) {
     console.warn(
-      '[email] Gmail not configured: set GMAIL_USER and GMAIL_APP_PASSWORD (see .env.example).'
+      '[email] Zoho Mail not configured: set ZOHO_MAIL_USER and ZOHO_MAIL_PASSWORD (see .env.example).'
     );
     return null;
   }
-  transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: { user, pass },
-  });
+  transporter = nodemailer.createTransport(opts);
   return transporter;
 }
 
@@ -34,6 +56,7 @@ function getTransporter() {
 export async function sendMail({ to, subject, text, html, replyTo }) {
   const trans = getTransporter();
   if (!trans) return { sent: false, error: 'Email not configured' };
+  warnFromAlignmentOnce();
   const from = config.fromName ? `"${config.fromName}" <${config.fromEmail}>` : config.fromEmail;
   try {
     await trans.sendMail({
@@ -43,6 +66,10 @@ export async function sendMail({ to, subject, text, html, replyTo }) {
       text: text || (html ? html.replace(/<[^>]+>/g, '') : ''),
       html: html || undefined,
       replyTo: replyTo || undefined,
+      headers: {
+        // Helps some filters treat mail as normal transactional (avoid looking like blank bulk)
+        'X-Mailer': 'FXMARK',
+      },
     });
     return { sent: true };
   } catch (e) {

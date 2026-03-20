@@ -1,5 +1,5 @@
 /**
- * Send one test message using configured Gmail (GMAIL_USER + GMAIL_APP_PASSWORD).
+ * Send one test message using configured Zoho Mail (ZOHO_MAIL_USER + ZOHO_MAIL_PASSWORD).
  *
  * Usage: node scripts/test-email.js recipient@example.com
  * From repo root: node backend/scripts/test-email.js recipient@example.com
@@ -21,8 +21,8 @@ if (!recipient) {
   process.exit(1);
 }
 
-if (!(process.env.GMAIL_USER || '').trim() || !(process.env.GMAIL_APP_PASSWORD || '').trim()) {
-  console.error('Missing GMAIL_USER or GMAIL_APP_PASSWORD in .env');
+if (!(process.env.ZOHO_MAIL_USER || '').trim() || !(process.env.ZOHO_MAIL_PASSWORD || '').trim()) {
+  console.error('Missing ZOHO_MAIL_USER or ZOHO_MAIL_PASSWORD in .env');
   process.exit(1);
 }
 
@@ -30,9 +30,9 @@ const { sendMail } = await import('../modules/email/email.service.js');
 
 const r = await sendMail({
   to: recipient,
-  subject: 'FXMark — Gmail test',
-  text: 'If you received this, Gmail SMTP is configured correctly.',
-  html: '<p>If you received this, Gmail SMTP is configured correctly.</p>',
+  subject: 'FXMark — Zoho Mail test',
+  text: 'If you received this, Zoho Mail SMTP is configured correctly.',
+  html: '<p>If you received this, Zoho Mail SMTP is configured correctly.</p>',
 });
 
 if (r.sent) {

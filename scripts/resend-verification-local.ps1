@@ -1,6 +1,6 @@
 # Resend verification email (local backend :3000).
 # Run from repo root:  .\scripts\resend-verification-local.ps1 -Email "you@example.com"
-# Requires: cd backend && npm run dev, Mongo + Gmail in backend/.env
+# Requires: cd backend && npm run dev, Mongo + Zoho Mail in backend/.env
 param(
   [Parameter(Mandatory = $true)]
   [string]$Email

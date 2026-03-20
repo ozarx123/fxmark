@@ -48,10 +48,10 @@ function warnIfDevelopmentLooksPublic() {
 warnIfDevelopmentLooksPublic();
 
 console.log('FINNHUB KEY:', process.env.FINNHUB_API_KEY ? 'LOADED' : 'MISSING');
-const gmailUser = (process.env.GMAIL_USER || '').trim();
+const zohoMailUser = (process.env.ZOHO_MAIL_USER || '').trim();
 console.log(
-  '[env] Gmail:',
-  gmailUser ? `${gmailUser.replace(/(.{2}).*(@.*)/, '$1***$2')} (configured)` : 'NOT SET — verification/notification emails disabled'
+  '[env] Zoho Mail:',
+  zohoMailUser ? `${zohoMailUser.replace(/(.{2}).*(@.*)/, '$1***$2')} (configured)` : 'NOT SET — verification/notification emails disabled'
 );
 
 import express from 'express';

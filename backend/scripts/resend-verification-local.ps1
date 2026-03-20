@@ -1,7 +1,7 @@
 # Resend verification email — works around PowerShell + curl JSON quoting issues.
 # From backend/:     .\scripts\resend-verification-local.ps1 -Email "you@example.com"
 # From repo root:    .\scripts\resend-verification-local.ps1 -Email "you@example.com"  (uses root scripts/ wrapper)
-# Requires: backend running (npm run dev), Mongo + Gmail in .env
+# Requires: backend running (npm run dev), Mongo + Zoho Mail in backend/.env
 param(
   [Parameter(Mandatory = $true)]
   [string]$Email

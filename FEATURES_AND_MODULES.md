@@ -76,7 +76,7 @@ This document lists **features and modules that are already implemented** in the
 
 ## Backend — Supporting / internal
 
-- **Email**: Nodemailer + Gmail SMTP; used for verification and notifications
+- **Email**: Nodemailer + Zoho Mail SMTP; used for verification and notifications
 - **Risk management**: A-Book router, B-Book router, exposure manager, hedging service, AI risk switch; hybrid rules evaluator for routing
 - **FIX engine**: FIX session, router, LP connector, price feed, execution report handler (integration points for liquidity provider)
 - **CRM**: CRM integration service (trading permissions, etc.)

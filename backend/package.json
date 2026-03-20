@@ -27,7 +27,9 @@
     "fetch-pamm-commission": "node scripts/fetch-pamm-commission.js",
     "fetch-common-pool-account": "node scripts/fetch-common-pool-account.js",
     "reconcile-wallet-ledger": "node scripts/reconcile-wallet-ledger-audit.js",
-    "test:email": "node scripts/test-email.js"
+    "test:email": "node scripts/test-email.js",
+    "test:verification": "node scripts/test-verification-email.js",
+    "test:frontend-verify": "node scripts/frontend-verification-test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
