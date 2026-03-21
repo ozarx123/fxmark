@@ -19,11 +19,13 @@ export default function VerifyEmail() {
   const { user, token: authToken, login } = useAuth();
   const token = searchParams.get('token')?.trim() || readTokenFromUrl();
 
-  const [status, setStatus] = useState('idle'); // 'idle' | 'verifying' | 'success' | 'error'
+  // no_token = opened app route without ?token= (e.g. after login or protected-route redirect); not an error
+  const [status, setStatus] = useState(() => (token ? 'verifying' : 'no_token')); // 'no_token' | 'verifying' | 'success' | 'error'
   const [message, setMessage] = useState('');
   const [resendEmail, setResendEmail] = useState(() => location.state?.email || user?.email || '');
   const [resending, setResending] = useState(false);
   const [resendResult, setResendResult] = useState(null);
+  const signupVerificationWarning = location.state?.verificationEmailWarning;
 
   useEffect(() => {
     const fromState = location.state?.email;
@@ -35,8 +37,8 @@ export default function VerifyEmail() {
 
   useEffect(() => {
     if (!token) {
-      setStatus('error');
-      setMessage('Verification link is missing. Open the link from your email (it should contain ?token=…) or request a new one below.');
+      setStatus('no_token');
+      setMessage('');
       return;
     }
 
@@ -106,7 +108,9 @@ export default function VerifyEmail() {
       if (res.ok) {
         setResendResult({ ok: true, message: data.message || 'Verification email sent. Check your inbox.' });
       } else {
-        setResendResult({ ok: false, message: data.error || data.message || 'Failed to send. Try again.' });
+        const baseMsg = data.error || data.message || 'Failed to send. Try again.';
+        const detail = data.detail && typeof data.detail === 'string' ? ` ${data.detail}` : '';
+        setResendResult({ ok: false, message: `${baseMsg}${detail}`.trim() });
       }
     } catch {
       setResendResult({ ok: false, message: 'Request failed. Try again.' });
@@ -120,6 +124,12 @@ export default function VerifyEmail() {
       <div className="auth-card auth-callback">
         <FxmarkLogo className="auth-logo" />
         <h1 className="auth-title">Email verification</h1>
+
+        {signupVerificationWarning && (
+          <p className="auth-error" style={{ marginBottom: '1rem', fontSize: '0.95rem' }} role="alert">
+            {signupVerificationWarning}
+          </p>
+        )}
 
         {status === 'verifying' && (
           <p className="auth-callback-status">Verifying your email…</p>
@@ -142,10 +152,16 @@ export default function VerifyEmail() {
           </>
         )}
 
-        {status === 'error' && (
+        {(status === 'no_token' || status === 'error') && (
           <>
-            <p className="auth-callback-status auth-error">{message}</p>
-            <div style={{ marginTop: '1rem' }}>
+            {status === 'no_token' ? (
+              <p className="auth-callback-status" style={{ marginBottom: '1rem' }}>
+                We sent a verification link to your email. Open that link to finish verifying. If you need a new link, enter your email below.
+              </p>
+            ) : (
+              <p className="auth-callback-status auth-error">{message}</p>
+            )}
+            <div style={{ marginTop: status === 'no_token' ? '0.5rem' : '1rem' }}>
               <Link to="/auth" className="auth-link" style={{ marginRight: '0.5rem' }}>Back to sign in</Link>
             </div>
             <div className="auth-divider" style={{ margin: '1.5rem 0' }} />
@@ -172,10 +188,6 @@ export default function VerifyEmail() {
               </p>
             )}
           </>
-        )}
-
-        {status === 'idle' && !token && (
-          <p className="auth-callback-status">Loading…</p>
         )}
       </div>
     </div>

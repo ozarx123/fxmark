@@ -48,6 +48,12 @@ async function main() {
     process.exit(1);
   }
   console.log('   OK', reg.status, '| user id:', reg.data?.user?.id);
+  console.log(
+    '   verificationEmailSent:',
+    reg.data?.verificationEmailSent,
+    '| message:',
+    reg.data?.message || '(none)'
+  );
 
   const { getDb } = await import('../config/mongo.js');
   const db = await getDb();

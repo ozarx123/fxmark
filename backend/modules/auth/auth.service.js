@@ -5,6 +5,8 @@ import config from '../../config/env.config.js';
 import userRepo from '../users/user.repository.js';
 import { getDb } from '../../config/mongo.js';
 import emailService from '../email/email.service.js';
+import { sendWelcomeEmail } from '../email/welcome-email.js';
+import { sendForgotPasswordEmail } from '../email/forgot-password-email.js';
 
 const REFRESH_COLLECTION = 'refresh_tokens';
 const VERIFICATION_COLLECTION = 'email_verification_tokens';
@@ -140,6 +142,7 @@ async function register(payload) {
   }
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
   const name = (payload.name || '').trim() || email.split('@')[0];
+  const phone = (payload.phone || '').trim().slice(0, 40) || undefined;
   const ref = (payload.ref || '').trim();
   let referrerId = null;
   if (ref) {
@@ -157,19 +160,60 @@ async function register(payload) {
     kycStatus: payload.kycStatus || 'pending',
     profileComplete: false,
     emailVerified: false,
+    ...(phone && { phone }),
     ...(referrerId && { referrerId }),
   });
   const user = await userRepo.findById(userId);
-  // Send verification email (non-blocking; do not fail registration if email fails)
+
+  let verificationEmailSent = false;
+  let verificationMessage = '';
   try {
     const token = await assignVerificationTokenToUser(userId);
-    await sendVerificationEmail(email, token);
+    const result = await sendVerificationEmail(email, token);
+    verificationEmailSent = !!result?.sent;
+    if (verificationEmailSent) {
+      verificationMessage = 'Check your inbox for a verification link.';
+    } else {
+      verificationMessage =
+        result?.error || 'Verification email could not be sent. Try “Resend” on the verification page or check server email settings.';
+    }
   } catch (e) {
     console.warn('[auth] Verification email send failed:', e.message);
+    verificationEmailSent = false;
+    const msg = e?.message || '';
+    if (msg.includes('FRONTEND_URL must be set')) {
+      verificationMessage =
+        'Email verification link is not configured. Set FRONTEND_URL or WEB_APP_URL on the server.';
+    } else {
+      verificationMessage = msg || 'Verification email could not be sent.';
+    }
   }
+
+  try {
+    const welcomeRes = await sendWelcomeEmail({
+      to: email,
+      fullName: user.name,
+      accountNo: user.accountNo,
+      phone: user.phone,
+    });
+    if (!welcomeRes?.sent) {
+      console.warn('[auth] Welcome email not sent:', welcomeRes?.error);
+    }
+  } catch (e) {
+    console.warn('[auth] Welcome email failed:', e.message);
+  }
+
   const accessToken = signAccessToken({ id: userId, email: user.email, role: user.role || 'user' });
   const refreshToken = await createRefreshToken(userId);
-  return { accessToken, refreshToken, user: sanitizeUser(user) };
+  return {
+    success: true,
+    requiresEmailVerification: true,
+    verificationEmailSent,
+    message: verificationMessage,
+    accessToken,
+    refreshToken,
+    user: sanitizeUser(user),
+  };
 }
 
 async function login(payload) {
@@ -298,8 +342,109 @@ async function me(userId) {
 
 function sanitizeUser(user) {
   if (!user) return null;
-  const { passwordHash, investorPasswordHash, emailVerificationToken, emailVerificationExpires, ...safe } = user;
+  const {
+    passwordHash,
+    investorPasswordHash,
+    emailVerificationToken,
+    emailVerificationExpires,
+    passwordResetToken,
+    passwordResetExpires,
+    ...safe
+  } = user;
   return safe;
+}
+
+function getPasswordResetExpiryMs() {
+  const n = parseInt(process.env.PASSWORD_RESET_EXPIRY_MS || '', 10);
+  if (!Number.isNaN(n) && n > 0) return n;
+  return 60 * 60 * 1000;
+}
+
+async function assignPasswordResetToken(userId) {
+  const token = randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + getPasswordResetExpiryMs());
+  await userRepo.updateById(userId, {
+    passwordResetToken: token,
+    passwordResetExpires: expiresAt,
+  });
+  return token;
+}
+
+async function revokeAllRefreshTokensForUser(userId) {
+  if (!userId) return;
+  try {
+    const col = await refreshCollection();
+    await col.deleteMany({ userId: String(userId) });
+  } catch (e) {
+    console.warn('[auth] revokeAllRefreshTokensForUser:', e.message);
+  }
+}
+
+/** Public: request reset email (same response whether user exists — anti-enumeration). */
+async function requestForgotPassword(email) {
+  const emailErr = validateEmail(email);
+  if (emailErr) {
+    const err = new Error(emailErr);
+    err.statusCode = 400;
+    throw err;
+  }
+  const e = (email || '').toLowerCase().trim();
+  const generic = {
+    ok: true,
+    message: 'If an account exists for this email, we sent password reset instructions.',
+  };
+  const user = await userRepo.findByEmail(e);
+  if (!user) {
+    return generic;
+  }
+  try {
+    const token = await assignPasswordResetToken(user.id);
+    const result = await sendForgotPasswordEmail({
+      to: e,
+      greetingName: user.name,
+      resetToken: token,
+    });
+    if (!result.sent) {
+      console.warn('[auth] Forgot-password email not sent:', result.error);
+    }
+  } catch (err) {
+    console.warn('[auth] Forgot-password flow failed:', err.message);
+  }
+  return generic;
+}
+
+/** Public: set new password using token from email. */
+async function resetPasswordWithToken(payload) {
+  const token = (payload?.token || '').trim();
+  const newPassword = payload?.password;
+  if (!token) {
+    const err = new Error('Reset token is required');
+    err.statusCode = 400;
+    err.code = 'TOKEN_REQUIRED';
+    throw err;
+  }
+  const pwdErr = validatePassword(newPassword, true);
+  if (pwdErr) {
+    const err = new Error(pwdErr);
+    err.statusCode = 400;
+    throw err;
+  }
+  const passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
+  const result = await userRepo.resetPasswordWithToken(token, passwordHash);
+  if (!result.ok) {
+    if (result.reason === 'expired') {
+      const err = new Error('This reset link has expired. Please request a new one.');
+      err.statusCode = 400;
+      err.code = 'TOKEN_EXPIRED';
+      throw err;
+    }
+    const err = new Error('Invalid or expired reset link. Please request a new password reset.');
+    err.statusCode = 400;
+    err.code = 'TOKEN_INVALID';
+    throw err;
+  }
+  await revokeAllRefreshTokensForUser(result.user.id);
+  return { success: true, message: 'Password updated. You can sign in with your new password.' };
 }
 
 async function verifyEmail(token) {
@@ -472,6 +617,8 @@ export default {
   me,
   verifyEmail,
   resendVerificationEmail,
+  requestForgotPassword,
+  resetPasswordWithToken,
   changePassword,
   changeInvestorPassword,
   signToken: signAccessToken,

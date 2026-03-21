@@ -137,7 +137,16 @@ async function updateById(id, update) {
 
 function toUser(row) {
   if (!row) return null;
-  const { _id, passwordHash, investorPasswordHash, emailVerificationToken, emailVerificationExpires, ...rest } = row;
+  const {
+    _id,
+    passwordHash,
+    investorPasswordHash,
+    emailVerificationToken,
+    emailVerificationExpires,
+    passwordResetToken,
+    passwordResetExpires,
+    ...rest
+  } = row;
   return { id: _id.toString(), ...rest };
 }
 
@@ -210,6 +219,50 @@ async function completeEmailVerificationByToken(token) {
   return { ok: false, reason: 'not_found' };
 }
 
+/**
+ * Apply new password hash when passwordResetToken matches and is not expired; clears reset fields.
+ * @returns {Promise<{ ok: true, user: object } | { ok: false, reason: 'expired'|'invalid' }>}
+ */
+async function resetPasswordWithToken(token, passwordHash) {
+  const col = await collection();
+  const now = new Date();
+  const t = (token || '').trim();
+  if (!t) return { ok: false, reason: 'invalid' };
+
+  const updated = await col.findOneAndUpdate(
+    {
+      passwordResetToken: t,
+      passwordResetExpires: { $gt: now },
+    },
+    {
+      $set: { passwordHash, updatedAt: now },
+      $unset: { passwordResetToken: '', passwordResetExpires: '' },
+    },
+    { returnDocument: 'after' }
+  );
+
+  if (updated) {
+    return { ok: true, user: toUser(updated) };
+  }
+
+  const still = await col.findOne(
+    { passwordResetToken: t },
+    { projection: { passwordResetExpires: 1 } }
+  );
+  if (still) {
+    const exp = still.passwordResetExpires ? new Date(still.passwordResetExpires) : null;
+    if (!exp || exp <= now) {
+      await col.updateOne(
+        { _id: still._id },
+        { $unset: { passwordResetToken: '', passwordResetExpires: '' }, $set: { updatedAt: now } }
+      );
+      return { ok: false, reason: 'expired' };
+    }
+  }
+
+  return { ok: false, reason: 'invalid' };
+}
+
 /** List users (admin). Excludes passwordHash. Optional role/kycStatus filters. */
 async function list(options = {}) {
   const col = await collection();
@@ -245,5 +298,6 @@ export default {
   toUser,
   findByEmailWithPassword,
   completeEmailVerificationByToken,
+  resetPasswordWithToken,
   ensureAccountNo,
 };

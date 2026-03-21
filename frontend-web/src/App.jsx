@@ -12,6 +12,8 @@ import Auth from './pages/auth/Auth.jsx';
 import AuthCallback from './pages/auth/AuthCallback.jsx';
 import ProfileSetup from './pages/auth/ProfileSetup.jsx';
 import VerifyEmail from './pages/auth/VerifyEmail.jsx';
+import ForgotPassword from './pages/auth/ForgotPassword.jsx';
+import ResetPassword from './pages/auth/ResetPassword.jsx';
 import AppLayout from './AppLayout.jsx';
 import AdminLayout from './layouts/AdminLayout.jsx';
 import Dashboard from './pages/dashboard/index.jsx';
@@ -58,11 +60,16 @@ function App() {
         <MarketDataProvider>
         <Routes>
           <Route path="/" element={<Landing />} />
-          <Route path="/auth" element={<Auth />} />
+          {/* Password reset: top-level paths so /auth never swallows /auth/reset-password; keep aliases for old links */}
+          <Route path="/reset-password" element={<ResetPassword />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
           <Route path="/auth/verify-email" element={<VerifyEmail />} />
           <Route path="/verify-email" element={<VerifyEmail />} />
+          <Route path="/auth/forgot-password" element={<ForgotPassword />} />
+          <Route path="/auth/reset-password" element={<ResetPassword />} />
           <Route path="/auth/profile-setup" element={<ProfileSetup />} />
+          <Route path="/auth" element={<Auth />} />
           <Route element={<AccountProvider><FinanceProvider><ProtectedRoute requireAuth><AppLayout /></ProtectedRoute></FinanceProvider></AccountProvider>}>
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="wallet" element={<Wallet />} />

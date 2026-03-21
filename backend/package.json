@@ -27,8 +27,11 @@
     "fetch-pamm-commission": "node scripts/fetch-pamm-commission.js",
     "fetch-common-pool-account": "node scripts/fetch-common-pool-account.js",
     "reconcile-wallet-ledger": "node scripts/reconcile-wallet-ledger-audit.js",
+    "check:zoho": "node scripts/check-zoho-env.js",
     "test:email": "node scripts/test-email.js",
     "test:verification": "node scripts/test-verification-email.js",
+    "test:signup-verification": "node scripts/test-signup-verification-email.js",
+    "test:password-reset-e2e": "node scripts/test-password-reset-e2e.js",
     "test:frontend-verify": "node scripts/frontend-verification-test.js"
   },
   "dependencies": {

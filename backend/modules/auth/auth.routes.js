@@ -6,6 +6,7 @@ const router = express.Router();
 router.post('/register', controller.register);
 router.post('/signup', controller.register); // alias for frontend
 router.post('/login', controller.login);
+router.get('/login', controller.loginPageFallback);
 router.post('/refresh', controller.refresh);
 router.post('/logout', authenticate, controller.logout);
 router.get('/me', authenticate, controller.me);
@@ -17,5 +18,9 @@ router.post('/verify-email', controller.verifyEmail);
 router.post('/resend-verification', controller.resendVerification);
 // Compatibility: some browser flows hit GET; accept query ?email=...
 router.get('/resend-verification', controller.resendVerification);
+
+router.post('/forgot-password', controller.forgotPassword);
+router.get('/reset-password', controller.resetPassword);
+router.post('/reset-password', controller.resetPassword);
 
 export default router;

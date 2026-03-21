@@ -7,31 +7,42 @@ import { getDb } from '../config/mongo.js';
 
 let dbCheckLast = 0;
 let dbCheckOk = true;
+/** Last ping failure message (for cached 503 detail in development). */
+let dbCheckLastError = '';
 const DB_CHECK_TTL_MS = 5000;
 
-/** Returns 503 if MongoDB is unavailable (cached 5s). Skips /auth/login, /auth/register, /auth/signup. */
+/** Returns 503 if MongoDB is unavailable (cached 5s). Skips /health on this router. */
 export const requireDb = async (req, res, next) => {
   const path = req.path || '';
   if (path === '/health') return next();
   const now = Date.now();
   if (now - dbCheckLast < DB_CHECK_TTL_MS) {
-    if (!dbCheckOk) return res.status(503).json({ error: 'Database unavailable. Check CONNECTION_STRING in backend/.env and ensure MongoDB is running.' });
+    if (!dbCheckOk) {
+      const body = {
+        error: 'Database unavailable. Check CONNECTION_STRING in backend/.env and ensure MongoDB is running.',
+      };
+      if (process.env.NODE_ENV !== 'production' && dbCheckLastError) body.detail = dbCheckLastError;
+      return res.status(503).json(body);
+    }
     return next();
   }
   try {
     if (!process.env.CONNECTION_STRING && !process.env.MONGODB_URI) {
       dbCheckOk = false;
       dbCheckLast = now;
+      dbCheckLastError = 'CONNECTION_STRING / MONGODB_URI not set';
       return res.status(503).json({ error: 'Database not configured. Set CONNECTION_STRING in backend/.env' });
     }
     const db = await getDb();
     await db.admin().command({ ping: 1 });
     dbCheckOk = true;
+    dbCheckLastError = '';
     dbCheckLast = now;
     next();
   } catch (err) {
     dbCheckOk = false;
     dbCheckLast = now;
+    dbCheckLastError = err.message || String(err);
     console.error('[requireDb]', err.message);
     const body = {
       error: 'Database unavailable. Check CONNECTION_STRING in backend/.env and ensure MongoDB is running.',
@@ -82,34 +93,95 @@ export const optionalAuthenticate = async (req, res, next) => {
   }
 };
 
-function isDbError(err) {
+/** MongoDB driver errors use names like MongoServerError, MongoNetworkError, MongoServerSelectionError, … */
+function isMongoDriverErrorName(err) {
+  const n = err && err.name;
+  return typeof n === 'string' && /^Mongo[A-Z]/.test(n);
+}
+
+/** Walk a short cause chain (wrapped errors from resend / nodemailer). */
+function errorMessageChain(err, maxDepth = 5) {
+  const parts = [];
+  let e = err;
+  for (let i = 0; i < maxDepth && e; i++) {
+    if (e.message) parts.push(String(e.message));
+    e = e.cause;
+  }
+  return parts.join(' \n ');
+}
+
+/**
+ * True when the error likely indicates MongoDB connectivity / driver issues (safe to show generic DB hint).
+ * Excludes SMTP/email transport (nodemailer, 535, etc.) so resend-verification failures are not mislabeled.
+ */
+function isMongoConnectivityError(err) {
   const m = (err.message || '').toLowerCase();
+  const chain = errorMessageChain(err).toLowerCase();
+  if (!m && !chain) return false;
+  // Do not treat email/SMTP failures as DB unavailable (message or wrapped cause)
+  if (
+    chain.includes('smtp') ||
+    chain.includes('nodemailer') ||
+    chain.includes('535') ||
+    chain.includes('invalid login') ||
+    (chain.includes('zoho') && (chain.includes('mail') || chain.includes('smtp'))) ||
+    /eauth|etls|certificate/i.test(chain)
+  ) {
+    return false;
+  }
+  if (isMongoDriverErrorName(err)) return true;
   return (
     m.includes('mongodb') ||
-    m.includes('mongo') ||
+    m.includes('mongodb+srv') ||
+    m.includes('mongodb.net') ||
     m.includes('connection_string') ||
     m.includes('connection refused') ||
-    m.includes('econnrefused') ||
-    m.includes('ssl') ||
-    m.includes('tls') ||
-    m.includes('authentication failed') ||
-    m.includes('not set in .env')
+    (m.includes('econnrefused') && (m.includes('27017') || m.includes('mongodb'))) ||
+    m.includes('not set in .env') ||
+    m.includes('server selection timed out') ||
+    m.includes('wait queue timeout') ||
+    (m.includes('ssl') && (m.includes('mongodb') || m.includes('mongo.net'))) ||
+    (m.includes('tls') && (m.includes('mongodb') || m.includes('mongo.net'))) ||
+    (m.includes('authentication failed') && (m.includes('mongodb') || m.includes('atlas') || m.includes('mongo.net')))
   );
 }
 
-export const errorHandler = (err, req, res, next) => {
-  const status = err.statusCode || 500;
-  let msg = err.message || 'Internal Server Error';
+/** Resend flow wraps failures as 502; never replace with generic DB hint when the app wrapped a downstream error. */
+function isResendVerificationWrappedError(err) {
+  const msg = (err.message || '').toLowerCase();
+  return msg.includes('failed to send verification email') && err.cause != null;
+}
 
-  if (status >= 500) {
-    console.error(`[${req.id}] ${req.method} ${req.path} → ${status}:`, err.message);
+export const errorHandler = (err, req, res, next) => {
+  // Match Express: many libraries set `status`, others set `statusCode` (http-errors sets both).
+  const raw = err.statusCode ?? err.status;
+  let status = 500;
+  if (typeof raw === 'number' && raw >= 400 && raw < 600) status = raw;
+  else if (typeof raw === 'string' && /^\d{3}$/.test(raw)) {
+    const n = parseInt(raw, 10);
+    if (n >= 400 && n < 600) status = n;
+  }
+  const originalMessage = err.message || 'Internal Server Error';
+  let msg = originalMessage;
+
+  const isProd = process.env.NODE_ENV === 'production';
+  const is5xx = status >= 500;
+
+  if (is5xx) {
+    console.error(`[${req.id}] ${req.method} ${req.path} → ${status}:`, originalMessage);
     if (err.stack) console.error(err.stack);
-    if (isDbError(err)) {
+    // 502 = upstream/email in this app — never replace with generic Mongo message
+    // 503 = typically requireDb — not produced here with same shape
+    const allowGenericDbMessage =
+      status !== 502 &&
+      status !== 503 &&
+      !isResendVerificationWrappedError(err) &&
+      isMongoConnectivityError(err);
+    if (allowGenericDbMessage) {
       msg = 'Database unavailable. Check CONNECTION_STRING in backend/.env and ensure MongoDB is running.';
     }
   }
 
-  const isProd = process.env.NODE_ENV === 'production';
   const body = isProd
     ? { error: msg }
     : {
@@ -117,6 +189,12 @@ export const errorHandler = (err, req, res, next) => {
         message: msg,
         requestId: req.id,
       };
+  if (!isProd && is5xx && originalMessage) {
+    body.detail = originalMessage;
+    if (err.cause && typeof err.cause.message === 'string') {
+      body.detailCause = err.cause.message;
+    }
+  }
   if (err.code) body.code = err.code;
   if (err.hint) body.hint = err.hint;
   if (body.stack) delete body.stack;

@@ -1,0 +1,2 @@
+# Netlify / similar: SPA fallback so /reset-password and all client routes load index.html
+/*    /index.html   200

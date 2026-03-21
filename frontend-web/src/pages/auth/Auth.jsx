@@ -48,6 +48,7 @@ export default function Auth() {
   const [signupEmail, setSignupEmail] = useState('');
   const [signupPassword, setSignupPassword] = useState('');
   const [signupName, setSignupName] = useState('');
+  const [signupPhone, setSignupPhone] = useState('');
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -114,6 +115,7 @@ export default function Auth() {
           email: signupEmail,
           password: signupPassword,
           name: signupName,
+          ...(signupPhone.trim() && { phone: signupPhone.trim() }),
           ref: refParam || undefined,
         }),
       });
@@ -121,8 +123,18 @@ export default function Auth() {
       if (res.ok) {
         const u = ensureUserRole(data.user || { email: signupEmail, name: signupName || signupEmail.split('@')[0] }, signupEmail);
         login(u, data.accessToken);
-        const target = safeRedirect || (u.profileComplete ? '/dashboard' : '/auth/profile-setup');
-        navigate(target, { replace: true });
+        // Always land on verify-email until the account is verified (same as resend flow). Do not skip when the email sent OK.
+        const needsEmailVerification = data.user?.emailVerified !== true;
+        const target = needsEmailVerification
+          ? '/auth/verify-email'
+          : safeRedirect || (u.profileComplete ? '/dashboard' : '/auth/profile-setup');
+        navigate(target, {
+          replace: true,
+          state: {
+            email: signupEmail,
+            verificationEmailWarning: data.verificationEmailSent === false ? data.message : undefined,
+          },
+        });
         return;
       }
       if (res.status === 404 || res.status === 502) {
@@ -210,6 +222,9 @@ export default function Auth() {
                 autoComplete="current-password"
               />
             </label>
+            <div style={{ textAlign: 'right', marginTop: '-0.35rem', marginBottom: '0.35rem' }}>
+              <Link to="/forgot-password" className="auth-link" style={{ fontSize: '0.9rem' }}>Forgot password?</Link>
+            </div>
             <button type="submit" className="auth-submit" disabled={loading}>
               {loading ? 'Signing in…' : 'Log in'}
             </button>
@@ -237,6 +252,17 @@ export default function Auth() {
                 onChange={(e) => setSignupEmail(e.target.value)}
                 required
                 autoComplete="email"
+              />
+            </label>
+            <label className="auth-label">
+              Phone <span className="muted">(optional)</span>
+              <input
+                type="tel"
+                className="auth-input"
+                placeholder="+1 234 567 8900"
+                value={signupPhone}
+                onChange={(e) => setSignupPhone(e.target.value)}
+                autoComplete="tel"
               />
             </label>
             <label className="auth-label">

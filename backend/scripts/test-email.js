@@ -1,6 +1,10 @@
 /**
  * Send one test message using configured Zoho Mail (ZOHO_MAIL_USER + ZOHO_MAIL_PASSWORD).
  *
+ * Loads **only** `backend/.env` — same as `src/index.js` (the API does not load repo-root `.env`).
+ * If you previously had a repo-root `.env` with different ZOHO_* values, the old script could
+ * "pass" while `npm run dev` returned 535; keep all mail vars in `backend/.env`.
+ *
  * Usage: node scripts/test-email.js recipient@example.com
  * From repo root: node backend/scripts/test-email.js recipient@example.com
  */
@@ -10,10 +14,8 @@ import dotenv from 'dotenv';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const backendRoot = path.resolve(__dirname, '..');
-const repoRoot = path.resolve(backendRoot, '..');
 
 dotenv.config({ path: path.join(backendRoot, '.env') });
-dotenv.config({ path: path.join(repoRoot, '.env'), override: true });
 
 const recipient = (process.argv[2] || '').trim();
 if (!recipient) {

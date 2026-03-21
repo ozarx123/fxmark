@@ -1,11 +1,5 @@
-import path from 'path';
-import { fileURLToPath } from 'url';
-import dotenv from 'dotenv';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// Single source of truth: backend/.env only (no repo-root .env)
-const backendEnv = path.resolve(__dirname, '../.env');
-dotenv.config({ path: backendEnv });
+// Must be first: ES modules evaluate imports before this file's body; Zoho/Mongo must see backend/.env first.
+import '../config/load-env.js';
 
 /** Non-local hostname in API_URL / FRONTEND_URL (email verification / public links). */
 function envUrlHostIsNonLocal(envVar) {
@@ -89,6 +83,39 @@ import { startDailyWalletLedgerReconciliation } from '../modules/finance/reconci
 import financialTransactionService from '../modules/finance/financial-transaction.service.js';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
+
+/**
+ * /api/auth rate limit (per IP, rolling window). Default 10/15min in production.
+ * Local dev often uses NODE_ENV=production with API_URL=http://localhost:3000 — that still hit the cap during testing.
+ * Set RATE_LIMIT_MAX_AUTH explicitly to override (0 = unlimited; not recommended in production).
+ */
+function getAuthRateLimitMax() {
+  const raw = (process.env.RATE_LIMIT_MAX_AUTH ?? '').trim();
+  if (raw !== '') {
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) && n >= 0 ? n : 10;
+  }
+  const nodeEnv = process.env.NODE_ENV;
+  const isDevEnv = !nodeEnv || nodeEnv === 'development';
+  const apiUrl = (process.env.API_URL || '').trim();
+  const apiIsLocal = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(apiUrl);
+  if (isDevEnv || apiIsLocal) return 500;
+  return 10;
+}
+
+const AUTH_RATE_LIMIT_MAX = getAuthRateLimitMax();
+
+/** True when the TCP peer is this machine (Vite → API on same PC). Skips auth rate limit so dev isn't capped at 10/500. */
+function isLoopbackRequest(req) {
+  if ((process.env.RATE_LIMIT_SKIP_AUTH || '').toLowerCase() === 'true') return true;
+  const ip = String(req.ip || req.socket?.remoteAddress || '');
+  return (
+    ip === '127.0.0.1' ||
+    ip === '::1' ||
+    ip === '::ffff:127.0.0.1' ||
+    ip.endsWith('127.0.0.1')
+  );
+}
 
 const app = express();
 
@@ -206,15 +233,47 @@ app.get('/health/redis', async (req, res) => {
 // Market data
 app.use('/api/market', marketRoutes);
 
-// ── Security: Stricter rate limit on auth routes (login/register brute-force) ─
+// ── Security: Rate limit only login + register/signup (not verify-email / resend / refresh) ─
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: parseInt(process.env.RATE_LIMIT_MAX_AUTH || '10', 10),
+  max: AUTH_RATE_LIMIT_MAX,
   message: { error: 'Too many authentication attempts, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => {
+    if (req.method === 'OPTIONS') return true;
+    return isLoopbackRequest(req);
+  },
 });
-app.use('/api/auth', authLimiter);
+
+const SENSITIVE_AUTH_PATHS = new Set([
+  '/api/auth/login',
+  '/api/auth/register',
+  '/api/auth/signup',
+  '/api/auth/forgot-password',
+  '/api/auth/reset-password',
+]);
+
+function normalizeRequestPath(req) {
+  const p = req.path || (req.url ? req.url.split('?')[0] : '') || '';
+  return p.replace(/\/+$/, '') || '/';
+}
+
+function applySensitiveAuthRateLimit(req, res, next) {
+  if (req.method === 'OPTIONS') return next();
+  const p = normalizeRequestPath(req);
+  if (!SENSITIVE_AUTH_PATHS.has(p)) return next();
+  // GET = redirect to SPA from email; do not count toward login-style limits
+  if (p === '/api/auth/reset-password' && req.method === 'GET') return next();
+  return authLimiter(req, res, next);
+}
+
+app.use(applySensitiveAuthRateLimit);
+if (AUTH_RATE_LIMIT_MAX !== 10) {
+  console.log(
+    `[rate-limit] login/register/signup/forgot/reset: ${AUTH_RATE_LIMIT_MAX} req / 15 min per IP (verify-email & resend not limited here). Set RATE_LIMIT_MAX_AUTH to override.`
+  );
+}
 
 // API (auth, users, wallet, etc. from core)
 app.use('/api', apiRoutes);

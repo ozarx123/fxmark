@@ -4,7 +4,7 @@
  * Use getDb() in modules that need the database.
  * ESM for use with src/index.js and future ESM modules.
  */
-import 'dotenv/config';
+import './load-env.js';
 import { MongoClient } from 'mongodb';
 
 const rawUri = process.env.CONNECTION_STRING || process.env.MONGODB_URI;
