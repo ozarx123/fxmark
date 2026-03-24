@@ -48,7 +48,6 @@ export default function BullRunFundDetailView({
   fundId,
   fund,
   stats,
-  recentTrades,
   myAllocation,
   bullRun,
   onRefresh,
@@ -136,6 +135,15 @@ export default function BullRunFundDetailView({
   const fundGrowthRate = stats?.fundGrowthRate ?? 0;
   const cumulativePnl = stats?.cumulativePnl ?? 0;
   const allocationPercent = myAllocation?.allocationPercent ?? 0;
+  const currentMonthKey = new Date().toISOString().slice(0, 7); // YYYY-MM
+  const hasCurrentMonthPerformance = monthlyPerformance.some((row) =>
+    String(row?.month || '').trim().startsWith(currentMonthKey)
+  );
+  // Monthly earnings reset to 0% for investor UI when past/test data is detected.
+  const investorMonthlyEarnings =
+    !hasCurrentMonthPerformance || !Number.isFinite(Number(monthlyProfit))
+      ? 0
+      : Number(monthlyProfit);
 
   const investorOverviewCards = myAllocation ? (
     <>
@@ -147,10 +155,7 @@ export default function BullRunFundDetailView({
         <h3>Current balance</h3>
         <p className="pamm-value pamm-value--amount">{formatCurrency(myAllocation.allocatedBalance, 2)}</p>
       </div>
-      <div className="pamm-card pamm-card--neutral">
-        <h3>Your share of fund</h3>
-        <p className="pamm-value">{Number(allocationPercent).toFixed(2)}%</p>
-      </div>
+      {/* Investor UI intentionally hides share-of-fund and realized P&L cards. */}
       <div className="pamm-card pamm-card--neutral">
         <h3>Today&apos;s earnings</h3>
         <p className={`pamm-value ${(todayProfit ?? 0) >= 0 ? 'positive' : 'negative'}`}>
@@ -159,14 +164,8 @@ export default function BullRunFundDetailView({
       </div>
       <div className="pamm-card pamm-card--neutral">
         <h3>Monthly earnings</h3>
-        <p className={`pamm-value ${(monthlyProfit ?? 0) >= 0 ? 'positive' : 'negative'}`}>
-          {formatPercent(monthlyProfit)}
-        </p>
-      </div>
-      <div className="pamm-card pamm-card--neutral">
-        <h3>Realized P&amp;L</h3>
-        <p className={`pamm-value ${(myAllocation.realizedPnl ?? 0) >= 0 ? 'positive' : 'negative'}`}>
-          {formatCurrency(myAllocation.realizedPnl ?? 0, 2)}
+        <p className={`pamm-value ${(investorMonthlyEarnings ?? 0) >= 0 ? 'positive' : 'negative'}`}>
+          {formatPercent(investorMonthlyEarnings)}
         </p>
       </div>
     </>
@@ -629,39 +628,6 @@ export default function BullRunFundDetailView({
           >
             Follow {fund?.name || 'BULL RUN'}
           </button>
-        </section>
-      )}
-
-      {/* Trading activity */}
-      {recentTrades?.length > 0 && (
-        <section className="pamm-section">
-          <h2 className="pamm-section-title">Recent trades</h2>
-          <div className="table-wrap">
-            <table className="table pamm-table">
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Symbol</th>
-                  <th>Side</th>
-                  <th>Volume</th>
-                  <th>P&L</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recentTrades.slice(0, 20).map((t) => (
-                  <tr key={t.id}>
-                    <td>{t.createdAt ? new Date(t.createdAt).toLocaleString() : '—'}</td>
-                    <td>{t.symbol || '—'}</td>
-                    <td><span className={`type-badge type-${(t.side || '').toLowerCase()}`}>{t.side || '—'}</span></td>
-                    <td>{t.volume != null ? t.volume : '—'}</td>
-                    <td className={t.pnl != null ? (t.pnl >= 0 ? 'positive' : 'negative') : ''}>
-                      {t.pnl != null ? formatCurrency(t.pnl, 2) : '—'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
         </section>
       )}
 

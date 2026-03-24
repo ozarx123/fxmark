@@ -24,11 +24,13 @@ export default function Wallet() {
   const [transfers, setTransfers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
 
   const loadWalletData = useCallback(async () => {
     if (!isAuthenticated) return;
     setLoading(true);
     setError('');
+    setNotice('');
     try {
       const [balRes, depRes, wdRes, tradesRes, transfersRes] = await Promise.all([
         walletApi.getBalance().catch(() => null),
@@ -92,13 +94,25 @@ export default function Wallet() {
   const handleWithdrawConfirm = async (data) => {
     if (!isAuthenticated) return;
     setError('');
+    setNotice('');
     try {
       const { id } = await walletApi.requestWithdrawal({
         amount: data.amount,
         currency: 'USD',
         method: data.method,
       });
-      await walletApi.processWithdrawal(id);
+      const result = await walletApi.processWithdrawal(id);
+      // Medium fraud / manual review: HTTP 200 but not completed — no balance email yet
+      if (result.status === 'review') {
+        setNotice(
+          result.message ||
+            'Your withdrawal is under review. You will receive an email when it is processed.'
+        );
+        setWithdrawModalOpen(false);
+        loadWalletData();
+        refreshFinance();
+        return;
+      }
       setWithdrawModalOpen(false);
       loadWalletData();
       refreshFinance();
@@ -133,6 +147,11 @@ export default function Wallet() {
       </header>
       <section className="page-content">
         {error && <p className="form-error">{error}</p>}
+        {notice && (
+          <p className="muted" style={{ color: 'var(--fxmark-success)', marginBottom: '0.75rem' }}>
+            {notice}
+          </p>
+        )}
         <div className="wallet-cards">
           <div className="card wallet-balance-card">
             <h3>Available balance</h3>

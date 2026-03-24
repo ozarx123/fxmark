@@ -8,6 +8,7 @@ import ibRepo from '../ib/ib.repository.js';
 import walletRepo from '../wallet/wallet.repository.js';
 import ledgerService from '../finance/ledger.service.js';
 import financialTransactionService from '../finance/financial-transaction.service.js';
+import { queueWalletBalanceNotifyById } from '../email/wallet-balance-notify.js';
 import audit from './audit.logs.js';
 
 const MAX_WALLET = 500_000;
@@ -211,6 +212,9 @@ export async function applyAdjustment(params) {
     await financialTransactionService.verifyWalletLedgerAfterMutation(targetUserId, 'USD', {
       flow: 'profit_commission_adjustment',
     });
+    if (result.wallet?.transactionId) {
+      queueWalletBalanceNotifyById(result.wallet.transactionId);
+    }
   }
 
   return { success: true, message: 'Adjustment applied', details: result };

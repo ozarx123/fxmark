@@ -4,6 +4,7 @@
 import { getDb } from '../../config/mongo.js';
 import { ObjectId } from 'mongodb';
 import { assertPairedWalletLedgerAllowed } from '../finance/finance-wallet-guard.js';
+import { queueWalletBalanceNotify } from '../email/wallet-balance-notify.js';
 
 const WALLETS_COLLECTION = 'wallets';
 const TRANSACTIONS_COLLECTION = 'wallet_transactions';
@@ -207,7 +208,11 @@ async function createTransaction(doc, options = {}) {
   if (toInsert.userId != null) toInsert.userId = normUserId(toInsert.userId);
   const insertOpts = options.session ? { session: options.session } : {};
   const { insertedId } = await col.insertOne(toInsert, insertOpts);
-  return insertedId.toString();
+  const id = insertedId.toString();
+  if (toInsert.status === 'completed' && !options.skipBalanceEmail && !options.session) {
+    queueWalletBalanceNotify({ ...toInsert, id });
+  }
+  return id;
 }
 
 /** Update transaction status (e.g. completedAt). options.session for transaction. */

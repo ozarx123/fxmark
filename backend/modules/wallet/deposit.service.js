@@ -6,6 +6,7 @@ import walletRepo from './wallet.repository.js';
 import ledgerService from '../finance/ledger.service.js';
 import financialTransactionService from '../finance/financial-transaction.service.js';
 import paymentSettingsRepo from './payment.settings.repository.js';
+import { queueWalletBalanceNotifyById } from '../email/wallet-balance-notify.js';
 
 async function createDeposit(userId, currency, amount, reference, paymentMethod = null) {
   if (!userId || amount == null || amount <= 0) {
@@ -97,6 +98,7 @@ async function confirmDeposit(depositId, userId) {
     flow: 'deposit_confirm',
     depositId,
   });
+  queueWalletBalanceNotifyById(depositId);
   return { status: 'completed' };
 }
 

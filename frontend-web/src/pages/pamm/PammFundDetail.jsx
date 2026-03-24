@@ -76,7 +76,7 @@ export default function PammFundDetail() {
     );
   }
 
-  const { fund, stats, recentTrades, myAllocation, bullRun } = detail;
+  const { fund, stats, myAllocation, bullRun } = detail;
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -99,7 +99,6 @@ export default function PammFundDetail() {
         fundId={fundId}
         fund={fund}
         stats={stats}
-        recentTrades={recentTrades}
         myAllocation={myAllocation}
         bullRun={bullRun}
         onRefresh={handleRefresh}

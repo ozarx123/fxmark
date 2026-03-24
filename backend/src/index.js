@@ -47,6 +47,15 @@ console.log(
   '[env] Zoho Mail:',
   zohoMailUser ? `${zohoMailUser.replace(/(.{2}).*(@.*)/, '$1***$2')} (configured)` : 'NOT SET — verification/notification emails disabled'
 );
+const mailWalletOff = ['0', 'false', 'no', 'off'].includes(
+  (process.env.MAIL_WALLET_BALANCE_UPDATES || '').trim().toLowerCase()
+);
+console.log(
+  '[env] Wallet balance emails:',
+  mailWalletOff
+    ? 'OFF (MAIL_WALLET_BALANCE_UPDATES=0 — unset env or use 1 to enable)'
+    : 'ON (default; disable with MAIL_WALLET_BALANCE_UPDATES=0)'
+);
 
 import express from 'express';
 import cors from 'cors';

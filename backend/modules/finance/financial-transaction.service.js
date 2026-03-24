@@ -9,6 +9,7 @@ import { randomUUID } from 'crypto';
 import { MongoServerError } from 'mongodb';
 import { withTransaction, getDb } from '../../config/mongo.js';
 import { runWithPairedWalletLedgerContext } from './finance-wallet-guard.js';
+import { queueWalletBalanceNotifyById } from '../email/wallet-balance-notify.js';
 import walletRepo from '../wallet/wallet.repository.js';
 import ledgerService from './ledger.service.js';
 import ledgerRepo from './ledger.repository.js';
@@ -154,6 +155,8 @@ export async function atomicInternalTransfer(senderId, recipientId, amount, curr
   }
 
   const now = new Date();
+  let senderTxId;
+  let recipientTxId;
   await runWithPairedWalletLedgerContext(async () => {
     await withTransaction(async (session) => {
       const debited = await walletRepo.debitBalanceIfSufficient(sender, cur, numAmount, { session });
@@ -164,7 +167,7 @@ export async function atomicInternalTransfer(senderId, recipientId, amount, curr
       }
       await walletRepo.updateBalance(recipient, cur, numAmount, { session });
       await ledgerService.postTransfer(sender, recipient, numAmount, cur, refId, { session });
-      await walletRepo.createTransaction(
+      senderTxId = await walletRepo.createTransaction(
         {
           userId: sender,
           type: 'transfer_out',
@@ -177,7 +180,7 @@ export async function atomicInternalTransfer(senderId, recipientId, amount, curr
         },
         { session }
       );
-      await walletRepo.createTransaction(
+      recipientTxId = await walletRepo.createTransaction(
         {
           userId: recipient,
           type: 'transfer_in',
@@ -193,6 +196,8 @@ export async function atomicInternalTransfer(senderId, recipientId, amount, curr
     });
     await verifyWalletLedgerAfterMutation(sender, cur, { flow: 'internal_transfer', refId });
     await verifyWalletLedgerAfterMutation(recipient, cur, { flow: 'internal_transfer', refId });
+    if (senderTxId) queueWalletBalanceNotifyById(senderTxId);
+    if (recipientTxId) queueWalletBalanceNotifyById(recipientTxId);
   }, { label: 'atomicInternalTransfer' });
 
   return { success: true, amount: numAmount, currency: cur, referenceId: refId };
@@ -236,6 +241,7 @@ export async function atomicPammIbCommissionCredit(ibUserId, amount, stableRef, 
   const ibStr = String(ibUserId);
   const amt = Number(amount) || 0;
   if (amt < 0.001) return { skipped: true };
+  let ibCommTxId;
   await runPairedWithTransaction(
     async (session) => {
       const { delta } = await syncWalletToLedgerAfterMutation(session, ibStr, 'USD', async (s) => {
@@ -245,7 +251,7 @@ export async function atomicPammIbCommissionCredit(ibUserId, amount, stableRef, 
         await walletRepo.updateBalance(ibStr, 'USD', amt, { session });
       }
       try {
-        await walletRepo.createTransaction(
+        ibCommTxId = await walletRepo.createTransaction(
           {
             userId: ibStr,
             type: 'ib_pamm_commission',
@@ -265,6 +271,7 @@ export async function atomicPammIbCommissionCredit(ibUserId, amount, stableRef, 
     { label: 'pamm_ib_commission' }
   );
   await verifyWalletLedgerAfterMutation(ibStr, 'USD', { flow: 'pamm_ib_commission', stableRef });
+  if (ibCommTxId) queueWalletBalanceNotifyById(ibCommTxId);
   return { success: true, amount: amt, referenceId: stableRef };
 }
 

@@ -763,24 +763,32 @@ async function addFundsToWallet(req, res, next) {
     }
     const user = await userRepo.findById(userId);
     if (!user) return res.status(404).json({ error: 'User not found' });
-    const wallet = await financialTransactionService.runPairedWithTransaction(async (session) => {
-      const txId = await walletRepo.createTransaction({
-        userId,
-        type: 'admin_credit',
-        amount: amt,
-        currency: currency || 'USD',
-        status: 'completed',
-        reference: null,
-        completedAt: new Date(),
-      }, { session });
-      await walletRepo.updateTransaction(txId, { reference: txId }, { session });
-      await ledgerService.postAdminCredit(userId, amt, currency || 'USD', txId, { session });
-      const w = await walletRepo.updateBalance(userId, currency || 'USD', amt, { session });
-      return w;
-    }, { label: 'admin_add_funds' });
+    const { wallet, txId: adminCreditTxId } = await financialTransactionService.runPairedWithTransaction(
+      async (session) => {
+        const txId = await walletRepo.createTransaction(
+          {
+            userId,
+            type: 'admin_credit',
+            amount: amt,
+            currency: currency || 'USD',
+            status: 'completed',
+            reference: null,
+            completedAt: new Date(),
+          },
+          { session }
+        );
+        await walletRepo.updateTransaction(txId, { reference: txId }, { session });
+        await ledgerService.postAdminCredit(userId, amt, currency || 'USD', txId, { session });
+        const w = await walletRepo.updateBalance(userId, currency || 'USD', amt, { session });
+        return { wallet: w, txId };
+      },
+      { label: 'admin_add_funds' }
+    );
     await financialTransactionService.verifyWalletLedgerAfterMutation(userId, currency || 'USD', {
       flow: 'admin_credit',
     });
+    const { queueWalletBalanceNotifyById } = await import('../email/wallet-balance-notify.js');
+    if (adminCreditTxId) queueWalletBalanceNotifyById(adminCreditTxId);
     res.json({
       success: true,
       wallet: { balance: wallet.balance, currency: wallet.currency },

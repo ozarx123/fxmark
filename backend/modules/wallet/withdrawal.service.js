@@ -2,12 +2,14 @@
  * Withdrawal service — request/process withdrawals, deduct balance, post to ledger
  */
 import { MongoServerError } from 'mongodb';
+import { withTransaction } from '../../config/mongo.js';
 import walletRepo from './wallet.repository.js';
 import ledgerService from '../finance/ledger.service.js';
 import financialTransactionService from '../finance/financial-transaction.service.js';
 import fraudDetection from './fraudDetection.service.js';
 import alertService from '../admin/alert.service.js';
 import withdrawalApprovalSettingsRepo from './withdrawal-approval.settings.repository.js';
+import { queueWalletBalanceNotifyById } from '../email/wallet-balance-notify.js';
 
 class IdempotentReplaySignal extends Error {
   constructor(replayDoc) {
@@ -118,7 +120,11 @@ async function processWithdrawal(withdrawalId, userId, clientIdempotencyKey) {
     console.log(
       `[withdrawal] idempotent success (ledger already exists) withdrawalId=${withdrawalId} userId=${userId}`
     );
-    return withdrawalProcessSuccessBody(tx, true);
+    const fresh = await walletRepo.getTransactionById(withdrawalId, userId);
+    if (fresh?.status === 'completed') {
+      queueWalletBalanceNotifyById(withdrawalId);
+    }
+    return withdrawalProcessSuccessBody(fresh || tx, true);
   }
 
   const priorByKey = await walletRepo.findCompletedWithdrawalByProcessIdempotencyKey(userId, idemKey);
@@ -230,6 +236,7 @@ async function processWithdrawal(withdrawalId, userId, clientIdempotencyKey) {
       flow: 'withdrawal_process',
       withdrawalId,
     });
+    queueWalletBalanceNotifyById(withdrawalId);
     return withdrawalProcessSuccessBody(done, false);
   }
   const err = new Error('Withdrawal processing failed');

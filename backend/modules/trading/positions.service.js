@@ -160,12 +160,13 @@ async function closePosition(userId, positionId, options = {}) {
     if (account?.type === 'live' && hasMaterialPnl) {
       const uid = String(userId);
       const pid = String(positionId);
+      let tradeWalletTxId;
       await financialTransactionService.runPairedWithTransaction(async (session) => {
         const before = await ledgerRepo.getBalance(uid, ACCOUNTS.WALLET, null, { session });
         const postRes = await ledgerService.postTradingPnl(uid, Math.abs(pnl), 'USD', pid, pnl > 0, { session });
         if (postRes.ids?.length > 0) {
           await walletRepo.updateBalance(uid, 'USD', pnl, { session });
-          await walletRepo.createTransaction(
+          tradeWalletTxId = await walletRepo.createTransaction(
             {
               userId: uid,
               type: 'trade',
@@ -190,6 +191,10 @@ async function closePosition(userId, positionId, options = {}) {
         flow: 'live_trade_close',
         positionId: pid,
       });
+      if (tradeWalletTxId) {
+        const { queueWalletBalanceNotifyById } = await import('../email/wallet-balance-notify.js');
+        queueWalletBalanceNotifyById(tradeWalletTxId);
+      }
       try {
         const ibIds = await ibRepo.getUplineChainForClient(userId);
         if (ibIds.length && (Number(pos.volume) || 0) > 0) {

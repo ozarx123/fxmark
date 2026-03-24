@@ -87,26 +87,12 @@ export default function PammAi() {
                     {fund.name || 'BULL RUN'} · AI PAMM fund
                   </h2>
                   <p className="muted">
-                    Daily profit cap 1%. Compound trading. Withdrawals and unfollow are blocked while the fund has an active trade.
+                    Compound trading. Withdrawals and unfollow are blocked while the fund has an active trade.
                   </p>
                 </div>
               </div>
-              <div className="pamm-ai-hero-stats">
-                <div className="pamm-ai-hero-stat">
-                  <span className="label">Fund growth</span>
-                  <span className={`value ${(stats?.fundGrowthRate ?? 0) >= 0 ? 'positive' : 'negative'}`}>
-                    {formatPercent(stats?.fundGrowthRate ?? 0)}
-                  </span>
-                </div>
-                <div className="pamm-ai-hero-stat">
-                  <span className="label">Total fund pool</span>
-                  <span className="value">{formatCurrency(stats?.aum ?? 0)}</span>
-                </div>
-                <div className="pamm-ai-hero-stat">
-                  <span className="label">Investors</span>
-                  <span className="value">{stats?.investors ?? 0}</span>
-                </div>
-              </div>
+              {/* Investor overview card simplified intentionally.
+                  Removed growth/pool/investor metrics to avoid confusion and improve conversion. */}
               <div className="pamm-ai-hero-actions">
                 {isAuthenticated ? (
                   <Link to={`/pamm-ai/fund/${fund.id}`} className="btn btn-primary">
@@ -120,11 +106,7 @@ export default function PammAi() {
               </div>
             </div>
           </section>
-          <section className="pamm-section">
-            <Link to={`/pamm-ai/fund/${fund.id}`} className="btn btn-secondary">
-              View full fund details · Add funds · Withdraw · Unfollow
-            </Link>
-          </section>
+          {/* Duplicate bottom action bar removed for cleaner investor UI */}
         </>
       )}
     </div>
