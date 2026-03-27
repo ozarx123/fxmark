@@ -1,4 +1,0 @@
-/**
- * App screens
- */
-export {};
