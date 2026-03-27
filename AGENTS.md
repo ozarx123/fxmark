@@ -23,7 +23,7 @@ FXMARK is a forex/CFD broker platform. The active development focus is on the **
 - **Lint**: `flutter analyze` (zero issues required).
 - **Test**: `flutter test` in `mobile-flutter/`.
 - **Build web**: `flutter build web` in `mobile-flutter/`.
-- **Run web dev**: `flutter run -d web-server --web-port 8080` in `mobile-flutter/`.
+- **Run web dev**: `flutter run -d web-server --web-port 8080 --web-hostname 0.0.0.0` in `mobile-flutter/`. The `--web-hostname 0.0.0.0` flag is required so the app is accessible outside the VM (default binds to 127.0.0.1 only).
 - No Android/iOS emulator available in cloud; use the web target (`-d web-server` or `-d chrome`) for testing.
 
 ### Backend
