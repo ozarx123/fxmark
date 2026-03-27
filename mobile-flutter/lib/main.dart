@@ -499,6 +499,7 @@ class MarketDataRepository {
 
   final String baseUrl;
   final http.Client _client;
+  int _fallbackSequence = 0;
 
   Future<CandleFetchResult> fetchCandles({
     required String symbol,
@@ -522,25 +523,42 @@ class MarketDataRepository {
           }
         }
         return CandleFetchResult(
-          candles: _buildFallbackCandles(symbol, timeframe),
+          candles: _buildFallbackCandles(
+            symbol,
+            timeframe,
+            sequence: _nextFallbackSequence(),
+          ),
           usingFallback: true,
           message: 'Backend returned no candles, showing demo chart.',
         );
       }
 
       return CandleFetchResult(
-        candles: _buildFallbackCandles(symbol, timeframe),
+        candles: _buildFallbackCandles(
+          symbol,
+          timeframe,
+          sequence: _nextFallbackSequence(),
+        ),
         usingFallback: true,
         message:
             'Backend ${response.statusCode}: ${_extractError(response.body)}',
       );
     } catch (_) {
       return CandleFetchResult(
-        candles: _buildFallbackCandles(symbol, timeframe),
+        candles: _buildFallbackCandles(
+          symbol,
+          timeframe,
+          sequence: _nextFallbackSequence(),
+        ),
         usingFallback: true,
         message: 'Unable to reach backend, showing demo chart.',
       );
     }
+  }
+
+  int _nextFallbackSequence() {
+    _fallbackSequence += 1;
+    return _fallbackSequence;
   }
 
   String _extractError(String body) {
@@ -555,8 +573,20 @@ class MarketDataRepository {
     return 'request failed';
   }
 
-  List<Candle> _buildFallbackCandles(String symbol, String timeframe) {
-    final int seed = symbol.codeUnits.fold<int>(0, (int a, int b) => a + b);
+  List<Candle> _buildFallbackCandles(
+    String symbol,
+    String timeframe, {
+    required int sequence,
+  }) {
+    final int symbolSeed = symbol.codeUnits.fold<int>(
+      0,
+      (int a, int b) => a + b,
+    );
+    final int timeframeSeed = timeframe.codeUnits.fold<int>(
+      0,
+      (int a, int b) => a + b,
+    );
+    final int seed = symbolSeed + (timeframeSeed * 3) + (sequence * 17);
     final Duration step = _durationForTimeframe(timeframe);
     final DateTime now = DateTime.now().toUtc();
     final double basePrice = switch (symbol) {
@@ -570,9 +600,14 @@ class MarketDataRepository {
     final List<Candle> candles = <Candle>[];
     double lastClose = basePrice;
     for (int i = 60; i >= 1; i--) {
-      final double wave = math.sin((i + seed) / 5) * _symbolVolatility(symbol);
+      final double waveScale = _timeframeWaveScale(timeframe);
+      final double driftScale = _timeframeDriftScale(timeframe);
+      final double wave =
+          math.sin((i + seed) / (5 * waveScale)) * _symbolVolatility(symbol);
       final double drift =
-          math.cos((i + seed) / 9) * _symbolVolatility(symbol) * 0.4;
+          math.cos((i + seed) / (9 * driftScale)) *
+          _symbolVolatility(symbol) *
+          0.4;
       final double open = lastClose;
       final double close = math.max(0.0001, open + wave + drift);
       final double high =
@@ -599,6 +634,28 @@ class MarketDataRepository {
       'XAUUSD' => 4.0,
       'USDJPY' => 0.09,
       _ => 0.0025,
+    };
+  }
+
+  double _timeframeWaveScale(String timeframe) {
+    return switch (timeframe) {
+      '1m' => 0.85,
+      '5m' => 1.0,
+      '15m' => 1.2,
+      '1h' => 1.5,
+      '1d' => 1.9,
+      _ => 1.0,
+    };
+  }
+
+  double _timeframeDriftScale(String timeframe) {
+    return switch (timeframe) {
+      '1m' => 0.9,
+      '5m' => 1.05,
+      '15m' => 1.25,
+      '1h' => 1.55,
+      '1d' => 2.0,
+      _ => 1.0,
     };
   }
 
