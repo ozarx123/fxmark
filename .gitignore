@@ -20,4 +20,7 @@ build/
 backend/_*.mjs
 backend/_*.json
 *.log
+# Local export (may contain emails / account IDs)
+backend/user-account-ids.txt
+backend/user-records-full.txt
 .DS_Store

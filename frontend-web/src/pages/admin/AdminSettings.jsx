@@ -2,9 +2,26 @@ import React, { useState, useMemo, useEffect } from 'react';
 import * as adminApi from '../../api/adminApi';
 import { ROLES } from './mockUsersData';
 import { PERMISSION_GROUPS, getDefaultRolePermissions } from './mockPermissionsData';
+
+function isoToDatetimeLocal(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export default function AdminSettings() {
   const [timezone, setTimezone] = useState('UTC');
-  const [maintenanceMode, setMaintenanceMode] = useState(false);
+  const [maintenanceEnabled, setMaintenanceEnabled] = useState(false);
+  const [maintenanceMessage, setMaintenanceMessage] = useState('');
+  const [maintenanceScheduleEnabled, setMaintenanceScheduleEnabled] = useState(false);
+  const [maintenanceScheduleStart, setMaintenanceScheduleStart] = useState('');
+  const [maintenanceScheduleEnd, setMaintenanceScheduleEnd] = useState('');
+  const [maintenanceSaving, setMaintenanceSaving] = useState(false);
+  const [maintenanceLoadError, setMaintenanceLoadError] = useState(null);
+  const [maintenanceWarn, setMaintenanceWarn] = useState(null);
+  const [maintenanceEffective, setMaintenanceEffective] = useState({ active: false, source: 'off' });
   const [emailNotifications, setEmailNotifications] = useState(true);
   const [companyName, setCompanyName] = useState('FXMARK');
   const [supportEmail, setSupportEmail] = useState('support@fxmark.com');
@@ -107,26 +124,110 @@ export default function AdminSettings() {
   const [executionModeSaving, setExecutionModeSaving] = useState(false);
   const [executionModeError, setExecutionModeError] = useState(null);
 
+  const [marginRisk, setMarginRisk] = useState({
+    stopOutBelowPct: 0,
+    warnBelowPct: 0,
+    warnIntervalMs: 120000,
+  });
+  const [marginRiskLoading, setMarginRiskLoading] = useState(true);
+  const [marginRiskSaving, setMarginRiskSaving] = useState(false);
+  const [marginRiskError, setMarginRiskError] = useState(null);
+  const [marginRiskUpdatedAt, setMarginRiskUpdatedAt] = useState(null);
+  const [marginRiskFromDb, setMarginRiskFromDb] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [modeRes, rulesRes] = await Promise.all([
+        const [modeRes, rulesRes, marginRes] = await Promise.all([
           adminApi.getExecutionMode(),
           adminApi.getHybridRules(),
+          adminApi.getMarginRiskSettings().catch(() => null),
         ]);
         if (!cancelled) {
           setExecutionMode(modeRes.executionMode || 'A_BOOK');
           setHybridRules((prev) => ({ ...prev, ...rulesRes }));
+          if (marginRes) {
+            setMarginRisk({
+              stopOutBelowPct: Number(marginRes.stopOutBelowPct) || 0,
+              warnBelowPct: Number(marginRes.warnBelowPct) || 0,
+              warnIntervalMs: Number(marginRes.warnIntervalMs) || 120000,
+            });
+            setMarginRiskUpdatedAt(marginRes.updatedAt || null);
+            setMarginRiskFromDb(!!marginRes.fromDatabase);
+          }
         }
       } catch (e) {
         if (!cancelled) setExecutionModeError(e.message);
       } finally {
-        if (!cancelled) setExecutionModeLoading(false);
+        if (!cancelled) {
+          setExecutionModeLoading(false);
+          setMarginRiskLoading(false);
+        }
       }
     })();
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const m = await adminApi.getMaintenance();
+        if (cancelled) return;
+        setMaintenanceEnabled(!!m.enabled);
+        setMaintenanceMessage(typeof m.message === 'string' ? m.message : '');
+        setMaintenanceScheduleEnabled(!!m.scheduleEnabled);
+        setMaintenanceScheduleStart(isoToDatetimeLocal(m.scheduleStart));
+        setMaintenanceScheduleEnd(isoToDatetimeLocal(m.scheduleEnd));
+        setMaintenanceEffective({ active: !!m.effectiveActive, source: m.effectiveSource || 'off' });
+        setMaintenanceLoadError(null);
+        if (m.effectiveActive && m.effectiveSource === 'schedule') {
+          setMaintenanceWarn(
+            'Maintenance is ON because of the scheduled window. Uncheck “Scheduled window” or shorten the window to turn the site back on.'
+          );
+        } else {
+          setMaintenanceWarn(null);
+        }
+      } catch (e) {
+        if (!cancelled) setMaintenanceLoadError(e.message);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const saveMaintenance = async () => {
+    setMaintenanceSaving(true);
+    setMaintenanceLoadError(null);
+    setMaintenanceWarn(null);
+    try {
+      const body = {
+        enabled: maintenanceEnabled,
+        message: maintenanceMessage,
+        scheduleEnabled: maintenanceScheduleEnabled,
+        scheduleStart: maintenanceScheduleStart ? new Date(maintenanceScheduleStart).toISOString() : null,
+        scheduleEnd: maintenanceScheduleEnd ? new Date(maintenanceScheduleEnd).toISOString() : null,
+      };
+      const m = await adminApi.putMaintenance(body);
+      setMaintenanceEnabled(!!m.enabled);
+      setMaintenanceMessage(typeof m.message === 'string' ? m.message : '');
+      setMaintenanceScheduleEnabled(!!m.scheduleEnabled);
+      setMaintenanceScheduleStart(isoToDatetimeLocal(m.scheduleStart));
+      setMaintenanceScheduleEnd(isoToDatetimeLocal(m.scheduleEnd));
+      setMaintenanceEffective({ active: !!m.effectiveActive, source: m.effectiveSource || 'off' });
+      if (m.effectiveActive && m.effectiveSource === 'schedule') {
+        setMaintenanceWarn(
+          'Maintenance is still ON from the scheduled window. Uncheck “Scheduled window” or move the end time into the past, then save again.'
+        );
+      } else {
+        setMaintenanceWarn(null);
+      }
+    } catch (e) {
+      setMaintenanceLoadError(e.message);
+    } finally {
+      setMaintenanceSaving(false);
+    }
+  };
 
   const saveExecutionMode = async () => {
     setExecutionModeSaving(true);
@@ -149,6 +250,29 @@ export default function AdminSettings() {
       setExecutionModeError(e.message);
     } finally {
       setExecutionModeSaving(false);
+    }
+  };
+
+  const saveMarginRisk = async () => {
+    setMarginRiskSaving(true);
+    setMarginRiskError(null);
+    try {
+      const saved = await adminApi.putMarginRiskSettings({
+        stopOutBelowPct: marginRisk.stopOutBelowPct,
+        warnBelowPct: marginRisk.warnBelowPct,
+        warnIntervalMs: marginRisk.warnIntervalMs,
+      });
+      setMarginRisk({
+        stopOutBelowPct: Number(saved.stopOutBelowPct) || 0,
+        warnBelowPct: Number(saved.warnBelowPct) || 0,
+        warnIntervalMs: Number(saved.warnIntervalMs) || 120000,
+      });
+      setMarginRiskUpdatedAt(saved.updatedAt || null);
+      setMarginRiskFromDb(!!saved.fromDatabase);
+    } catch (e) {
+      setMarginRiskError(e.message || 'Failed to save margin risk settings');
+    } finally {
+      setMarginRiskSaving(false);
     }
   };
 
@@ -182,11 +306,82 @@ export default function AdminSettings() {
               </select>
             </div>
           </div>
+        </div>
+      </section>
+
+      <section className="admin-section-block">
+        <h2 className="section-title">Platform maintenance</h2>
+        <div className="settings-card">
+          {maintenanceLoadError && <p className="muted" style={{ color: 'var(--danger, #f85149)' }}>{maintenanceLoadError}</p>}
+          {maintenanceWarn && (
+            <p className="muted" style={{ color: 'var(--fxmark-warning, #d4a72c)', marginBottom: '0.75rem' }}>
+              {maintenanceWarn}
+            </p>
+          )}
+          <p className="muted">
+            Effective now:
+            {' '}
+            <strong>{maintenanceEffective.active ? 'ON' : 'OFF'}</strong>
+            {maintenanceEffective.source && maintenanceEffective.source !== 'off' ? ` (${maintenanceEffective.source})` : ''}
+            . Staff roles bypass the client maintenance screen and most API limits.
+          </p>
           <label className="settings-toggle">
-            <input type="checkbox" checked={maintenanceMode} onChange={(e) => setMaintenanceMode(e.target.checked)} />
-            <span>Maintenance mode</span>
+            <input
+              type="checkbox"
+              checked={maintenanceEnabled}
+              onChange={(e) => setMaintenanceEnabled(e.target.checked)}
+            />
+            <span>Maintenance on (immediate)</span>
           </label>
-          <p className="muted">When maintenance mode is on, client login may be restricted.</p>
+          <div className="filter-group" style={{ marginTop: '1rem' }}>
+            <label>Message for clients</label>
+            <textarea
+              className="filter-input"
+              rows={3}
+              value={maintenanceMessage}
+              onChange={(e) => setMaintenanceMessage(e.target.value)}
+              placeholder="Shown on the public site during maintenance"
+            />
+          </div>
+          <label className="settings-toggle" style={{ marginTop: '1rem' }}>
+            <input
+              type="checkbox"
+              checked={maintenanceScheduleEnabled}
+              onChange={(e) => setMaintenanceScheduleEnabled(e.target.checked)}
+            />
+            <span>Scheduled window (local browser time)</span>
+          </label>
+          {maintenanceScheduleEnabled && (
+            <div className="settings-row" style={{ marginTop: '0.75rem' }}>
+              <div className="filter-group">
+                <label>Start</label>
+                <input
+                  type="datetime-local"
+                  className="filter-input"
+                  value={maintenanceScheduleStart}
+                  onChange={(e) => setMaintenanceScheduleStart(e.target.value)}
+                />
+              </div>
+              <div className="filter-group">
+                <label>End</label>
+                <input
+                  type="datetime-local"
+                  className="filter-input"
+                  value={maintenanceScheduleEnd}
+                  onChange={(e) => setMaintenanceScheduleEnd(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+          <button
+            type="button"
+            className="btn btn-primary"
+            style={{ marginTop: '1rem' }}
+            disabled={maintenanceSaving}
+            onClick={saveMaintenance}
+          >
+            {maintenanceSaving ? 'Saving…' : 'Save maintenance settings'}
+          </button>
         </div>
       </section>
 
@@ -239,7 +434,7 @@ export default function AdminSettings() {
             <label>Margin call level (%)</label>
             <input type="number" min={50} max={100} value={marginCallLevel} onChange={(e) => setMarginCallLevel(Number(e.target.value) || 80)} className="filter-input" />
           </div>
-          <p className="muted">When margin level falls below this %, margin call is triggered.</p>
+          <p className="muted">CRM display only — not wired to the live engine. Real margin warnings and stop-out are configured under <strong>Margin risk (tick engine)</strong> below.</p>
         </div>
       </section>
 
@@ -318,6 +513,74 @@ export default function AdminSettings() {
             </button>
           </div>
         )}
+      </section>
+
+      <section className="admin-section-block">
+        <h2 className="section-title">Margin risk (tick engine)</h2>
+        <div className="settings-card">
+          <p className="muted">
+            Controls server-side checks on each price tick (after TP/SL). Uses the same equity and margin as the trading terminal summary.
+            Zero-equity auto-close is always on; here you optionally set <strong>margin stop-out</strong> (hard close) and <strong>margin warning</strong> (Socket.IO <code>risk_event</code>).
+            Set warning threshold <strong>above</strong> stop-out (e.g. warn 150%, stop 50%). Values are stored in MongoDB and apply immediately after save.
+            Until you save once, the API may fall back to <code>.env</code> (<code>MARGIN_LEVEL_*</code>).
+          </p>
+          {marginRiskLoading ? (
+            <p className="muted">Loading…</p>
+          ) : (
+            <>
+              <div className="settings-row">
+                <div className="filter-group">
+                  <label>Stop-out below margin level (%)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={500}
+                    step={1}
+                    value={marginRisk.stopOutBelowPct}
+                    onChange={(e) => setMarginRisk((r) => ({ ...r, stopOutBelowPct: Number(e.target.value) || 0 }))}
+                    className="filter-input"
+                  />
+                  <p className="muted" style={{ marginTop: '0.25rem' }}>0 = disabled. Example: 50 closes all positions when margin level &lt; 50%.</p>
+                </div>
+                <div className="filter-group">
+                  <label>Warn below margin level (%)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={500}
+                    step={1}
+                    value={marginRisk.warnBelowPct}
+                    onChange={(e) => setMarginRisk((r) => ({ ...r, warnBelowPct: Number(e.target.value) || 0 }))}
+                    className="filter-input"
+                  />
+                  <p className="muted" style={{ marginTop: '0.25rem' }}>0 = disabled. Example: 150 emits <code>margin_warning</code> when level &lt; 150%.</p>
+                </div>
+              </div>
+              <div className="filter-group">
+                <label>Warning repeat interval (ms)</label>
+                <input
+                  type="number"
+                  min={30000}
+                  max={600000}
+                  step={1000}
+                  value={marginRisk.warnIntervalMs}
+                  onChange={(e) => setMarginRisk((r) => ({ ...r, warnIntervalMs: Number(e.target.value) || 120000 }))}
+                  className="filter-input"
+                />
+                <p className="muted" style={{ marginTop: '0.25rem' }}>Minimum time between <code>margin_warning</code> events per account (default 120000).</p>
+              </div>
+              <button type="button" className="btn btn-primary" onClick={saveMarginRisk} disabled={marginRiskSaving}>
+                {marginRiskSaving ? 'Saving…' : 'Save margin risk settings'}
+              </button>
+              {marginRiskError && <p className="form-error" style={{ marginTop: '0.5rem' }}>{marginRiskError}</p>}
+              <p className="muted" style={{ marginTop: '0.75rem' }}>
+                {marginRiskFromDb
+                  ? `Last saved: ${marginRiskUpdatedAt ? new Date(marginRiskUpdatedAt).toLocaleString() : '—'}`
+                  : 'No document in database yet — showing env defaults or zeros. Saving creates the record.'}
+              </p>
+            </>
+          )}
+        </div>
       </section>
 
       <section className="admin-section-block">

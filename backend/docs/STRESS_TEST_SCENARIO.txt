@@ -1,0 +1,62 @@
+================================================================================
+FXMARK API — STRESS TEST SCENARIO
+================================================================================
+
+Goals
+-----
+1) See how the Node/Express API behaves under concurrent HTTP load (latency + errors).
+2) Optionally confirm the global rate limiter (default 200 req / 15 min per IP) trips as expected.
+
+Default target: GET /health (light handler; still passes through global rate limiter in src/index.js).
+
+--------------------------------------------------------------------------------
+PHASE A — Rate limit behavior (no .env change)
+--------------------------------------------------------------------------------
+From one client IP, send > RATE_LIMIT_MAX_GLOBAL requests quickly to /health.
+
+Expected:
+  - First ~N responses: HTTP 200 (N = RATE_LIMIT_MAX_GLOBAL, default 200).
+  - Further requests within the same window: HTTP 429 with JSON error body.
+
+This validates protection under abuse; it is NOT a measure of peak RPS.
+
+Run:
+  cd backend
+  npm run stress:test
+
+Optional env (client only):
+  STRESS_API_BASE=http://localhost:3000
+  STRESS_PATH=/health
+  STRESS_CONCURRENCY=30
+  STRESS_REQUESTS=400
+
+--------------------------------------------------------------------------------
+PHASE B — Peak throughput / latency (requires one-time server tweak)
+--------------------------------------------------------------------------------
+To measure server capacity without hitting 429 immediately, temporarily raise the
+global limit for the test window only (your machine or staging — not public prod):
+
+  In backend/.env while testing:
+    RATE_LIMIT_MAX_GLOBAL=50000
+
+Restart the API, then run e.g.:
+
+  STRESS_CONCURRENCY=50 STRESS_REQUESTS=5000 npm run stress:test
+
+Restore RATE_LIMIT_MAX_GLOBAL afterward (or remove it to use default 200).
+
+--------------------------------------------------------------------------------
+Safety
+--------------------------------------------------------------------------------
+- Run only against hosts you own (localhost, staging).
+- Do not point STRESS_API_BASE at production without approval.
+- Login/auth endpoints have additional rate limits; this script defaults to /health only.
+
+--------------------------------------------------------------------------------
+Interpreting results
+--------------------------------------------------------------------------------
+- High p95/p99 latency or many errors: check CPU, MongoDB, single-threaded Node limits.
+- Many 429 in Phase A: expected; not a failure.
+- For production capacity, use a load generator (k6, Locust) from multiple IPs behind the same LB profile.
+
+================================================================================

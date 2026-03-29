@@ -30,7 +30,8 @@ async function ensureWithdrawalIdempotencyIndex() {
       partialFilterExpression: {
         type: 'withdrawal',
         status: 'completed',
-        processIdempotencyKey: { $exists: true, $type: 'string', $ne: '' },
+        // $gt: '' = non-empty string; $ne: '' is rejected on some servers (partial index + $not).
+        processIdempotencyKey: { $exists: true, $type: 'string', $gt: '' },
       },
     }
   );
@@ -80,6 +81,30 @@ async function existsPammDistribution(userId, positionId, options = {}) {
     findOpts
   );
   return !!doc;
+}
+
+/** All completed pamm_dist wallet rows for a closed position (Bull Run profit credits). */
+async function listPammDistTransactionsByPosition(positionId) {
+  await ensureWithdrawalIdempotencyIndex();
+  const col = await transactionsCol();
+  const ref = positionId != null ? String(positionId) : '';
+  const refOr = [{ reference: ref }];
+  if (ObjectId.isValid(ref) && ref.length === 24) refOr.push({ reference: new ObjectId(ref) });
+  const list = await col
+    .find({
+      type: 'pamm_dist',
+      status: 'completed',
+      $or: refOr,
+    })
+    .toArray();
+  return list.map((t) => ({
+    id: t._id.toString(),
+    userId: normUserId(t.userId),
+    amount: Number(t.amount) || 0,
+    currency: t.currency || 'USD',
+    reference: t.reference,
+    completedAt: t.completedAt,
+  }));
 }
 
 /** Stable reference for IB PAMM commission wallet row: pib|positionId|investorId|ibId|Llevel */
@@ -440,6 +465,7 @@ export default {
   claimPendingWithdrawal,
   findCompletedWithdrawalByProcessIdempotencyKey,
   existsPammDistribution,
+  listPammDistTransactionsByPosition,
   existsIbPammCommissionWallet,
   ibPammCommissionReferenceKey,
 };

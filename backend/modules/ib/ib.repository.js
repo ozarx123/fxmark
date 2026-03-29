@@ -4,6 +4,7 @@
 import { randomBytes } from 'crypto';
 import { getDb } from '../../config/mongo.js';
 import { ObjectId } from 'mongodb';
+import userRepo from '../users/user.repository.js';
 
 function generateReferralCode() {
   return randomBytes(9)
@@ -163,6 +164,97 @@ async function updateSettings(ratePerLotByLevel) {
   return ratePerLotByLevel;
 }
 
+/** Admin: rates + optional default house IB (user id with ib_profiles). */
+async function getIbSettingsForAdmin() {
+  const col = await settingsCol();
+  const doc = await col.findOne({ _id: SETTINGS_ID });
+  const storedRates = doc?.ratePerLotByLevel || null;
+  const defaults = { 1: 7, 2: 5, 3: 3, 4: 2, 5: 1 };
+  const envFallback = (process.env.DEFAULT_IB_REFERRER_USER_ID || '').trim();
+  let defaultReferrerUserId = null;
+  if (doc?.defaultReferrerUserId != null && String(doc.defaultReferrerUserId).trim() !== '') {
+    defaultReferrerUserId = String(doc.defaultReferrerUserId).trim();
+  }
+  return {
+    ratePerLotByLevel: storedRates || defaults,
+    defaultReferrerUserId,
+    defaultReferrerUsesEnvFallback: !defaultReferrerUserId && !!envFallback,
+    envDefaultReferrerUserId: envFallback || null,
+  };
+}
+
+/**
+ * Merge partial IB settings (admin).
+ * defaultReferrerUserId: string sets value; null or '' clears stored override (env may still apply).
+ */
+async function updateIbSettingsMerged({ ratePerLotByLevel, defaultReferrerUserId } = {}) {
+  const col = await settingsCol();
+  const $set = { updatedAt: new Date() };
+  const $unset = {};
+  if (ratePerLotByLevel != null && typeof ratePerLotByLevel === 'object') {
+    $set.ratePerLotByLevel = ratePerLotByLevel;
+  }
+  if (defaultReferrerUserId !== undefined) {
+    if (defaultReferrerUserId === null || defaultReferrerUserId === '') {
+      $unset.defaultReferrerUserId = '';
+    } else {
+      $set.defaultReferrerUserId = String(defaultReferrerUserId).trim();
+    }
+  }
+  const updateOp = { $set };
+  if (Object.keys($unset).length) updateOp.$unset = $unset;
+  await col.updateOne({ _id: SETTINGS_ID }, updateOp, { upsert: true });
+  return getIbSettingsForAdmin();
+}
+
+/**
+ * Effective default IB user id for direct signups: DB default, else env; must resolve to users + ib_profiles.
+ */
+async function resolveEffectiveDefaultReferrerUserId() {
+  const col = await settingsCol();
+  const doc = await col.findOne({ _id: SETTINGS_ID });
+  let raw = '';
+  if (doc?.defaultReferrerUserId != null && String(doc.defaultReferrerUserId).trim() !== '') {
+    raw = String(doc.defaultReferrerUserId).trim();
+  } else {
+    raw = (process.env.DEFAULT_IB_REFERRER_USER_ID || '').trim();
+  }
+  if (!raw) return null;
+  const ibProfile =
+    (await getProfileByUserId(raw)) || (await getProfileByReferralCode(raw)) || (await getProfileById(raw));
+  if (!ibProfile?.userId) {
+    console.warn(
+      `[ib] Default referrer "${raw}" is not a valid IB (no ib_profiles match). Direct signups get no referrer.`
+    );
+    return null;
+  }
+  const uid = String(ibProfile.userId);
+  const user = await userRepo.findById(uid);
+  if (!user) {
+    console.warn(`[ib] Default referrer user "${uid}" not found in users. Direct signups get no referrer.`);
+    return null;
+  }
+  return uid;
+}
+
+/** Update ib_profiles.parentId for an IB user (string/ObjectId userId in document). */
+async function updateIbParentByUserId(ibUserId, parentUserId) {
+  const col = await profilesCol();
+  const idStr = String(ibUserId).trim();
+  const filter =
+    ObjectId.isValid(idStr) && idStr.length === 24
+      ? { $or: [{ userId: idStr }, { userId: new ObjectId(idStr) }] }
+      : { userId: idStr };
+  const parentVal =
+    parentUserId == null || parentUserId === '' ? null : String(parentUserId).trim();
+  const result = await col.findOneAndUpdate(
+    filter,
+    { $set: { parentId: parentVal, updatedAt: new Date() } },
+    { returnDocument: 'after' }
+  );
+  return result ? { id: result._id.toString(), ...result, _id: undefined } : null;
+}
+
 // ---------- PAMM Bull Run investor IB commission (active capital × level %) ----------
 const PAMM_IB_DEFAULT_LEVELS = {
   1: { daily_payout_percent: 0.25, status: 'enabled' },
@@ -255,6 +347,42 @@ async function updatePammIbCommissionSettings(levels, updatedBy) {
   return getPammIbCommissionSettings();
 }
 
+/** List PAMM IB commission logs for a trade (position id). */
+async function listPammIbCommissionLogsByTradeId(tradeId) {
+  if (!tradeId) return [];
+  const col = await pammIbCommissionLogsCol();
+  const tid = String(tradeId);
+  const or = [{ trade_id: tid }];
+  if (ObjectId.isValid(tid) && tid.length === 24) or.push({ trade_id: new ObjectId(tid) });
+  const list = await col.find({ $or: or }).toArray();
+  return list;
+}
+
+/** Delete PAMM IB commission logs for a trade (after wallet/ledger rollback). */
+async function deletePammIbCommissionLogsByTradeId(tradeId, options = {}) {
+  if (!tradeId) return { deletedCount: 0 };
+  const col = await pammIbCommissionLogsCol();
+  const tid = String(tradeId);
+  const or = [{ trade_id: tid }];
+  if (ObjectId.isValid(tid) && tid.length === 24) or.push({ trade_id: new ObjectId(tid) });
+  const opts = options.session ? { session: options.session } : {};
+  const r = await col.deleteMany({ $or: or }, opts);
+  return { deletedCount: r.deletedCount };
+}
+
+/** Remove company commission pool rows tied to a trade (IB cap overflow). */
+async function deleteCompanyCommissionPoolByTradeId(tradeId, options = {}) {
+  if (!tradeId) return { deletedCount: 0 };
+  const db = await getDb();
+  const col = db.collection(COMPANY_COMMISSION_POOL_COLLECTION);
+  const tid = String(tradeId);
+  const or = [{ trade_id: tid }];
+  if (ObjectId.isValid(tid) && tid.length === 24) or.push({ trade_id: new ObjectId(tid) });
+  const opts = options.session ? { session: options.session } : {};
+  const r = await col.deleteMany({ $or: or }, opts);
+  return { deletedCount: r.deletedCount };
+}
+
 /** Create PAMM IB commission log entry. */
 async function createPammIbCommissionLog(doc) {
   await ensurePammIbPayoutUniqueIndex();
@@ -318,15 +446,17 @@ async function pammInvestorDailyProfitCol() {
  * @param {number} amount - profit credited this trade
  * @returns {Promise<number>} new total credited today for this investor
  */
-async function incrementPammInvestorDailyCreditedProfit(investorId, amount) {
+async function incrementPammInvestorDailyCreditedProfit(investorId, amount, options = {}) {
   if (!investorId || amount == null) return 0;
   const col = await pammInvestorDailyProfitCol();
   const todayStr = getTodayUtcString();
   const inc = Number(amount) || 0;
+  const opts = { upsert: true, returnDocument: 'after' };
+  if (options.session) opts.session = options.session;
   const result = await col.findOneAndUpdate(
     { investor_id: String(investorId), date_utc: todayStr },
     { $inc: { credited_profit: inc } },
-    { upsert: true, returnDocument: 'after' }
+    opts
   );
   return Number(result?.credited_profit) ?? 0;
 }
@@ -737,9 +867,16 @@ export default {
   listAllProfiles,
   getSettings,
   updateSettings,
+  getIbSettingsForAdmin,
+  updateIbSettingsMerged,
+  resolveEffectiveDefaultReferrerUserId,
+  updateIbParentByUserId,
   getPammIbCommissionSettings,
   updatePammIbCommissionSettings,
   createPammIbCommissionLog,
+  listPammIbCommissionLogsByTradeId,
+  deletePammIbCommissionLogsByTradeId,
+  deleteCompanyCommissionPoolByTradeId,
   findPammIbPayoutLog,
   createCompanyCommissionPoolEntry,
   listCompanyCommissionPoolEntries,

@@ -3,6 +3,7 @@ import { ensureUserRole } from '../utils/authHelpers';
 import { reconnectWithAuth } from '../lib/datafeedSocket.js';
 
 const AuthContext = createContext(null);
+/** Bearer token in localStorage: any XSS in this origin can exfiltrate it. Mitigate with strict CSP on the SPA host; for stronger session isolation use an httpOnly cookie + BFF or token binding. */
 const TOKEN_KEY = 'fxmark_token';
 
 export function AuthProvider({ children }) {

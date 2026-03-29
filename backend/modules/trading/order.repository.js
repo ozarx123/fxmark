@@ -31,6 +31,18 @@ async function findById(id, userId, accountId = null) {
   return o ? { id: o._id.toString(), ...o, _id: undefined } : null;
 }
 
+/** Idempotent place: same userId + accountScope + clientOrderId returns existing row. */
+async function findByClientOrderKey(userId, accountScope, clientOrderId) {
+  if (!userId || !accountScope || !clientOrderId) return null;
+  const c = await col();
+  const o = await c.findOne({
+    userId,
+    accountScope,
+    clientOrderId: String(clientOrderId).trim(),
+  });
+  return o ? { id: o._id.toString(), ...o, _id: undefined } : null;
+}
+
 function normalizeSymbol(s) {
   if (!s) return null;
   return String(s).replace(/\//g, '').toUpperCase();
@@ -87,4 +99,4 @@ async function updateOrder(id, userId, update, accountId = null) {
   return result ? { id: result._id.toString(), ...result, _id: undefined } : null;
 }
 
-export default { create, findById, listByUser, listPendingBySymbol, updateStatus, updateOrder };
+export default { create, findById, findByClientOrderKey, listByUser, listPendingBySymbol, updateStatus, updateOrder };

@@ -1056,6 +1056,20 @@ body {
   grid-column: 1 / -1;
 }
 
+.profile-settings-readonly-label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  opacity: 0.88;
+}
+
+.profile-settings-readonly-value {
+  padding: 0.65rem 0.85rem;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.12);
+  font-size: 0.95rem;
+}
+
 .profile-settings-label {
   display: flex;
   flex-direction: column;
@@ -5678,6 +5692,70 @@ body {
   background: var(--fxmark-red);
 }
 
+/* Maintenance notice (/maintenance) — same shell as landing */
+.maintenance-notice .landing-nav {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.maintenance-notice .landing-nav .muted {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.maintenance-notice-main {
+  padding: 6rem 1.5rem 3rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  box-sizing: border-box;
+}
+
+.maintenance-notice-card {
+  max-width: 28rem;
+  width: 100%;
+  padding: 2rem 1.75rem;
+  background: var(--fxmark-white);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  text-align: center;
+}
+
+.maintenance-notice-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 0 0 1rem;
+  color: var(--fxmark-text);
+}
+
+.maintenance-notice-body {
+  line-height: 1.6;
+  margin: 0 0 1rem;
+  color: var(--fxmark-text);
+}
+
+.maintenance-notice-hint {
+  font-size: 0.875rem;
+  margin: 0 0 1.5rem;
+}
+
+.maintenance-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: center;
+}
+
+.maintenance-notice .landing-footer {
+  text-align: center;
+}
+
+.maintenance-notice .landing-footer > p,
+.maintenance-notice .landing-footer .muted {
+  color: rgba(255, 255, 255, 0.8);
+  margin-bottom: 0;
+}
+
 .footer-inner {
   max-width: 1000px;
   margin: 0 auto;
@@ -7395,6 +7473,13 @@ body {
 .audit-change {
   font-size: 0.85rem;
   color: var(--fxmark-muted);
+}
+
+.audit-change-cell,
+.audit-entity-cell {
+  max-width: 22rem;
+  word-break: break-word;
+  vertical-align: top;
 }
 
 .remarks-input {

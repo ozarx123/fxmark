@@ -117,7 +117,8 @@ export default function TradeControlPanel({
     setLoading(true);
     onError?.(null);
     try {
-      await tradingApi.placeOrder({
+      const clientOrderId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined;
+      const result = await tradingApi.placeOrder({
         symbol: symbol.replace(/\//g, ''),
         side,
         type: selected.id,
@@ -127,7 +128,12 @@ export default function TradeControlPanel({
         price: isMarket ? marketPrice : parseFloat(price),
         stopLoss: slNum ?? undefined,
         takeProfit: tpNum ?? undefined,
+        ...(clientOrderId ? { clientOrderId } : {}),
       }, { accountId, accountNumber });
+      if (result?.status === 'rejected') {
+        onError?.(result.rejectReason || result.order?.rejectReason || 'Order rejected');
+        return;
+      }
       setSuccess(true);
       onOrderPlaced?.();
       onOrderSuccess?.(`Order filled: ${side.toUpperCase()} ${vol.toFixed(2)} ${symbol}`);

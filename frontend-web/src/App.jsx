@@ -6,7 +6,7 @@ import { TradingSocketProvider } from './services/tradingSocket.jsx';
 import { AccountProvider } from './context/AccountContext.jsx';
 import { FinanceProvider } from './context/FinanceContext.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
-import { ADMIN_ROLES, IB_ROLES } from './config/roleRoutes.js';
+import { ADMIN_ROLES, IB_ROLES, SUPERADMIN_ROLES } from './config/roleRoutes.js';
 import Landing from './pages/landing/Landing.jsx';
 import Auth from './pages/auth/Auth.jsx';
 import AuthCallback from './pages/auth/AuthCallback.jsx';
@@ -50,13 +50,17 @@ import AdminProfitCommissionAdjust from './pages/admin/AdminProfitCommissionAdju
 import AdminAccountsCommandCenter from './pages/admin/AdminAccountsCommandCenter.jsx';
 import AdminFraudDashboard from './pages/admin/AdminFraudDashboard.jsx';
 import AdminAlerts from './pages/admin/AdminAlerts.jsx';
+import AdminPlatformEnv from './pages/admin/AdminPlatformEnv.jsx';
 import GatewayRedirect from './pages/wallet/GatewayRedirect.jsx';
 import ProfileSettings from './pages/settings/ProfileSettings.jsx';
+import MaintenanceGate from './components/MaintenanceGate.jsx';
+import MaintenanceNotice from './pages/maintenance/MaintenanceNotice.jsx';
 
 function App() {
   return (
     <AuthProvider>
-      <BrowserRouter>
+      <BrowserRouter future={{ v7_relativeSplatPath: true }}>
+        <MaintenanceGate>
         <MarketDataProvider>
         <Routes>
           <Route path="/" element={<Landing />} />
@@ -70,6 +74,7 @@ function App() {
           <Route path="/auth/reset-password" element={<ResetPassword />} />
           <Route path="/auth/profile-setup" element={<ProfileSetup />} />
           <Route path="/auth" element={<Auth />} />
+          <Route path="/maintenance" element={<MaintenanceNotice />} />
           <Route element={<AccountProvider><FinanceProvider><ProtectedRoute requireAuth><AppLayout /></ProtectedRoute></FinanceProvider></AccountProvider>}>
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="wallet" element={<Wallet />} />
@@ -106,6 +111,14 @@ function App() {
           <Route path="market" element={<AdminMarket />} />
           <Route path="logs" element={<AdminLogs />} />
           <Route path="settings" element={<AdminSettings />} />
+          <Route
+            path="platform-env"
+            element={
+              <ProtectedRoute requireAuth allowedRoles={SUPERADMIN_ROLES} redirectTo="/admin">
+                <AdminPlatformEnv />
+              </ProtectedRoute>
+            }
+          />
           <Route path="accounts-command-center" element={<AdminAccountsCommandCenter />} />
           <Route path="fraud-dashboard" element={<AdminFraudDashboard />} />
           <Route path="alerts" element={<AdminAlerts />} />
@@ -113,6 +126,7 @@ function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
         </MarketDataProvider>
+        </MaintenanceGate>
       </BrowserRouter>
     </AuthProvider>
   );

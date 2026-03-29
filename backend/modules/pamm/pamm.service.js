@@ -94,7 +94,9 @@ async function getFundDetail(fundId, followerId = null) {
     reserveBalance,
   };
 
-  const recentTrades = await pammRepo.listTradesByManager(fund.id, { limit: 30 });
+  const recentTrades = (await pammRepo.listTradesByManager(fund.id, { limit: 50 }))
+    .filter((t) => !t.excludedFromFundMetrics)
+    .slice(0, 30);
 
   let myAllocation = null;
   if (followerId) {
@@ -137,7 +139,7 @@ async function getFundDetail(fundId, followerId = null) {
     const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
     const monthlyTrades = await pammRepo.listTradesByManager(fund.id, { limit: 500 });
     const monthlyPnl = monthlyTrades
-      .filter((t) => t.createdAt && new Date(t.createdAt) >= monthStart)
+      .filter((t) => t.createdAt && new Date(t.createdAt) >= monthStart && !t.excludedFromFundMetrics)
       .reduce((s, t) => s + (Number(t.pnl) || 0), 0);
     const monthlyProfitPercent = aum > 0 ? (monthlyPnl / aum) * 100 : 0;
     const todayProfitPercent = aum > 0 ? (todayProfit / aum) * 100 : 0;

@@ -43,12 +43,10 @@ export function getDatafeedSocket() {
     return socket;
   }
   const url = getDatafeedSocketUrl();
-  // Always start with polling so Socket.IO can complete the session handshake
-  // (exchange of session ID + capabilities) before upgrading to WebSocket.
-  // Skipping polling by putting 'websocket' first causes the server to reject
-  // the raw WS upgrade (no session exists yet) → infinite reconnect loop.
-  // Socket.IO upgrades to WebSocket automatically once polling is established.
-  const transports = ['polling', 'websocket'];
+  // Polling-first handshake, then upgrade to WebSocket in production.
+  // In dev, some environments log failed WS upgrade attempts to the console even
+  // when long-polling works; polling-only keeps the console clean locally.
+  const transports = import.meta.env.DEV ? ['polling'] : ['polling', 'websocket'];
   const token = getAuthToken();
   socket = io(url, {
     path: '/socket.io',

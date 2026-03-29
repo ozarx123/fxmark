@@ -41,7 +41,7 @@ async function refresh(req, res, next) {
 
 async function logout(req, res, next) {
   try {
-    await authService.logout(req.user?.id, req.body.refreshToken);
+    await authService.logout(req.user?.id, req.body.refreshToken, req.user);
     res.status(204).send();
   } catch (e) {
     next(e);
@@ -109,7 +109,7 @@ async function changePassword(req, res, next) {
   try {
     const userId = req.user?.id;
     const { currentPassword, newPassword } = req.body || {};
-    const result = await authService.changePassword(userId, currentPassword, newPassword);
+    const result = await authService.changePassword(userId, currentPassword, newPassword, req.user);
     res.json(result);
   } catch (e) {
     next(e);

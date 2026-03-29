@@ -20,6 +20,11 @@ const apiUrlResolved =
 const backendIsLocalHost =
   /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(apiUrlResolved);
 
+/** Same idea as security-bootstrap: empty API_URL counts as local/dev-style. */
+const apiUrlForSecurity = trimmed(process.env.API_URL);
+const isLocalApiUrl =
+  !apiUrlForSecurity || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(apiUrlForSecurity);
+
 const explicitFrontend = trimmed(process.env.FRONTEND_URL || process.env.WEB_APP_URL);
 
 /** Public web app origin (no path). Email links, GET /api/auth/login → SPA, GET /api/auth/verify-email redirect. */
@@ -35,7 +40,10 @@ export default {
   /** Public web app origin (no path). Used for email verification links and API → SPA redirects. */
   frontendBaseUrl: frontendBaseUrlResolved,
   jwtSecret: process.env.JWT_SECRET || 'change-me',
-  jwtExpiry: process.env.JWT_EXPIRY || '7d',
+  /** Public production defaults to short-lived access tokens; override with JWT_EXPIRY. */
+  jwtExpiry:
+    trimmed(process.env.JWT_EXPIRY) ||
+    (nodeEnvRaw === 'production' && !isLocalApiUrl ? '15m' : '7d'),
   jwtRefreshExpiry: process.env.JWT_REFRESH_EXPIRY || '30d',
   // Zoho Mail SMTP — verification, notifications, password emails (see docs/EMAIL_SETUP.md)
   zohoMailUser: (process.env.ZOHO_MAIL_USER || '').trim().toLowerCase(),

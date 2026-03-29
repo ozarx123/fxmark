@@ -27,10 +27,18 @@ export default function OrderBottomSheet({
 
   const volNum = parseFloat(volume) || MIN_LOT;
   const inc = useCallback(() => {
-    setVolume((v) => String(Math.min(MAX_LOT, Math.round((parseFloat(v) || 0 + LOT_STEP) * 100) / 100)));
+    setVolume((v) => {
+      const current = parseFloat(v);
+      const base = Number.isFinite(current) ? current : MIN_LOT;
+      return String(Math.min(MAX_LOT, Math.round((base + LOT_STEP) * 100) / 100));
+    });
   }, []);
   const dec = useCallback(() => {
-    setVolume((v) => String(Math.max(MIN_LOT, Math.round((parseFloat(v) || 0 - LOT_STEP) * 100) / 100)));
+    setVolume((v) => {
+      const current = parseFloat(v);
+      const base = Number.isFinite(current) ? current : MIN_LOT;
+      return String(Math.max(MIN_LOT, Math.round((base - LOT_STEP) * 100) / 100));
+    });
   }, []);
 
   const handleConfirm = async () => {

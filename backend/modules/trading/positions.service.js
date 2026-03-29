@@ -14,26 +14,35 @@ import commissionEngine from '../ib/commission.engine.js';
 import ibRepo from '../ib/ib.repository.js';
 import { checkTradingAllowed } from '../admin/trading-limits.service.js';
 import distributionService from '../pamm/distribution.service.js';
+import { getLastPrice } from '../../src/services/lastQuotePrices.js';
+import { getContractSize, normalizeSymbolKey, computeUnrealizedPnl } from './unrealized-pnl.js';
+import { getMarginRiskRuntime } from './margin-risk.runtime.js';
 
-/** XAU/USD and GOLD: 100 oz per lot. All other symbols: 100k units (forex). */
-function getContractSize(symbol) {
-  const s = String(symbol || '').toUpperCase();
-  return (s.includes('XAU') || s === 'GOLD') ? 100 : 100000;
+/** Throttle margin_call warnings per account (userId:accountId). */
+const lastMarginWarningAt = new Map();
+
+function marginUsedForPositions(openPositions, leverage) {
+  const lev = Math.max(1, Number(leverage) || 100);
+  let used = 0;
+  for (const pos of openPositions) {
+    const openPrice = Number(pos.openPrice ?? pos.open_price) || 0;
+    const volume = Number(pos.volume ?? pos.lots) || 0;
+    if (openPrice && volume) {
+      const contractSize = getContractSize(pos.symbol);
+      used += (volume * contractSize * openPrice) / lev;
+    }
+  }
+  return used;
 }
 
-/**
- * P&L in USD: (closePrice - openPrice) * volume * contractSize for buy;
- * (openPrice - closePrice) * volume * contractSize for sell.
- * Contract size: 100 for XAU/GOLD (oz per lot), 100000 for forex (units per lot).
- */
-function computePnL(pos, closePrice) {
-  const open = Number(pos.openPrice) || 0;
-  const vol = Number(pos.volume ?? pos.lots) || 0;
-  if (!open || !vol || !closePrice) return 0;
-  const contractSize = getContractSize(pos.symbol);
-  const diff = closePrice - open;
-  const side = String(pos.side ?? pos.type ?? '').toLowerCase();
-  return (side === 'sell' ? -diff : diff) * vol * contractSize;
+/** Reject cross-account access when position is bound to a specific trading account. */
+function assertPositionAccountScope(pos, requestAccountId) {
+  if (!requestAccountId) return;
+  if (pos.accountId != null && pos.accountId !== '' && String(pos.accountId) !== String(requestAccountId)) {
+    const err = new Error('Position belongs to a different account');
+    err.statusCode = 403;
+    throw err;
+  }
 }
 
 function deriveClosePrice(pos) {
@@ -78,7 +87,10 @@ async function getClosedPositions(userId, options = {}) {
 }
 
 async function getPosition(userId, positionId, accountId = null) {
-  return positionRepo.findById(positionId, userId, accountId);
+  const p = await positionRepo.findById(positionId, userId, accountId);
+  if (!p) return null;
+  assertPositionAccountScope(p, accountId);
+  return p;
 }
 
 async function closePosition(userId, positionId, options = {}) {
@@ -89,6 +101,7 @@ async function closePosition(userId, positionId, options = {}) {
     err.statusCode = 404;
     throw err;
   }
+  assertPositionAccountScope(pos, accountId);
   if (pos.closedAt) {
     const err = new Error('Position already closed');
     err.statusCode = 400;
@@ -107,12 +120,12 @@ async function closePosition(userId, positionId, options = {}) {
   let pnl = pnlParam != null ? Number(pnlParam) : (pos.pnl != null ? pos.pnl : 0);
   if (isFull) {
     if (resolvedClosePrice != null) {
-      pnl = computePnL(pos, resolvedClosePrice);
+      pnl = computeUnrealizedPnl(pos, resolvedClosePrice);
     } else if (Number(pos.currentPrice) || Number(pos.openPrice)) {
       // Fallback: use position's currentPrice (or openPrice) so PnL is persisted even when client omits closePrice
       const fallbackPrice = Number(pos.currentPrice) || Number(pos.openPrice);
       resolvedClosePrice = fallbackPrice;
-      pnl = computePnL(pos, resolvedClosePrice);
+      pnl = computeUnrealizedPnl(pos, resolvedClosePrice);
     }
   }
   let account = (pos.accountId || accountId)
@@ -305,6 +318,7 @@ async function updatePositionTPLS(userId, positionId, { takeProfit, stopLoss }, 
     err.statusCode = 404;
     throw err;
   }
+  assertPositionAccountScope(pos, accountId);
   if (pos.closedAt) {
     const err = new Error('Position already closed');
     err.statusCode = 400;
@@ -347,65 +361,180 @@ export function evaluateTPLS(pos, price) {
   return { shouldClose, closePrice: shouldClose ? closePrice : null, reason };
 }
 
+async function resolveBalanceForEquityFloor(account, userId) {
+  let balance = Number(account.balance) || 0;
+  if (account.type === 'live') {
+    try {
+      const wallet = await walletRepo.getOrCreateWallet(userId, account.currency || 'USD');
+      balance = Number(wallet.balance) ?? 0;
+    } catch {
+      /* keep trading_accounts.balance */
+    }
+  }
+  return balance;
+}
+
+async function closeAllOpenPositionsForTickRisk(
+  userId,
+  accountId,
+  account,
+  openPositions,
+  tickSym,
+  pNum,
+  reason,
+  logTag
+) {
+  for (const pos of openPositions) {
+    try {
+      const posSym = normalizeSymbolKey(pos.symbol);
+      const closePrice =
+        posSym === tickSym
+          ? pNum
+          : (getLastPrice(pos.symbol) ?? (Number(pos.currentPrice) || Number(pos.openPrice) || null));
+      await closePosition(userId, pos.id, {
+        closePrice,
+        accountId,
+        bypassAdmin: true,
+        reason: reason || 'risk',
+      });
+      // eslint-disable-next-line no-console
+      console.log(`[margin] Closed position (${logTag})`, {
+        userId,
+        accountId,
+        accountType: account.type,
+        positionId: pos.id,
+        closePrice,
+        reason: logTag,
+      });
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn(`[margin] Failed to close position (${logTag})`, pos.id, e.message);
+    }
+  }
+}
+
 /**
- * Emergency equity check: if account equity (approx) reaches or drops below zero,
- * close all open positions on that account to prevent negative equity.
- * Equity approximation: balance + sum(PnL for positions in the current symbol).
+ * Post-tick risk (same marks as account summary / equity floor):
+ * 1) Zero-equity floor — close all when equity &lt; 0 with unrealized loss.
+ * 2) Optional margin stop-out — MARGIN_LEVEL_STOP_OUT_BELOW_PCT (e.g. 50 = close if margin level &lt; 50%).
+ * 3) Optional margin warning — MARGIN_LEVEL_WARN_BELOW_PCT + throttled risk_event (Socket.IO).
  */
 async function enforceEquityFloorForAccounts(symbol, price, positions) {
   if (!positions?.length) return;
   const pNum = Number(price);
   if (!Number.isFinite(pNum)) return;
 
-  // Group by userId + accountId
-  const byAccount = new Map();
+  const tickSym = normalizeSymbolKey(symbol);
+  const { stopOutBelowPct: stopOutPct, warnBelowPct, warnIntervalMs } = getMarginRiskRuntime();
+
+  const accountKeys = new Set();
   for (const pos of positions) {
     if (!pos.accountId) continue;
-    const key = `${pos.userId}:${pos.accountId}`;
-    if (!byAccount.has(key)) byAccount.set(key, []);
-    byAccount.get(key).push(pos);
+    accountKeys.add(`${pos.userId}:${pos.accountId}`);
   }
-  if (!byAccount.size) return;
+  if (!accountKeys.size) return;
 
-  for (const [key, accPositions] of byAccount.entries()) {
+  for (const key of accountKeys) {
     const [userId, accountId] = key.split(':');
     if (!userId || !accountId) continue;
     const account = await tradingAccountRepo.findById(accountId, userId);
     if (!account) continue;
 
-    // Only enforce equity floor on live accounts. Demo/PAMM should not be auto-closed here.
-    if (account.type !== 'live') continue;
+    const balance = await resolveBalanceForEquityFloor(account, userId);
+    const openPositions = await positionRepo.listOpen(userId, { accountId, limit: 500 });
+    if (!openPositions.length) continue;
 
-    const balance = Number(account.balance) || 0;
-
-    // Approximate equity using current symbol positions only, with live price
     let equity = balance;
-    for (const pos of accPositions) {
-      equity += computePnL(pos, pNum);
+    for (const pos of openPositions) {
+      const posSym = normalizeSymbolKey(pos.symbol);
+      const mark =
+        posSym === tickSym
+          ? pNum
+          : (getLastPrice(pos.symbol) ?? (Number(pos.currentPrice) || Number(pos.openPrice) || null));
+      equity += computeUnrealizedPnl(pos, mark);
     }
 
-    // If equity is below zero *and* we actually have unrealized loss (equity < balance),
-    // close all open positions to prevent going further negative.
-    // This avoids closing immediately when balance is 0 and there is no loss yet.
+    const leverage = Math.max(1, Number(account.leverage) || 100);
+    const marginUsed = marginUsedForPositions(openPositions, leverage);
+    const marginLevel = marginUsed > 0 ? (equity / marginUsed) * 100 : null;
+
     const hasUnrealizedLoss = equity < balance;
+    let closedAccount = false;
+
     if (equity < 0 && hasUnrealizedLoss) {
-      // Close all open positions on this account (all symbols) at best available info
-      const openPositions = await positionRepo.listOpen(userId, { accountId });
-      for (const pos of openPositions) {
+      await closeAllOpenPositionsForTickRisk(
+        userId,
+        accountId,
+        account,
+        openPositions,
+        tickSym,
+        pNum,
+        'equity_floor',
+        'zero_equity'
+      );
+      closedAccount = true;
+    }
+
+    if (
+      !closedAccount
+      && stopOutPct > 0
+      && marginUsed > 0
+      && marginLevel != null
+      && Number.isFinite(marginLevel)
+      && marginLevel < stopOutPct
+    ) {
+      await closeAllOpenPositionsForTickRisk(
+        userId,
+        accountId,
+        account,
+        openPositions,
+        tickSym,
+        pNum,
+        'margin_stop_out',
+        'margin_stop_out'
+      );
+      closedAccount = true;
+      try {
+        const { emitRiskEvent } = await import('../../src/services/tradeEvents.js');
+        emitRiskEvent(userId, {
+          type: 'margin_stop_out',
+          accountId,
+          marginLevel: Math.round(marginLevel * 100) / 100,
+          stopOutBelowPct: stopOutPct,
+          equity: Math.round(equity * 100) / 100,
+          marginUsed: Math.round(marginUsed * 100) / 100,
+          accountType: account.type,
+        });
+      } catch {
+        /* ignore */
+      }
+    }
+
+    if (
+      !closedAccount
+      && warnBelowPct > 0
+      && marginUsed > 0
+      && marginLevel != null
+      && Number.isFinite(marginLevel)
+      && marginLevel < warnBelowPct
+    ) {
+      const wk = `${userId}:${accountId}`;
+      const now = Date.now();
+      if (!lastMarginWarningAt.has(wk) || now - lastMarginWarningAt.get(wk) >= warnIntervalMs) {
+        lastMarginWarningAt.set(wk, now);
         try {
-          const isSameSymbol = String(pos.symbol || '').replace(/\//g, '').toUpperCase()
-            === String(symbol || '').replace(/\//g, '').toUpperCase();
-          const closePrice = isSameSymbol ? pNum : (Number(pos.currentPrice) || Number(pos.openPrice) || null);
-          await closePosition(userId, pos.id, {
-            closePrice,
+          const { emitRiskEvent } = await import('../../src/services/tradeEvents.js');
+          emitRiskEvent(userId, {
+            type: 'margin_warning',
             accountId,
-            bypassAdmin: true,
+            marginLevel: Math.round(marginLevel * 100) / 100,
+            warnBelowPct,
+            equity: Math.round(equity * 100) / 100,
+            marginUsed: Math.round(marginUsed * 100) / 100,
+            accountType: account.type,
           });
-          // eslint-disable-next-line no-console
-          console.log('[margin] Closed position due to zero equity', { userId, accountId, positionId: pos.id, equity, closePrice });
-        } catch (e) {
-          // eslint-disable-next-line no-console
-          console.warn('[margin] Failed to close position on zero equity', pos.id, e.message);
+        } catch {
+          /* ignore */
         }
       }
     }
@@ -436,11 +565,7 @@ async function checkAndExecuteTPLS(symbol, price) {
     }
   }
 
-  // After TP/SL processing, we *would* enforce equity floor (no negative equity).
-  // This is temporarily disabled until margin/equity integration is finalized,
-  // to avoid unexpected instant auto-closure of positions when account balances
-  // are out of sync with wallet/equity.
-  // await enforceEquityFloorForAccounts(symbol, p, positions);
+  await enforceEquityFloorForAccounts(symbol, p, positions);
 }
 
 export default {

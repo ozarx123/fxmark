@@ -13,8 +13,15 @@ export function getTradeIo() {
 /**
  * Initialize WebSocket and Socket.IO servers for datafeed (tick + candle broadcasts)
  * @param {import('http').Server} server - HTTP server to attach to
+ * @param {object} [options]
+ * @param {string[]|null} [options.corsOrigins] - When set, same-origin policy as HTTP CORS; otherwise `*` (dev only).
  */
-export function initWebSocket(server) {
+export function initWebSocket(server, options = {}) {
+  const { corsOrigins } = options;
+  const socketCors =
+    corsOrigins && corsOrigins.length > 0
+      ? { origin: corsOrigins, methods: ['GET', 'POST'], credentials: true }
+      : { origin: '*' };
   wss = new WebSocketServer({ server, path: '/ws' });
 
   wss.on('connection', (ws) => {
@@ -32,7 +39,7 @@ export function initWebSocket(server) {
 
   io = new SocketIOServer(server, {
     path: '/socket.io',
-    cors: { origin: '*' },
+    cors: socketCors,
     // Start with polling for reliable session handshake.
     // Upgrade to WebSocket is attempted automatically by the client; the server
     // allows it but does not force it — prevents upgrade failures from spamming

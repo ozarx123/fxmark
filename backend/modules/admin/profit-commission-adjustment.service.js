@@ -78,6 +78,7 @@ export async function applyAdjustment(params) {
     pammRealizedPnlDelta,
     walletProfitCreditUsd,
     ibCommissionPendingUsd,
+    clientIp,
   } = params;
 
   const r = String(reason || '').trim();
@@ -203,10 +204,17 @@ export async function applyAdjustment(params) {
     }
   }, { label: 'profit_commission_adjustment' });
 
-  audit.log(String(adminUserId), 'profit_commission_adjustment', `user:${targetUserId}`, {
-    reason: r,
-    ...result,
-  });
+  audit.log(
+    String(adminUserId),
+    'profit_commission_adjustment',
+    `user:${targetUserId}`,
+    {
+      reason: r,
+      targetUserId,
+      ...result,
+    },
+    { clientIp: params.clientIp != null ? String(params.clientIp) : null }
+  );
 
   if (hasWallet) {
     await financialTransactionService.verifyWalletLedgerAfterMutation(targetUserId, 'USD', {

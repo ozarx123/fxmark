@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { ensureUserRole } from '../../utils/authHelpers';
 import ProfileAvatar from '../../components/ProfileAvatar';
 import { getKyc, submitKyc } from '../../api/userApi';
 import { getApiBase } from '../../config/apiBase.js';
@@ -62,6 +63,24 @@ export default function ProfileSettings() {
       .finally(() => { if (!cancelled) setKycLoading(false); });
     return () => { cancelled = true; };
   }, [user?.id, user?.kycStatus]);
+
+  useEffect(() => {
+    if (!token || !user?.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/auth/me`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json().catch(() => ({}));
+        if (cancelled || !res.ok || !data?.email) return;
+        login({ ...user, ...data }, token);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [token, user?.id]);
 
   const resizeImage = (file, maxSize = 200) =>
     new Promise((resolve, reject) => {
@@ -261,6 +280,25 @@ export default function ProfileSettings() {
                 onChange={handleAvatarChange}
                 className="profile-settings-avatar-input"
               />
+            </div>
+            <div className="profile-settings-grid profile-settings-label-full" style={{ marginBottom: '1rem' }}>
+              <div className="profile-settings-label profile-settings-label-full">
+                <span className="profile-settings-readonly-label">Email</span>
+                <div className="profile-settings-readonly-value">{user?.email || '—'}</div>
+              </div>
+              <div className="profile-settings-label profile-settings-label-full">
+                <span className="profile-settings-readonly-label">Account number (sign in with this)</span>
+                <div className="profile-settings-readonly-value">
+                  {user?.accountNo != null && String(user.accountNo).trim() !== '' ? (
+                    <code style={{ fontSize: '1.05rem', fontWeight: 600 }}>{user.accountNo}</code>
+                  ) : (
+                    <span className="muted">Not assigned yet — sign out and log in again after your account is updated.</span>
+                  )}
+                </div>
+                <p className="muted" style={{ marginTop: '0.35rem', fontSize: '0.8125rem', marginBottom: 0 }}>
+                  Use this account number with your password on the login page. This is not your MT/trading account number.
+                </p>
+              </div>
             </div>
             <div className="profile-settings-grid">
               <label className="profile-settings-label">

@@ -16,6 +16,8 @@ const indexes = [
   { keys: { email: 1 }, options: { unique: true } },
   // One pending verification token per user; sparse so most users have no field
   { keys: { emailVerificationToken: 1 }, options: { unique: true, sparse: true } },
+  // CRM / portal login number (numeric 10001+ or legacy FX…); sparse if some docs lack it
+  { keys: { accountNo: 1 }, options: { unique: true, sparse: true } },
 ];
 
 export { COLLECTION, schema, indexes };

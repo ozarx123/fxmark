@@ -430,6 +430,132 @@ async function postPammUnallocation(followerId, amount, currency, referenceId, f
   ], options);
 }
 
+/**
+ * Reverse a Bull Run **profit** distribution to one investor (original was WALLET credit).
+ * Idempotent by referenceId rbprof:positionId:followerId
+ */
+async function postPammDistributionProfitRollback(followerId, amount, currency, positionId, fundId, options = {}) {
+  const amt = Math.abs(Number(amount)) || 0;
+  if (amt < 0.001) return { ids: [], entries: [] };
+  const fid = String(fundId);
+  const refId = `rbprof:${String(positionId)}:${String(followerId)}`;
+  const exists = await ledgerRepo.existsWalletEntryForEvent(String(followerId), 'pamm_dist_rb', refId, 0, amt, {
+    ...options,
+    pammFundId: fid,
+  });
+  if (exists) {
+    logLedgerIdempotencySkip('pamm_dist_rb', refId, String(followerId), 0, amt);
+    return { ids: [], entries: [] };
+  }
+  return post(
+    [
+      {
+        accountCode: ACCOUNTS.WALLET,
+        entityId: String(followerId),
+        debit: amt,
+        credit: 0,
+        currency,
+        referenceType: 'pamm_dist_rb',
+        referenceId: refId,
+        description: 'Bull Run PAMM distribution rollback (profit)',
+        pammFundId: fid,
+      },
+      {
+        accountCode: ACCOUNTS.TRADING_PNL,
+        entityId: SYSTEM_ACCOUNT_ID,
+        debit: 0,
+        credit: amt,
+        currency,
+        referenceType: 'pamm_dist_rb',
+        referenceId: refId,
+        pammFundId: fid,
+      },
+    ],
+    options
+  );
+}
+
+/**
+ * Reverse a Bull Run **loss** distribution to one investor (original was WALLET debit).
+ * Idempotent by referenceId rbloss:positionId:followerId
+ */
+async function postPammDistributionLossRollback(followerId, amount, currency, positionId, fundId, options = {}) {
+  const amt = Math.abs(Number(amount)) || 0;
+  if (amt < 0.001) return { ids: [], entries: [] };
+  const fid = String(fundId);
+  const refId = `rbloss:${String(positionId)}:${String(followerId)}`;
+  const exists = await ledgerRepo.existsWalletEntryForEvent(String(followerId), 'pamm_dist_rb', refId, amt, 0, {
+    ...options,
+    pammFundId: fid,
+  });
+  if (exists) {
+    logLedgerIdempotencySkip('pamm_dist_rb', refId, String(followerId), amt, 0);
+    return { ids: [], entries: [] };
+  }
+  return post(
+    [
+      {
+        accountCode: ACCOUNTS.WALLET,
+        entityId: String(followerId),
+        debit: 0,
+        credit: amt,
+        currency,
+        referenceType: 'pamm_dist_rb',
+        referenceId: refId,
+        description: 'Bull Run PAMM distribution rollback (loss)',
+        pammFundId: fid,
+      },
+      {
+        accountCode: ACCOUNTS.TRADING_PNL,
+        entityId: SYSTEM_ACCOUNT_ID,
+        debit: amt,
+        credit: 0,
+        currency,
+        referenceType: 'pamm_dist_rb',
+        referenceId: refId,
+        pammFundId: fid,
+      },
+    ],
+    options
+  );
+}
+
+/** Reverse PAMM IB Bull Run commission credit to an IB wallet. Idempotent by rb|stableRef. */
+async function postPammIbCommissionRollback(ibUserId, amount, currency, stableRef, options = {}) {
+  const amt = Math.abs(Number(amount)) || 0;
+  if (amt < 0.001) return { ids: [], entries: [] };
+  const refId = `rb|${String(stableRef)}`;
+  const exists = await ledgerRepo.existsWalletEntryForEvent(String(ibUserId), 'pamm_ib_commission_rb', refId, 0, amt, options);
+  if (exists) {
+    logLedgerIdempotencySkip('pamm_ib_commission_rb', refId, String(ibUserId), 0, amt);
+    return { ids: [], entries: [] };
+  }
+  return post(
+    [
+      {
+        accountCode: ACCOUNTS.WALLET,
+        entityId: String(ibUserId),
+        debit: amt,
+        credit: 0,
+        currency,
+        referenceType: 'pamm_ib_commission_rb',
+        referenceId: refId,
+        description: 'PAMM IB commission rollback (Bull Run)',
+      },
+      {
+        accountCode: ACCOUNTS.COMMISSION_PAID,
+        entityId: SYSTEM_ACCOUNT_ID,
+        debit: 0,
+        credit: amt,
+        currency,
+        referenceType: 'pamm_ib_commission_rb',
+        referenceId: refId,
+      },
+    ],
+    options
+  );
+}
+
 export default {
   post,
   createDoubleEntryLedger,
@@ -449,6 +575,9 @@ export default {
   postPammManagerCapitalWithdraw,
   postPammAllocation,
   postPammUnallocation,
+  postPammDistributionProfitRollback,
+  postPammDistributionLossRollback,
+  postPammIbCommissionRollback,
   listEntries,
   getBalance,
   getBalances,

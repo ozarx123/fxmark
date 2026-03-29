@@ -16,6 +16,15 @@ function validateEmail(email) {
   return null;
 }
 
+/** Email or users.accountNo (e.g. 10001 or legacy FX…). */
+function validateLoginIdentifier(value) {
+  const t = value?.trim() || '';
+  if (!t) return 'Email or account number is required';
+  if (t.includes('@')) return validateEmail(value);
+  if (t.length < 2) return 'Account number is too short';
+  return null;
+}
+
 function validatePassword(password, isSignup = false) {
   if (!password) return 'Password is required';
   if (password.length < PASSWORD_MIN) return `Password must be at least ${PASSWORD_MIN} characters`;
@@ -42,7 +51,7 @@ export default function Auth() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const [loginEmail, setLoginEmail] = useState('');
+  const [loginIdentifier, setLoginIdentifier] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
 
   const [signupEmail, setSignupEmail] = useState('');
@@ -53,22 +62,28 @@ export default function Auth() {
   const handleLogin = async (e) => {
     e.preventDefault();
     setError('');
-    const emailErr = validateEmail(loginEmail);
+    const idErr = validateLoginIdentifier(loginIdentifier);
     const pwdErr = validatePassword(loginPassword, false);
-    if (emailErr || pwdErr) {
-      setError(emailErr || pwdErr);
+    if (idErr || pwdErr) {
+      setError(idErr || pwdErr);
       return;
     }
+    const trimmedId = loginIdentifier.trim();
+    const isAccountNoLogin = !trimmedId.includes('@');
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: loginEmail, password: loginPassword }),
+        body: JSON.stringify({ email: trimmedId, password: loginPassword }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        const u = ensureUserRole(data.user || { email: loginEmail, name: loginEmail.split('@')[0] }, loginEmail);
+        if (!data.user?.email) {
+          setError('Login response incomplete');
+          return;
+        }
+        const u = ensureUserRole(data.user, data.user.email);
         login(u, data.accessToken);
         const target = safeRedirect || (u.profileComplete ? '/dashboard' : '/auth/profile-setup');
         navigate(target, { replace: true });
@@ -76,11 +91,17 @@ export default function Auth() {
       }
       if (res.status === 403 && (data.code === 'EMAIL_NOT_VERIFIED' || String(data.error || data.message || '').toLowerCase().includes('verif'))) {
         setError('Please verify your email. Check your inbox or resend the verification email.');
-        navigate('/auth/verify-email', { state: { email: loginEmail }, replace: true });
+        navigate('/auth/verify-email', {
+          state: { email: data.user?.email || (isAccountNoLogin ? '' : trimmedId) },
+          replace: true,
+        });
         return;
       }
       if (res.status === 404 || res.status === 502) {
-        login(ensureUserRole({ email: loginEmail, name: loginEmail.split('@')[0] }, loginEmail), null);
+        login(
+          ensureUserRole({ email: trimmedId, name: trimmedId.split('@')[0] }, trimmedId),
+          null
+        );
         navigate(safeRedirect || '/auth/profile-setup', { replace: true });
         return;
       }
@@ -89,7 +110,10 @@ export default function Auth() {
       if (err.message !== 'Login failed' && err.message !== 'Failed to fetch') {
         setError(err.message);
       } else {
-        login(ensureUserRole({ email: loginEmail, name: loginEmail.split('@')[0] }, loginEmail), null);
+        login(
+          ensureUserRole({ email: trimmedId, name: trimmedId.split('@')[0] }, trimmedId),
+          null
+        );
         navigate(safeRedirect || '/auth/profile-setup', { replace: true });
       }
     } finally {
@@ -199,15 +223,15 @@ export default function Auth() {
         {tab === 'login' ? (
           <form className="auth-form" onSubmit={handleLogin}>
             <label className="auth-label">
-              Email
+              Email or account number
               <input
-                type="email"
+                type="text"
                 className="auth-input"
-                placeholder="you@example.com"
-                value={loginEmail}
-                onChange={(e) => setLoginEmail(e.target.value)}
+                placeholder="you@example.com or 10001 or FX…"
+                value={loginIdentifier}
+                onChange={(e) => setLoginIdentifier(e.target.value)}
                 required
-                autoComplete="email"
+                autoComplete="username"
               />
             </label>
             <label className="auth-label">

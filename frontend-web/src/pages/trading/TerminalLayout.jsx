@@ -51,6 +51,8 @@ export default function TerminalLayout() {
   const toastIdRef = useRef(0);
   const lastNotificationRef = useRef(null);
   const marginWarnShownRef = useRef(false);
+  const tradeRefreshTimerRef = useRef(null);
+  const quickOrderLockRef = useRef(false);
   const [alerts, setAlerts] = useState([]);
 
   const addPriceAlert = useCallback((symbol, price, condition = 'above') => {
@@ -322,25 +324,30 @@ export default function TerminalLayout() {
     refreshLiveBalance?.();
   }, [loadTradingData, refreshLiveBalance]);
 
-  // Refresh positions, orders, history, risk panel and wallet when backend pushes any trade-related event
+  // Debounced refresh so burst socket events (trade:update + order_*) do not hammer the API.
   useEffect(() => {
     const socket = getDatafeedSocket?.();
     if (!socket || !loadTradingData) return;
-    const onRefresh = () => {
-      loadTradingData();
-      refreshLiveBalance?.();
+    const scheduleRefresh = () => {
+      if (tradeRefreshTimerRef.current) clearTimeout(tradeRefreshTimerRef.current);
+      tradeRefreshTimerRef.current = setTimeout(() => {
+        tradeRefreshTimerRef.current = null;
+        loadTradingData();
+        refreshLiveBalance?.();
+      }, 280);
     };
-    socket.on('order_created', onRefresh);
-    socket.on('order_triggered', onRefresh);
-    socket.on('order_cancelled', onRefresh);
-    socket.on('trade:update', onRefresh);
-    socket.on('risk_event', onRefresh);
+    socket.on('order_created', scheduleRefresh);
+    socket.on('order_triggered', scheduleRefresh);
+    socket.on('order_cancelled', scheduleRefresh);
+    socket.on('trade:update', scheduleRefresh);
+    socket.on('risk_event', scheduleRefresh);
     return () => {
-      socket.off('order_created', onRefresh);
-      socket.off('order_triggered', onRefresh);
-      socket.off('order_cancelled', onRefresh);
-      socket.off('trade:update', onRefresh);
-      socket.off('risk_event', onRefresh);
+      socket.off('order_created', scheduleRefresh);
+      socket.off('order_triggered', scheduleRefresh);
+      socket.off('order_cancelled', scheduleRefresh);
+      socket.off('trade:update', scheduleRefresh);
+      socket.off('risk_event', scheduleRefresh);
+      if (tradeRefreshTimerRef.current) clearTimeout(tradeRefreshTimerRef.current);
     };
   }, [loadTradingData, refreshLiveBalance]);
 
@@ -419,7 +426,7 @@ export default function TerminalLayout() {
     setOrderError(null);
     setQuickOrderLoading(true);
     try {
-      await tradingApi.placeOrder({
+      const result = await tradingApi.placeOrder({
         symbol: symbol.replace(/\//g, ''),
         side: 'sell',
         type: 'MARKET_SELL',
@@ -428,11 +435,16 @@ export default function TerminalLayout() {
         lots: vol,
         price: marketPrice,
       }, { accountId, accountNumber });
+      if (result?.status === 'rejected') {
+        setOrderError(result.rejectReason || result.order?.rejectReason || 'Order rejected');
+        return;
+      }
       loadTradingData();
       addToast(`Sell ${vol.toFixed(2)} ${symbol} filled`, 'success');
     } catch (err) {
       setOrderError(err?.message || 'Order failed');
     } finally {
+      quickOrderLockRef.current = false;
       setQuickOrderLoading(false);
     }
   }, [accountId, accountNumber, volume, symbol, marketPrice, loadTradingData, addToast]);
@@ -451,10 +463,13 @@ export default function TerminalLayout() {
       setOrderError('Market price not available.');
       return;
     }
+    if (quickOrderLockRef.current) return;
     setOrderError(null);
     setQuickOrderLoading(true);
+    quickOrderLockRef.current = true;
+    const clientOrderId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined;
     try {
-      await tradingApi.placeOrder({
+      const result = await tradingApi.placeOrder({
         symbol: symbol.replace(/\//g, ''),
         side: 'buy',
         type: 'MARKET_BUY',
@@ -462,12 +477,18 @@ export default function TerminalLayout() {
         volume: vol,
         lots: vol,
         price: marketPrice,
+        ...(clientOrderId ? { clientOrderId } : {}),
       }, { accountId, accountNumber });
+      if (result?.status === 'rejected') {
+        setOrderError(result.rejectReason || result.order?.rejectReason || 'Order rejected');
+        return;
+      }
       loadTradingData();
       addToast(`Buy ${vol.toFixed(2)} ${symbol} filled`, 'success');
     } catch (err) {
       setOrderError(err?.message || 'Order failed');
     } finally {
+      quickOrderLockRef.current = false;
       setQuickOrderLoading(false);
     }
   }, [accountId, accountNumber, volume, symbol, marketPrice, loadTradingData, addToast]);
@@ -492,8 +513,9 @@ export default function TerminalLayout() {
         return;
       }
       setOrderError(null);
+      const clientOrderId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined;
       try {
-        await tradingApi.placeOrder(
+        const result = await tradingApi.placeOrder(
           {
             symbol: symbol.replace(/\//g, ''),
             side: side === 'buy' ? 'buy' : 'sell',
@@ -504,9 +526,15 @@ export default function TerminalLayout() {
             price: marketPrice,
             stopLoss: stopLoss != null && Number.isFinite(stopLoss) ? stopLoss : undefined,
             takeProfit: takeProfit != null && Number.isFinite(takeProfit) ? takeProfit : undefined,
+            ...(clientOrderId ? { clientOrderId } : {}),
           },
           { accountId, accountNumber },
         );
+        if (result?.status === 'rejected') {
+          const msg = result.rejectReason || result.order?.rejectReason || 'Order rejected';
+          setOrderError(msg);
+          throw new Error(msg);
+        }
         loadTradingData();
       } catch (e) {
         throw e;

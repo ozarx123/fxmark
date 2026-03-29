@@ -89,13 +89,15 @@ async function findByPammManagerId(pammManagerId) {
   return a ? { id: a._id.toString(), ...a, _id: undefined } : null;
 }
 
-async function updateBalance(id, userId, delta) {
+async function updateBalance(id, userId, delta, options = {}) {
   if (!ObjectId.isValid(id)) return null;
   const c = await col();
+  const opts = { returnDocument: 'after' };
+  if (options.session) opts.session = options.session;
   const result = await c.findOneAndUpdate(
     { _id: new ObjectId(id), userId },
     { $inc: { balance: delta }, $set: { updatedAt: new Date() } },
-    { returnDocument: 'after' }
+    opts
   );
   return result ? { id: result._id.toString(), ...result, _id: undefined } : null;
 }

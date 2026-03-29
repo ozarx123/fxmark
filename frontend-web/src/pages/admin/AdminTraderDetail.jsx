@@ -38,6 +38,14 @@ export default function AdminTraderDetail() {
   const [limitsForm, setLimitsForm] = useState({ maxDrawdownPercent: '', maxDailyLoss: '' });
   const passedUser = locationState?.user;
   const [userInfo, setUserInfo] = useState({ email: '', name: '' });
+  const [selectedAccountForConfig, setSelectedAccountForConfig] = useState('');
+  const [accountConfig, setAccountConfig] = useState(null);
+  const [accountConfigForm, setAccountConfigForm] = useState({
+    leverage: '',
+    executionGroup: '',
+    tradingEnabled: true,
+  });
+  const [savingConfig, setSavingConfig] = useState(false);
 
   useEffect(() => {
     if (passedUser?.email || passedUser?.name) {
@@ -58,13 +66,26 @@ export default function AdminTraderDetail() {
     setLoading(true);
     setError(null);
     try {
-      const [summary, accs, w, pos, ords, closed, lim] = await Promise.all([
+      const [summary, accs, w] = await Promise.all([
         getAdminTradingUserSummary(userId).catch(() => ({ id: userId, email: userId, name: '—' })),
         getAdminTradingAccounts(userId),
         getAdminTradingWallet(userId).catch(() => null),
-        getAdminTradingPositions(userId, { accountId: accountId || undefined }),
-        getAdminTradingOrders(userId, { accountId: accountId || undefined, limit: 50 }),
-        getAdminTradingClosedPositions(userId, { limit: 50, accountId: accountId || undefined }),
+      ]);
+      const accList = Array.isArray(accs) ? accs : [];
+      let positionsAccountId;
+      if (accList.length > 1) {
+        const chosen =
+          accountId && accList.some((a) => a.id === accountId) ? accountId : accList[0].id;
+        positionsAccountId = chosen;
+        if (chosen !== accountId) setAccountId(chosen);
+      } else {
+        if (accountId != null) setAccountId(null);
+        positionsAccountId = undefined;
+      }
+      const [pos, ords, closed, lim] = await Promise.all([
+        getAdminTradingPositions(userId, { accountId: positionsAccountId }),
+        getAdminTradingOrders(userId, { accountId: positionsAccountId, limit: 50 }),
+        getAdminTradingClosedPositions(userId, { limit: 50, accountId: positionsAccountId }),
         getAdminTradingLimits(userId).catch(() => ({ blocked: false, maxDrawdownPercent: null, maxDailyLoss: null })),
       ]);
       const fromApi = summary && summary.email && summary.email !== userId;
@@ -89,6 +110,7 @@ export default function AdminTraderDetail() {
       setOrders([]);
       setClosedPositions([]);
       setAccounts([]);
+      setAccountId(null);
       setWallet(null);
       setLimits({ blocked: false, maxDrawdownPercent: null, maxDailyLoss: null });
     } finally {
@@ -297,11 +319,10 @@ export default function AdminTraderDetail() {
           <div className="filter-group">
             <label>Account filter</label>
             <select
-              value={accountId || ''}
-              onChange={(e) => setAccountId(e.target.value || null)}
+              value={accountId || accounts[0]?.id || ''}
+              onChange={(e) => setAccountId(e.target.value)}
               className="filter-select"
             >
-              <option value="">All accounts</option>
               {accounts.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.accountNumber} ({a.type}) {formatCurrency(a.balance)}

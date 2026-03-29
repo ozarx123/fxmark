@@ -1,0 +1,44 @@
+# Dependency audit + static analysis. DAST (OWASP ZAP) against a live URL: run manually on staging
+# with authorization; add a workflow_dispatch job here if you inject ZAP_TARGET_URL as a secret.
+name: Security
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  npm-audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { dir: backend }
+          - { dir: frontend-web }
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: ${{ matrix.dir }}/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Audit (high or above fails the job)
+        run: npm audit --audit-level=high
+
+  semgrep:
+    name: Semgrep
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan (auto ruleset)
+        run: semgrep ci --config auto --error

@@ -32,7 +32,8 @@ export default function OrderTicket({
     setSuccess(false);
     onError?.(null);
     try {
-      await tradingApi.placeOrder({
+      const clientOrderId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined;
+      const result = await tradingApi.placeOrder({
         symbol: symbol.replace(/\//g, ''),
         side: side.toLowerCase(),
         type: side === 'BUY' ? 'MARKET_BUY' : 'MARKET_SELL',
@@ -40,9 +41,14 @@ export default function OrderTicket({
         lots: vol,
         volume: vol,
         price: marketPrice,
-        sl: sl ? parseFloat(sl) : undefined,
-        tp: tp ? parseFloat(tp) : undefined,
+        stopLoss: sl ? parseFloat(sl) : undefined,
+        takeProfit: tp ? parseFloat(tp) : undefined,
+        ...(clientOrderId ? { clientOrderId } : {}),
       }, opts);
+      if (result?.status === 'rejected') {
+        onError?.(result.rejectReason || result.order?.rejectReason || 'Order rejected');
+        return;
+      }
       setSuccess(true);
       onOrderPlaced?.();
       setTimeout(() => setSuccess(false), 2000);

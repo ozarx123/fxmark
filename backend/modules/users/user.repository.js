@@ -2,12 +2,22 @@ import { getDb } from '../../config/mongo.js';
 import { ObjectId } from 'mongodb';
 
 const COLLECTION = 'users';
+const COUNTERS = 'sequence_counters';
+/** Keeps existing counter doc in Mongo so sequence continues (was used for loginAccountId). */
+const NUMERIC_ACCOUNT_NO_COUNTER_ID = 'userLoginAccountId';
+const NUMERIC_ACCOUNT_NO_START = 10001;
 
 let indexEnsured = false;
 async function ensureIndex() {
   if (indexEnsured) return;
   const col = await collection();
   await col.createIndex({ email: 1 }, { unique: true });
+  await col.createIndex({ accountNo: 1 }, { unique: true, sparse: true });
+  try {
+    await col.dropIndex('loginAccountId_1');
+  } catch {
+    /* index may not exist */
+  }
   indexEnsured = true;
 }
 
@@ -16,19 +26,65 @@ async function collection() {
   return db.collection(COLLECTION);
 }
 
-function generateAccountNo() {
-  return 'FX' + String(Math.floor(10000000 + Math.random() * 90000000));
+function seqFromFindOneAndUpdateResult(result) {
+  if (result == null) return null;
+  const doc = typeof result === 'object' && 'value' in result && result.value !== undefined ? result.value : result;
+  const seq = doc?.seq;
+  return seq == null ? null : Number(seq);
+}
+
+/** Next sequential numeric accountNo string: "10001", "10002", … Only for users without accountNo. */
+async function getNextNumericAccountNo(options = {}) {
+  const db = await getDb();
+  const ctr = db.collection(COUNTERS);
+  const session = options.session || undefined;
+  const result = await ctr.findOneAndUpdate(
+    { _id: NUMERIC_ACCOUNT_NO_COUNTER_ID },
+    [
+      {
+        $set: {
+          seq: {
+            $add: [{ $ifNull: ['$seq', NUMERIC_ACCOUNT_NO_START - 1] }, 1],
+          },
+        },
+      },
+    ],
+    { upsert: true, returnDocument: 'after', ...(session ? { session } : {}) }
+  );
+  const seq = seqFromFindOneAndUpdateResult(result);
+  if (seq == null || !Number.isFinite(seq)) {
+    throw new Error('Failed to allocate accountNo');
+  }
+  return String(seq);
+}
+
+function normalizeAccountNoForStorage(accountNo) {
+  return String(accountNo).trim().toUpperCase();
+}
+
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Case-insensitive match; does not change stored values on existing users. */
+function accountNoEqualityFilter(raw) {
+  const t = (raw || '').trim();
+  if (!t) return null;
+  return { accountNo: { $regex: new RegExp(`^${escapeRegex(t)}$`, 'i') } };
 }
 
 async function createOne(doc, options = {}) {
   await ensureIndex();
   const col = await collection();
-  const accountNo = doc.accountNo !== undefined && doc.accountNo !== null && doc.accountNo !== ''
-    ? String(doc.accountNo)
-    : generateAccountNo();
+  let accountNo;
+  if (doc.accountNo !== undefined && doc.accountNo !== null && String(doc.accountNo).trim() !== '') {
+    accountNo = normalizeAccountNoForStorage(doc.accountNo);
+  } else {
+    accountNo = await getNextNumericAccountNo(options);
+  }
   const createdAt = doc.createdAt instanceof Date ? doc.createdAt : new Date();
   const updatedAt = doc.updatedAt instanceof Date ? doc.updatedAt : new Date();
-  const { createdAt: _c, updatedAt: _u, ...rest } = doc;
+  const { createdAt: _c, updatedAt: _u, accountNo: _an, ...rest } = doc;
   const insertOpts = options.session ? { session: options.session } : {};
   const { insertedId } = await col.insertOne(
     {
@@ -51,8 +107,9 @@ async function findByEmail(email) {
 async function findByAccountNo(accountNo) {
   if (!accountNo || typeof accountNo !== 'string') return null;
   const col = await collection();
-  const normalized = accountNo.trim().toUpperCase();
-  const user = await col.findOne({ accountNo: normalized });
+  const filter = accountNoEqualityFilter(accountNo);
+  if (!filter) return null;
+  const user = await col.findOne(filter);
   return user ? toUser(user) : null;
 }
 
@@ -74,12 +131,13 @@ async function findByReferralCode(referralCode) {
   return user ? toUser(user) : null;
 }
 
-async function ensureAccountNo(userId) {
+async function ensureAccountNo(userId, options = {}) {
   const user = await findById(userId);
-  if (!user || user.accountNo) return user;
+  if (!user) return null;
+  if (user.accountNo != null && String(user.accountNo).trim() !== '') return user;
   const col = await collection();
-  const accountNo = generateAccountNo();
   if (!ObjectId.isValid(userId)) return user;
+  const accountNo = await getNextNumericAccountNo(options);
   await col.updateOne(
     { _id: new ObjectId(userId) },
     { $set: { accountNo, updatedAt: new Date() } }
@@ -145,6 +203,7 @@ function toUser(row) {
     emailVerificationExpires,
     passwordResetToken,
     passwordResetExpires,
+    loginAccountId: _legacyLoginAccountId,
     ...rest
   } = row;
   return { id: _id.toString(), ...rest };
@@ -152,13 +211,22 @@ function toUser(row) {
 
 function toUserWithHash(row) {
   if (!row) return null;
-  const { _id, ...rest } = row;
+  const { _id, loginAccountId: _l, ...rest } = row;
   return { id: _id.toString(), ...rest };
 }
 
 async function findByEmailWithPassword(email) {
   const col = await collection();
   const user = await col.findOne({ email: (email || '').toLowerCase().trim() });
+  return user ? toUserWithHash(user) : null;
+}
+
+async function findByAccountNoWithPassword(rawAccountNo) {
+  if (!rawAccountNo || typeof rawAccountNo !== 'string') return null;
+  const col = await collection();
+  const filter = accountNoEqualityFilter(rawAccountNo);
+  if (!filter) return null;
+  const user = await col.findOne(filter);
   return user ? toUserWithHash(user) : null;
 }
 
@@ -272,10 +340,12 @@ async function list(options = {}) {
   if (options.search) {
     const s = options.search.trim();
     if (s) {
-      filter.$or = [
+      const or = [
         { email: { $regex: s, $options: 'i' } },
         { name: { $regex: s, $options: 'i' } },
       ];
+      or.push(accountNoEqualityFilter(s));
+      filter.$or = or.filter(Boolean);
     }
   }
   const cursor = col.find(filter, { projection: { passwordHash: 0 } }).sort({ createdAt: -1 });
@@ -297,6 +367,8 @@ export default {
   list,
   toUser,
   findByEmailWithPassword,
+  findByAccountNoWithPassword,
+  getNextNumericAccountNo,
   completeEmailVerificationByToken,
   resetPasswordWithToken,
   ensureAccountNo,

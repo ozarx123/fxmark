@@ -10,9 +10,13 @@ import userService from '../users/user.service.js';
 import walletRepo from '../wallet/wallet.repository.js';
 import ledgerService from '../finance/ledger.service.js';
 import ibRepo from '../ib/ib.repository.js';
+import ibHierarchy from '../ib/ib-hierarchy.service.js';
+import levelCalculator from '../ib/level.calculator.js';
 import payoutService from '../ib/payout.service.js';
 import tradingLimitsRepo from './trading-limits.repository.js';
 import executionModeService from '../trading/execution-mode.service.js';
+import marginRiskSettingsRepo from '../trading/margin-risk-settings.repository.js';
+import { refreshMarginRiskRuntime } from '../trading/margin-risk.runtime.js';
 import audit from './audit.logs.js';
 import paymentSettingsRepo from '../wallet/payment.settings.repository.js';
 import withdrawalApprovalSettingsRepo from '../wallet/withdrawal-approval.settings.repository.js';
@@ -26,6 +30,10 @@ import * as companyFinancialsService from './company-financials.service.js';
 import ledgerRepo from '../finance/ledger.repository.js';
 import financialTransactionService from '../finance/financial-transaction.service.js';
 import { ACCOUNT_NAMES, ACCOUNTS, ENTITY_COMPANY } from '../finance/chart-of-accounts.js';
+import { getDb } from '../../config/mongo.js';
+import * as platformEnvService from './platform-env.service.js';
+import * as maintenanceService from './maintenance.service.js';
+import * as adminAuditService from './admin-audit.service.js';
 
 async function getLeads(req, res, next) {
   try {
@@ -219,6 +227,8 @@ async function updateUser(req, res, next) {
     if (role === 'pamm_manager') {
       return res.status(400).json({ error: 'Role pamm_manager is no longer supported. Use trader or investor instead.' });
     }
+    const prev = await userRepo.findById(id);
+    if (!prev) return res.status(404).json({ error: 'User not found' });
     const update = {};
     if (role !== undefined) update.role = role;
     if (kycStatus !== undefined) update.kycStatus = kycStatus;
@@ -231,6 +241,19 @@ async function updateUser(req, res, next) {
       ? userRepo.updateById(id, update)
       : userService.update(id, update));
     if (!user) return res.status(404).json({ error: 'User not found' });
+    if (audit?.log) {
+      audit.log(
+        req.user?.id,
+        'admin_update_user',
+        'user',
+        {
+          targetUserId: id,
+          before: { role: prev.role, kycStatus: prev.kycStatus, kycRejectedReason: prev.kycRejectedReason },
+          after: { role: user.role, kycStatus: user.kycStatus, kycRejectedReason: user.kycRejectedReason },
+        },
+        { clientIp: req.ip || req.socket?.remoteAddress || null }
+      );
+    }
     res.json({
       ...user,
       id: user.id,
@@ -248,11 +271,22 @@ async function getIbProfiles(req, res, next) {
     const list = await ibRepo.listAllProfiles({ limit });
     const withUser = await Promise.all(
       list.map(async (p) => {
-        const u = await userRepo.findById(p.userId);
+        const uid = p.userId != null ? String(p.userId) : '';
+        const u = uid ? await userRepo.findById(uid) : null;
+        const level = uid ? await levelCalculator.getLevelByUserId(uid) : 1;
+        let parentEmail = null;
+        if (p.parentId) {
+          const pu = await userRepo.findById(String(p.parentId));
+          parentEmail = pu?.email ?? null;
+        }
+        const directReferralCount = uid ? await ibRepo.countReferralsByIb(uid) : 0;
         return {
           ...p,
           email: u?.email ?? null,
           name: u?.name ?? null,
+          level,
+          parentEmail,
+          directReferralCount,
         };
       })
     );
@@ -302,9 +336,8 @@ async function getIbWallets(req, res, next) {
 
 async function getIbSettings(req, res, next) {
   try {
-    const stored = await ibRepo.getSettings();
-    const defaults = { 1: 7, 2: 5, 3: 3, 4: 2, 5: 1 };
-    res.json({ ratePerLotByLevel: stored || defaults });
+    const data = await ibRepo.getIbSettingsForAdmin();
+    res.json(data);
   } catch (e) {
     next(e);
   }
@@ -312,22 +345,39 @@ async function getIbSettings(req, res, next) {
 
 async function updateIbSettings(req, res, next) {
   try {
-    const { ratePerLotByLevel } = req.body || {};
-    if (!ratePerLotByLevel || typeof ratePerLotByLevel !== 'object') {
-      return res.status(400).json({ error: 'ratePerLotByLevel object required (e.g. { 1: 7, 2: 5 })' });
+    const { ratePerLotByLevel, defaultReferrerUserId } = req.body || {};
+    const hasRates = ratePerLotByLevel != null && typeof ratePerLotByLevel === 'object';
+    const hasDefault = defaultReferrerUserId !== undefined;
+    if (!hasRates && !hasDefault) {
+      return res.status(400).json({
+        error: 'Provide ratePerLotByLevel and/or defaultReferrerUserId (empty string clears stored default IB)',
+      });
     }
-    const normalized = {};
-    for (const [k, v] of Object.entries(ratePerLotByLevel)) {
-      const level = parseInt(k, 10);
-      if (level >= 1 && level <= 10 && Number.isFinite(Number(v))) {
-        normalized[level] = Number(v);
+    if (hasDefault && defaultReferrerUserId != null && String(defaultReferrerUserId).trim() !== '') {
+      const dr = String(defaultReferrerUserId).trim();
+      const ibp = await ibRepo.getProfileByUserId(dr);
+      if (!ibp?.userId) {
+        return res.status(400).json({ error: 'defaultReferrerUserId must be a user id that has an IB profile' });
       }
     }
-    if (Object.keys(normalized).length === 0) {
-      return res.status(400).json({ error: 'At least one level (1–10) with a number required' });
+    let normalizedRates = null;
+    if (hasRates) {
+      normalizedRates = {};
+      for (const [k, v] of Object.entries(ratePerLotByLevel)) {
+        const level = parseInt(k, 10);
+        if (level >= 1 && level <= 10 && Number.isFinite(Number(v))) {
+          normalizedRates[level] = Number(v);
+        }
+      }
+      if (Object.keys(normalizedRates).length === 0) {
+        return res.status(400).json({ error: 'At least one level (1–10) with a number required when sending ratePerLotByLevel' });
+      }
     }
-    await ibRepo.updateSettings(normalized);
-    res.json({ ratePerLotByLevel: normalized });
+    const merged = await ibRepo.updateIbSettingsMerged({
+      ...(normalizedRates && { ratePerLotByLevel: normalizedRates }),
+      ...(hasDefault && { defaultReferrerUserId }),
+    });
+    res.json(merged);
   } catch (e) {
     next(e);
   }
@@ -365,6 +415,211 @@ async function processIbPayout(req, res, next) {
   } catch (e) {
     if (e.statusCode === 404) return res.status(404).json({ error: e.message });
     if (e.statusCode === 400) return res.status(400).json({ error: e.message });
+    next(e);
+  }
+}
+
+/**
+ * PUT/PATCH /admin/ib/profiles/:ibUserId/parent — move IB in hierarchy (parentId). null/omit parent = root.
+ */
+async function putIbProfileParent(req, res, next) {
+  try {
+    const ibUserId = (req.params.ibUserId || '').trim();
+    if (!ibUserId) return res.status(400).json({ error: 'ibUserId required' });
+    const { parentUserId } = req.body || {};
+    const { parentVal } = await ibHierarchy.validateIbParentChange(ibUserId, parentUserId);
+    const updated = await ibRepo.updateIbParentByUserId(ibUserId, parentVal);
+    if (!updated) return res.status(404).json({ error: 'IB profile not found' });
+    if (audit?.log) {
+      audit.log(
+        req.user?.id,
+        'reassign_ib_parent',
+        'ib_profile',
+        {
+          actorId: req.user?.id,
+          ibUserId,
+          newParentUserId: parentVal,
+          at: new Date().toISOString(),
+        },
+        { clientIp: req.ip || req.socket?.remoteAddress || null }
+      );
+    }
+    const level = await levelCalculator.getLevelByUserId(ibUserId);
+    res.json({ ...updated, level });
+  } catch (e) {
+    if (e.statusCode) return res.status(e.statusCode).json({ error: e.message });
+    next(e);
+  }
+}
+
+/** GET /admin/ib/profiles/:ibUserId/referral-overview — signup joinings vs commission-based clients */
+async function getIbReferralOverview(req, res, next) {
+  try {
+    const ibUserId = (req.params.ibUserId || '').trim();
+    if (!ibUserId) return res.status(400).json({ error: 'ibUserId required' });
+    const prof = await ibRepo.getProfileByUserId(ibUserId);
+    if (!prof) return res.status(404).json({ error: 'IB profile not found' });
+    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 200);
+    const [directReferralsBySignup, clientsWithCommissionActivity] = await Promise.all([
+      ibRepo.listReferralJoiningsByIb(ibUserId, { limit }),
+      ibRepo.listReferralsByIb(ibUserId, { limit }),
+    ]);
+    res.json({
+      ibUserId,
+      directReferralsBySignup,
+      directReferralsBySignupNote:
+        'Users who registered under this IB (users.referrerId). Includes clients who have not traded yet.',
+      clientsWithCommissionActivity,
+      clientsWithCommissionNote:
+        'Clients with ib_commissions rows for this IB — may omit signups with no trading volume yet.',
+    });
+  } catch (e) {
+    next(e);
+  }
+}
+
+/** GET /admin/ib/referrer-gaps — users with no referrer or broken referrer → IB chain */
+async function getIbReferrerGaps(req, res, next) {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+    const db = await getDb();
+    const usersCol = db.collection('users');
+    const noRefDocs = await usersCol
+      .find(
+        {
+          role: 'user',
+          $or: [{ referrerId: null }, { referrerId: '' }, { referrerId: { $exists: false } }],
+        },
+        { projection: { email: 1, name: 1, createdAt: 1, referralSource: 1 } }
+      )
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .toArray();
+    const withRef = await usersCol
+      .find(
+        { role: 'user', referrerId: { $exists: true, $nin: [null, ''] } },
+        { projection: { email: 1, name: 1, referrerId: 1, createdAt: 1, referralSource: 1 } }
+      )
+      .sort({ createdAt: -1 })
+      .limit(500)
+      .toArray();
+    const brokenReferrer = [];
+    for (const u of withRef) {
+      if (brokenReferrer.length >= limit) break;
+      const rid = u.referrerId != null ? String(u.referrerId) : '';
+      const refUser = rid ? await userRepo.findById(rid) : null;
+      const ibp = rid ? await ibRepo.getProfileByUserId(rid) : null;
+      if (!refUser || !ibp) {
+        brokenReferrer.push({
+          id: u._id.toString(),
+          email: u.email,
+          name: u.name,
+          referrerId: rid,
+          issue: !refUser ? 'referrer_user_missing' : 'referrer_not_ib',
+          referralSource: u.referralSource,
+          createdAt: u.createdAt,
+        });
+      }
+    }
+    res.json({
+      noReferrer: noRefDocs.map((u) => ({
+        id: u._id.toString(),
+        email: u.email,
+        name: u.name,
+        referralSource: u.referralSource,
+        createdAt: u.createdAt,
+      })),
+      brokenReferrer,
+      notes: {
+        noReferrer:
+          'Users with role=user and no referrerId (expected when default IB is unset and signup had no ref link).',
+        brokenReferrer: 'referrerId points to missing user or a user without ib_profiles.',
+      },
+    });
+  } catch (e) {
+    next(e);
+  }
+}
+
+/**
+ * PUT/PATCH /admin/ib/clients/:userId/referrer
+ * Reassign introducing broker — pass referrerUserId and/or referrerEmail (IB account).
+ * Clearing referrer is not allowed.
+ */
+async function putClientReferrer(req, res, next) {
+  try {
+    const clientUserId = (req.params.userId || '').trim();
+    if (!clientUserId) return res.status(400).json({ error: 'userId required' });
+    const rawId = req.body?.referrerUserId;
+    const rawEmail = req.body?.referrerEmail ?? req.body?.referrerUserEmail;
+    let rid = typeof rawId === 'string' ? rawId.trim() : '';
+    const emailStr = typeof rawEmail === 'string' ? rawEmail.trim().toLowerCase() : '';
+    if (!rid && !emailStr) {
+      return res.status(400).json({
+        error:
+          'referrerUserId or referrerEmail is required. Clearing referrer is not allowed; assign a valid IB.',
+      });
+    }
+    if (emailStr) {
+      const refByEmail = await userRepo.findByEmail(emailStr);
+      if (!refByEmail) {
+        return res.status(404).json({ error: 'No user found for referrer email' });
+      }
+      const resolved = String(refByEmail.id);
+      if (rid && rid !== resolved) {
+        return res.status(400).json({ error: 'referrerUserId does not match the user for referrerEmail' });
+      }
+      rid = resolved;
+    }
+    if (rid === clientUserId) {
+      return res.status(400).json({ error: 'A user cannot be referred by themselves' });
+    }
+    const client = await userRepo.findById(clientUserId);
+    if (!client) return res.status(404).json({ error: 'User not found' });
+    const ibProfile = await ibRepo.getProfileByUserId(rid);
+    if (!ibProfile?.userId) {
+      return res.status(400).json({ error: 'Referrer must be a user with an IB profile' });
+    }
+    const canonicalRef = String(ibProfile.userId);
+    const oldReferrerId = client.referrerId != null ? String(client.referrerId) : null;
+    if (oldReferrerId === canonicalRef) {
+      return res.json({
+        id: client.id,
+        referrerId: canonicalRef,
+        previousReferrerId: oldReferrerId,
+        unchanged: true,
+      });
+    }
+    const reasonRaw = req.body?.reason;
+    const reason = typeof reasonRaw === 'string' ? reasonRaw.trim().slice(0, 500) : '';
+    const updated = await userRepo.updateById(client.id, {
+      referrerId: canonicalRef,
+      referralSource: 'admin',
+    });
+    if (!updated) return res.status(404).json({ error: 'User not found' });
+    if (audit?.log) {
+      audit.log(
+        req.user?.id,
+        'reassign_client_referrer',
+        'user',
+        {
+          actorId: req.user?.id,
+          targetUserId: client.id,
+          oldReferrerId,
+          newReferrerId: canonicalRef,
+          referrerEmail: emailStr || undefined,
+          reason: reason || undefined,
+          at: new Date().toISOString(),
+        },
+        { clientIp: req.ip || req.socket?.remoteAddress || null }
+      );
+    }
+    res.json({
+      id: updated.id,
+      referrerId: updated.referrerId != null ? String(updated.referrerId) : canonicalRef,
+      previousReferrerId: oldReferrerId,
+    });
+  } catch (e) {
     next(e);
   }
 }
@@ -504,6 +759,20 @@ async function adminClosePosition(req, res, next) {
       closePrice: closePrice ? Number(closePrice) : undefined,
       bypassAdmin: true,
     });
+    if (audit?.log) {
+      audit.log(
+        req.user?.id,
+        'admin_close_position',
+        'position',
+        {
+          targetUserId: userId,
+          positionId,
+          volume: volume != null ? Number(volume) : undefined,
+          closePrice: closePrice != null ? Number(closePrice) : undefined,
+        },
+        { clientIp: req.ip || req.socket?.remoteAddress || null }
+      );
+    }
     res.json(result);
   } catch (e) {
     if (e.statusCode === 404) return res.status(404).json({ error: e.message });
@@ -519,6 +788,15 @@ async function adminCancelOrder(req, res, next) {
     const user = await userRepo.findById(userId);
     if (!user) return res.status(404).json({ error: 'User not found' });
     const result = await orderService.cancelOrder(userId, orderId);
+    if (audit?.log) {
+      audit.log(
+        req.user?.id,
+        'admin_cancel_order',
+        'order',
+        { targetUserId: userId, orderId },
+        { clientIp: req.ip || req.socket?.remoteAddress || null }
+      );
+    }
     res.json(result);
   } catch (e) {
     if (e.statusCode === 404) return res.status(404).json({ error: e.message });
@@ -563,11 +841,17 @@ async function updateTradingLimits(req, res, next) {
     const oldLimits = await tradingLimitsRepo.getByUserId(userId);
     const limits = await tradingLimitsRepo.upsert(userId, data);
     if (audit?.log) {
-      audit.log(req.user?.id, 'update_trading_limits', 'user_trading_limits', {
-        targetUserId: userId,
-        old: { blocked: oldLimits?.blocked, maxDrawdownPercent: oldLimits?.maxDrawdownPercent, maxDailyLoss: oldLimits?.maxDailyLoss },
-        new: { blocked: limits?.blocked, maxDrawdownPercent: limits?.maxDrawdownPercent, maxDailyLoss: limits?.maxDailyLoss },
-      });
+      audit.log(
+        req.user?.id,
+        'update_trading_limits',
+        'user_trading_limits',
+        {
+          targetUserId: userId,
+          old: { blocked: oldLimits?.blocked, maxDrawdownPercent: oldLimits?.maxDrawdownPercent, maxDailyLoss: oldLimits?.maxDailyLoss },
+          new: { blocked: limits?.blocked, maxDrawdownPercent: limits?.maxDrawdownPercent, maxDailyLoss: limits?.maxDailyLoss },
+        },
+        { clientIp: req.ip || req.socket?.remoteAddress || null }
+      );
     }
     res.json({
       blocked: limits?.blocked ?? false,
@@ -628,12 +912,18 @@ async function updateAccountConfig(req, res, next) {
     }
     const updated = await tradingAccountRepo.updateAccountConfig(accountId, userId, update);
     if (audit?.log) {
-      audit.log(req.user?.id, 'update_account_config', 'trading_account', {
-        targetUserId: userId,
-        accountId,
-        accountNumber: account.accountNumber,
-        changes: update,
-      });
+      audit.log(
+        req.user?.id,
+        'update_account_config',
+        'trading_account',
+        {
+          targetUserId: userId,
+          accountId,
+          accountNumber: account.accountNumber,
+          changes: update,
+        },
+        { clientIp: req.ip || req.socket?.remoteAddress || null }
+      );
     }
     res.json({
       accountId: updated.id,
@@ -744,6 +1034,7 @@ async function postUserProfitCommissionAdjustment(req, res, next) {
       pammRealizedPnlDelta: req.body?.pammRealizedPnlDelta,
       walletProfitCreditUsd: req.body?.walletProfitCreditUsd,
       ibCommissionPendingUsd: req.body?.ibCommissionPendingUsd,
+      clientIp: req.ip || req.socket?.remoteAddress || null,
     });
     res.json(r);
   } catch (e) {
@@ -789,6 +1080,20 @@ async function addFundsToWallet(req, res, next) {
     });
     const { queueWalletBalanceNotifyById } = await import('../email/wallet-balance-notify.js');
     if (adminCreditTxId) queueWalletBalanceNotifyById(adminCreditTxId);
+    if (audit?.log) {
+      audit.log(
+        req.user?.id,
+        'admin_add_funds',
+        'wallet',
+        {
+          targetUserId: userId,
+          amount: amt,
+          currency: currency || 'USD',
+          reference: reference || null,
+        },
+        { clientIp: req.ip || req.socket?.remoteAddress || null }
+      );
+    }
     res.json({
       success: true,
       wallet: { balance: wallet.balance, currency: wallet.currency },
@@ -978,6 +1283,20 @@ async function updateWithdrawalStatus(req, res, next) {
     console.log(
       `[admin] withdrawal status id=${id} ${from}→${status} by=${adminId || 'unknown'} note=${note ? 'yes' : 'no'}`
     );
+    if (audit?.log) {
+      audit.log(
+        adminId,
+        'withdrawal_status_update',
+        'wallet_transaction',
+        {
+          withdrawalId: id,
+          fromStatus: from,
+          toStatus: status,
+          adminNote: note,
+        },
+        { clientIp: req.ip || req.socket?.remoteAddress || null }
+      );
+    }
     res.json(updated);
   } catch (e) {
     next(e);
@@ -1065,6 +1384,54 @@ async function getPammDistributionRunsByPosition(req, res, next) {
   }
 }
 
+/** GET /admin/maintenance — current flags + effective state */
+async function getMaintenance(req, res, next) {
+  try {
+    const data = await maintenanceService.getAdminPayload();
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+/** PUT /admin/maintenance — manual toggle, message, optional schedule window */
+async function putMaintenance(req, res, next) {
+  try {
+    const adminId = req.user?.id;
+    const data = await maintenanceService.updateSettings(req.body || {}, adminId);
+    if (audit?.log) {
+      audit.log(
+        adminId,
+        'platform_maintenance_update',
+        'settings',
+        { at: new Date().toISOString(), patch: req.body || {} },
+        { clientIp: req.ip || req.socket?.remoteAddress || null }
+      );
+    }
+    res.json(data);
+  } catch (e) {
+    if (e.statusCode) return res.status(e.statusCode).json({ error: e.message });
+    next(e);
+  }
+}
+
+/** GET /admin/audit-logs — persisted admin actions + execution mode history (read-only) */
+async function listAuditLogs(req, res, next) {
+  try {
+    const { limit, action, resource, from, to } = req.query;
+    const data = await adminAuditService.listUnifiedAuditEntries({
+      limit: limit != null && limit !== '' ? Number(limit) : undefined,
+      action: action || undefined,
+      resource: resource || undefined,
+      from: from || undefined,
+      to: to || undefined,
+    });
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
 export default {
   getLeads,
   kycOverride,
@@ -1083,6 +1450,9 @@ export default {
   getPammFund,
   updatePammFund,
   getIbProfiles,
+  putIbProfileParent,
+  getIbReferralOverview,
+  getIbReferrerGaps,
   getIbCommissions,
   getIbWallets,
   getIbSettings,
@@ -1090,6 +1460,7 @@ export default {
   getPammIbCommissionSettings,
   updatePammIbCommissionSettings,
   processIbPayout,
+  putClientReferrer,
   getTopTraders,
   getTradingUserSummary,
   getTradingAccounts,
@@ -1109,6 +1480,10 @@ export default {
   putExecutionMode,
   getHybridRules,
   putHybridRules,
+  getMarginRiskSettings,
+  putMarginRiskSettings,
+  getPlatformEnv,
+  putPlatformEnv,
 
   getPaymentSettings,
   updatePaymentSettings,
@@ -1119,6 +1494,7 @@ export default {
   getBulkImportConfig,
   getLatestWalletLedgerReconciliation,
   listRecentActivity,
+  listAuditLogs,
   listWithdrawals,
   getWithdrawalDetail,
   updateWithdrawalStatus,
@@ -1127,6 +1503,8 @@ export default {
   resolveAlert,
   listPammDistributionRuns,
   getPammDistributionRunsByPosition,
+  getMaintenance,
+  putMaintenance,
 };
 
 async function getExecutionMode(req, res, next) {
@@ -1165,6 +1543,111 @@ async function putHybridRules(req, res, next) {
     const rules = await executionModeService.updateHybridRules(req.body || {}, adminId);
     res.json(rules);
   } catch (e) {
+    next(e);
+  }
+}
+
+async function getMarginRiskSettings(req, res, next) {
+  try {
+    const s = await marginRiskSettingsRepo.get();
+    res.json({
+      stopOutBelowPct: s.stopOutBelowPct,
+      warnBelowPct: s.warnBelowPct,
+      warnIntervalMs: s.warnIntervalMs,
+      updatedAt: s.updatedAt,
+      updatedBy: s.updatedBy,
+      fromDatabase: s.fromDatabase,
+    });
+  } catch (e) {
+    next(e);
+  }
+}
+
+async function putMarginRiskSettings(req, res, next) {
+  try {
+    const adminId = req.user?.id;
+    const before = await marginRiskSettingsRepo.get();
+    const saved = await marginRiskSettingsRepo.set(req.body || {}, adminId);
+    await refreshMarginRiskRuntime();
+    if (audit?.log) {
+      audit.log(
+        adminId,
+        'update_margin_risk',
+        'margin_risk_settings',
+        {
+          before: {
+            stopOutBelowPct: before.stopOutBelowPct,
+            warnBelowPct: before.warnBelowPct,
+            warnIntervalMs: before.warnIntervalMs,
+          },
+          after: {
+            stopOutBelowPct: saved.stopOutBelowPct,
+            warnBelowPct: saved.warnBelowPct,
+            warnIntervalMs: saved.warnIntervalMs,
+          },
+        },
+        { clientIp: req.ip || req.socket?.remoteAddress || null }
+      );
+    }
+    res.json({
+      stopOutBelowPct: saved.stopOutBelowPct,
+      warnBelowPct: saved.warnBelowPct,
+      warnIntervalMs: saved.warnIntervalMs,
+      updatedAt: saved.updatedAt,
+      updatedBy: saved.updatedBy,
+      fromDatabase: true,
+    });
+  } catch (e) {
+    if (e.statusCode) {
+      return res.status(e.statusCode).json({ error: e.message });
+    }
+    next(e);
+  }
+}
+
+/** GET /admin/platform-env — Super Admin; masked values only */
+async function getPlatformEnv(req, res, next) {
+  try {
+    const data = await platformEnvService.listForAdmin();
+    res.json(data);
+  } catch (e) {
+    next(e);
+  }
+}
+
+/** PUT /admin/platform-env — body { key, value } — empty value removes override */
+async function putPlatformEnv(req, res, next) {
+  try {
+    const adminId = req.user?.id;
+    const { key, value } = req.body || {};
+    if (key == null || String(key).trim() === '') {
+      return res.status(400).json({ error: 'key is required' });
+    }
+    const val = value === undefined || value === null ? '' : String(value);
+    await platformEnvService.setOverride(String(key).trim(), val, adminId);
+    if (audit?.log) {
+      audit.log(
+        adminId,
+        'platform_env_set',
+        'platform_env',
+        {
+          key: String(key).trim(),
+          cleared: val === '',
+          at: new Date().toISOString(),
+        },
+        { clientIp: req.ip || req.socket?.remoteAddress || null }
+      );
+    }
+    res.json({
+      ok: true,
+      key: String(key).trim(),
+      hasOverride: val !== '',
+      maskedEffective: platformEnvService.maskSecret(process.env[String(key).trim()]),
+    });
+  } catch (e) {
+    if (e.statusCode) {
+      return res.status(e.statusCode).json({ error: e.message });
+    }
     next(e);
   }
 }

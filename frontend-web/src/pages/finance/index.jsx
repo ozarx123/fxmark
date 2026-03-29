@@ -139,13 +139,20 @@ export default function Finance() {
     setModal(null);
     setOrderError('');
     try {
-      await tradingApi.placeOrder({
+      const clientOrderId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined;
+      const result = await tradingApi.placeOrder({
         symbol: order.symbol,
         side: modal === 'sell' ? 'sell' : 'buy',
+        volume: order.lots,
         lots: order.lots,
         price: order.price,
         marketOrder: order.marketOrder ?? true,
+        ...(clientOrderId ? { clientOrderId } : {}),
       }, accountOpts);
+      if (result?.status === 'rejected') {
+        setOrderError(result.rejectReason || result.order?.rejectReason || 'Order rejected');
+        return;
+      }
       refresh();
       loadTradingData();
       refreshActiveBalance();
@@ -160,7 +167,20 @@ export default function Finance() {
     try {
       const isMarket = order.orderType === 'market';
       const side = (order.orderType || '').startsWith('sell') ? 'sell' : 'buy';
-      await tradingApi.placeOrder({ symbol: order.symbol, side, lots: order.lots, price: order.price, marketOrder: isMarket }, accountOpts);
+      const clientOrderId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined;
+      const result = await tradingApi.placeOrder({
+        symbol: order.symbol,
+        side,
+        volume: order.lots,
+        lots: order.lots,
+        price: order.price,
+        marketOrder: isMarket,
+        ...(clientOrderId ? { clientOrderId } : {}),
+      }, accountOpts);
+      if (result?.status === 'rejected') {
+        setOrderError(result.rejectReason || result.order?.rejectReason || 'Order rejected');
+        return;
+      }
       refresh();
       loadTradingData();
       refreshActiveBalance();

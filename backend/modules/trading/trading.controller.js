@@ -14,9 +14,12 @@ async function placeOrder(req, res, next) {
     console.log('[orders] placeOrder request', { userId, accountId, body: req.body });
     const result = await orderService.placeOrder(userId, req.body, accountId);
     console.log('[orders] placeOrder result', { orderId: result.orderId, status: result.status, positionId: result.positionId });
-    if (result.order) emitOrderCreated(userId, result.order, accountId);
+    if (!result.idempotentReplay && result.order && result.status !== 'rejected') {
+      emitOrderCreated(userId, result.order, accountId);
+    }
     emitTradeUpdate(userId, accountId).catch(() => {});
-    res.status(201).json(result);
+    const httpStatus = result.idempotentReplay ? 200 : 201;
+    res.status(httpStatus).json(result);
   } catch (e) {
     if (e.statusCode) return next(e);
     const wrapped = new Error('Trading execution failed. Please try again or contact support.');
@@ -147,7 +150,7 @@ async function closePosition(req, res, next) {
     // Diagnostic: log which account the middleware resolved (missing X-Account-Id => default demo)
     console.log('[trading] closePosition', { userId, positionId, activeAccountId: accountId, activeAccountType: req.activeAccount?.type ?? null });
     const result = await positionsService.closePosition(userId, positionId, { volume, pnl, closePrice, accountId });
-    emitTradeUpdate(userId, null).catch(() => {});
+    emitTradeUpdate(userId, accountId).catch(() => {});
     res.json(result);
   } catch (e) {
     next(e);
@@ -162,7 +165,7 @@ async function updatePositionTPLS(req, res, next) {
     const { takeProfit, stopLoss } = req.body;
     const accountId = req.activeAccount?.id;
     const position = await positionsService.updatePositionTPLS(userId, positionId, { takeProfit, stopLoss }, accountId);
-    emitTradeUpdate(userId, null).catch(() => {});
+    emitTradeUpdate(userId, accountId).catch(() => {});
     res.json(position);
   } catch (e) {
     next(e);

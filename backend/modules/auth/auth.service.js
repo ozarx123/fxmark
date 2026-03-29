@@ -92,7 +92,8 @@ async function refreshCollection() {
 }
 
 function signAccessToken(payload) {
-  return jwt.sign(payload, config.jwtSecret, { expiresIn: config.jwtExpiry });
+  const jti = randomBytes(16).toString('hex');
+  return jwt.sign({ ...payload, jti }, config.jwtSecret, { expiresIn: config.jwtExpiry });
 }
 
 function signRefreshToken(payload) {
@@ -100,10 +101,20 @@ function signRefreshToken(payload) {
 }
 
 function validateEmail(email) {
-  if (!email || typeof email !== 'string') return 'Email is required';
+  if (email == null || typeof email !== 'string') return 'Email is required';
   const e = email.trim().toLowerCase();
   if (!e) return 'Email is required';
   if (!EMAIL_REGEX.test(e)) return 'Invalid email format';
+  return null;
+}
+
+/** Login: email, or users.accountNo (e.g. 10001 or FX…). */
+function validateLoginIdentifier(raw) {
+  if (typeof raw !== 'string') return 'Email or account number is required';
+  const t = raw.trim();
+  if (!t) return 'Email or account number is required';
+  if (t.includes('@')) return validateEmail(t);
+  if (t.length < 2) return 'Account number is too short';
   return null;
 }
 
@@ -145,12 +156,23 @@ async function register(payload) {
   const phone = (payload.phone || '').trim().slice(0, 40) || undefined;
   const ref = (payload.ref || '').trim();
   let referrerId = null;
+  let referralSource = null;
+  const ibRepo = (await import('../ib/ib.repository.js')).default;
   if (ref) {
-    const ibRepo = (await import('../ib/ib.repository.js')).default;
     const ibProfile = await ibRepo.getProfileByReferralCode(ref) ||
       await ibRepo.getProfileByUserId(ref) ||
       await ibRepo.getProfileById(ref);
-    if (ibProfile && ibProfile.userId != null) referrerId = String(ibProfile.userId);
+    if (ibProfile && ibProfile.userId != null) {
+      referrerId = String(ibProfile.userId);
+      referralSource = 'link';
+    }
+  }
+  if (!referrerId) {
+    const def = await ibRepo.resolveEffectiveDefaultReferrerUserId();
+    if (def) {
+      referrerId = def;
+      referralSource = 'default';
+    }
   }
   const userId = await userRepo.createOne({
     email,
@@ -162,6 +184,7 @@ async function register(payload) {
     emailVerified: false,
     ...(phone && { phone }),
     ...(referrerId && { referrerId }),
+    ...(referralSource && { referralSource }),
   });
   const user = await userRepo.findById(userId);
 
@@ -217,12 +240,12 @@ async function register(payload) {
 }
 
 async function login(payload) {
-  const email = (payload.email || '').toLowerCase().trim();
+  const rawLogin = typeof payload.email === 'string' ? payload.email.trim() : '';
   const password = payload.password;
 
-  const emailErr = validateEmail(payload.email);
-  if (emailErr) {
-    const err = new Error(emailErr);
+  const idErr = validateLoginIdentifier(rawLogin);
+  if (idErr) {
+    const err = new Error(idErr);
     err.statusCode = 400;
     throw err;
   }
@@ -232,7 +255,10 @@ async function login(payload) {
     err.statusCode = 400;
     throw err;
   }
-  const user = await userRepo.findByEmailWithPassword(email);
+  const byEmail = rawLogin.includes('@');
+  let user = byEmail
+    ? await userRepo.findByEmailWithPassword(rawLogin.toLowerCase())
+    : await userRepo.findByAccountNoWithPassword(rawLogin);
   if (!user) {
     const err = new Error('Invalid email or password');
     err.statusCode = 401;
@@ -244,6 +270,8 @@ async function login(payload) {
     err.statusCode = 401;
     throw err;
   }
+  const ensured = await userRepo.ensureAccountNo(user.id);
+  if (ensured?.accountNo) user = { ...user, accountNo: ensured.accountNo };
   if (user.emailVerified !== true) {
     const err = new Error('Email not verified');
     err.statusCode = 403;
@@ -314,7 +342,10 @@ async function refresh(refreshToken) {
   return { accessToken, refreshToken: newRefreshToken };
 }
 
-async function logout(userId, refreshToken) {
+async function logout(userId, refreshToken, accessPayload) {
+  if (accessPayload?.jti && accessPayload?.exp) {
+    await revokeAccessJti(accessPayload.jti, accessPayload.exp);
+  }
   if (!refreshToken) return;
   try {
     const decoded = jwt.decode(refreshToken);
@@ -545,7 +576,7 @@ async function resendVerificationEmail(email) {
 }
 
 /** Change main password (requires current password). */
-async function changePassword(userId, currentPassword, newPassword) {
+async function changePassword(userId, currentPassword, newPassword, accessPayload) {
   if (!userId) {
     const err = new Error('Unauthorized');
     err.statusCode = 401;

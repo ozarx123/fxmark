@@ -1,5 +1,6 @@
 // Must be first: ES modules evaluate imports before this file's body; Zoho/Mongo must see backend/.env first.
 import '../config/load-env.js';
+import { getAllowedOriginsList, resolveTrustProxy } from '../core/security-bootstrap.js';
 
 /** Non-local hostname in API_URL / FRONTEND_URL (email verification / public links). */
 function envUrlHostIsNonLocal(envVar) {
@@ -41,7 +42,9 @@ function warnIfDevelopmentLooksPublic() {
 }
 warnIfDevelopmentLooksPublic();
 
-console.log('FINNHUB KEY:', process.env.FINNHUB_API_KEY ? 'LOADED' : 'MISSING');
+if (process.env.NODE_ENV !== 'production') {
+  console.log('[env] Finnhub API key:', process.env.FINNHUB_API_KEY ? 'configured' : 'not set');
+}
 const zohoMailUser = (process.env.ZOHO_MAIL_USER || '').trim();
 console.log(
   '[env] Zoho Mail:',
@@ -70,10 +73,12 @@ const { xss } = require('express-xss-sanitizer');
 import { initWebSocket, broadcastTick } from './websocket.js';
 import { logMarketTick } from './services/marketDataLogger.js';
 import positionsService from '../modules/trading/positions.service.js';
+import { refreshMarginRiskRuntime } from '../modules/trading/margin-risk.runtime.js';
 import { checkAndTriggerPendingOrders } from '../modules/trading/pendingOrders.engine.js';
 import pendingOrdersEngine from '../modules/trading/pendingOrders.engine.js';
 import marketRoutes from './routes/market.js';
 import { isRedisAvailable } from './services/cache.js';
+import { setLastPrice } from './services/lastQuotePrices.js';
 import { fetchQuotesBatch } from './services/twelveData.js';
 import { createTwelveDataWebSocket } from './services/twelveDataWebSocket.js';
 import { createFinnhubWebSocket } from './services/finnhubWebSocket.js';
@@ -86,8 +91,11 @@ import {
   getFeedLogSummary,
 } from './services/twelveDataFeedLogger.js';
 import { getDb } from '../config/mongo.js';
+import { applyPlatformEnvOverridesFromDatabase } from '../modules/admin/platform-env.service.js';
 import apiRoutes from '../core/routes.js';
 import middleware from '../core/middleware.js';
+import { maintenanceApiGate } from '../core/maintenance.middleware.js';
+import maintenanceService from '../modules/admin/maintenance.service.js';
 import { startDailyWalletLedgerReconciliation } from '../modules/finance/reconciliation-daily.cron.js';
 import financialTransactionService from '../modules/finance/financial-transaction.service.js';
 
@@ -128,14 +136,26 @@ function isLoopbackRequest(req) {
 
 const app = express();
 
-// ── Security: Helmet (security headers) ─────────────────────────────────────
-app.use(helmet({ contentSecurityPolicy: false }));
+app.set('trust proxy', resolveTrustProxy());
+
+// ── Security: Helmet (tight CSP for JSON API — no inline assets served here) ─
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: {
+        defaultSrc: ["'none'"],
+        baseUri: ["'none'"],
+        formAction: ["'none'"],
+        frameAncestors: ["'none'"],
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+  })
+);
 
 // ── CORS: allow only known origins when ALLOWED_ORIGINS is set ───────────────
-const allowedOriginsRaw = (process.env.ALLOWED_ORIGINS || '').trim();
-const allowedOrigins = allowedOriginsRaw
-  ? allowedOriginsRaw.split(',').map((o) => o.trim()).filter(Boolean)
-  : null;
+const allowedOrigins = getAllowedOriginsList();
 if (allowedOrigins && allowedOrigins.length > 0) {
   app.use(cors({
     origin: (origin, cb) => {
@@ -202,6 +222,19 @@ app.get('/', (req, res) => {
 // Health — canonical + /api alias (frontend & proxies often expect /api/health)
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
+
+// Public maintenance status (for SPA; not blocked by maintenance gate)
+app.get('/api/platform/maintenance', async (_req, res) => {
+  try {
+    const st = await maintenanceService.getPublicStatus();
+    res.json(st);
+  } catch {
+    res.json({ maintenance: false, message: '' });
+  }
+});
+
+// Block most /api/* with 503 when maintenance is on (before market + REST API)
+app.use('/api', maintenanceApiGate);
 
 // MongoDB health (503 if CONNECTION_STRING not set or connection fails)
 app.get('/health/db', async (req, res) => {
@@ -289,7 +322,7 @@ app.use('/api', apiRoutes);
 app.use(middleware.errorHandler);
 
 const server = createServer(app);
-initWebSocket(server);
+initWebSocket(server, { corsOrigins: allowedOrigins });
 
 /**
  * Symbols to poll/stream. Default: XAUUSD and EURUSD only.
@@ -353,6 +386,7 @@ async function pollSymbols(apiKey, symbols) {
       });
       const price = tick.close ?? tick.price;
       if (tick.symbol && price != null) {
+        setLastPrice(tick.symbol, price);
         positionsService
           .checkAndExecuteTPLS(tick.symbol, price)
           .catch((e) => console.warn('[TP/SL]', e.message));
@@ -448,6 +482,7 @@ function runTwelveDataWebSocket() {
       });
       const price = tick.close ?? tick.price;
       if (tick.symbol && price != null) {
+        setLastPrice(tick.symbol, price);
         positionsService
           .checkAndExecuteTPLS(tick.symbol, price)
           .catch((e) => console.warn('[TP/SL]', e.message));
@@ -518,6 +553,7 @@ function runFinnhubWebSocket() {
       });
       const price = tick.close ?? tick.price;
       if (tick.symbol && price != null) {
+        setLastPrice(tick.symbol, price);
         positionsService
           .checkAndExecuteTPLS(tick.symbol, price)
           .catch((e) => console.warn('[TP/SL]', e.message));
@@ -561,6 +597,10 @@ server.listen(PORT, async () => {
       const db = await getDb();
       await db.admin().command({ ping: 1 });
       console.log('[server] MongoDB connected');
+      await applyPlatformEnvOverridesFromDatabase();
+      refreshMarginRiskRuntime().catch((e) => {
+        console.warn('[server] margin risk settings cache refresh failed:', e?.message || e);
+      });
       financialTransactionService.tryEnsureWalletLedgerUniqueIndexOnce().catch((e) => {
         console.warn('[server] WALLET ledger index ensure skipped/failed:', e?.message || e);
       });
@@ -569,6 +609,11 @@ server.listen(PORT, async () => {
       console.error('[server] Fix: Check CONNECTION_STRING in backend/.env. Run: npm run check-mongo');
     }
   }
+
+  maintenanceService.refreshCache().catch((e) => {
+    console.warn('[maintenance] initial cache refresh failed:', e?.message || e);
+  });
+  maintenanceService.startMaintenanceScheduler();
 
   // Priority 1 — Finnhub WebSocket (real-time trades, ~200 ms latency)
   runFinnhubWebSocket();

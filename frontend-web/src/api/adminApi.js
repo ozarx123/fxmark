@@ -9,10 +9,22 @@ function getToken() {
   return localStorage.getItem('fxmark_token');
 }
 
+/** When server sets ADMIN_MFA_TOTP_SECRET, paste current TOTP in Admin panel (sessionStorage). */
+function adminMfaHeaders() {
+  try {
+    const c = sessionStorage.getItem('fxmark_admin_mfa_otp');
+    if (c && String(c).trim()) return { 'X-Admin-Mfa': String(c).trim() };
+  } catch {
+    /* private mode */
+  }
+  return {};
+}
+
 export async function fetchWithAuth(url, options = {}) {
   const token = getToken();
   const headers = {
     'Content-Type': 'application/json',
+    ...adminMfaHeaders(),
     ...options.headers,
   };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -25,9 +37,27 @@ export async function listUsers(params = {}) {
   const res = await fetchWithAuth(`/admin/users${q ? `?${q}` : ''}`);
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    if (res.status === 401) throw new Error('Please log in again to view users.');
+    if (res.status === 401) {
+      if (data.code === 'ADMIN_MFA_REQUIRED') {
+        throw new Error(data.hint || 'Enter the admin MFA code in the bar at the top of the admin panel.');
+      }
+      throw new Error('Please log in again to view users.');
+    }
     if (res.status === 403) throw new Error('Access denied. Admin or Super Admin role required.');
     throw new Error(data.error || data.message || 'Failed to fetch users');
+  }
+  return res.json();
+}
+
+/** Persisted admin actions + execution mode / hybrid rule changes (read-only). */
+export async function listAdminAuditLogs(params = {}) {
+  const q = new URLSearchParams(
+    Object.fromEntries(Object.entries(params).filter(([, v]) => v != null && v !== ''))
+  ).toString();
+  const res = await fetchWithAuth(`/admin/audit-logs${q ? `?${q}` : ''}`);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || data.message || 'Failed to load audit log');
   }
   return res.json();
 }
@@ -127,6 +157,58 @@ export async function getIbProfiles(params = {}) {
   return res.json();
 }
 
+/**
+ * Reassign client's introducing broker. Pass referrerUserId (IB user id), referrerEmail (IB account email), or both (must match).
+ * Clearing referrer is not allowed.
+ */
+export async function putClientReferrer(clientUserId, referrerUserId, options = {}) {
+  const { reason, referrerEmail } = options;
+  const body = {};
+  if (referrerUserId != null && String(referrerUserId).trim() !== '') {
+    body.referrerUserId = String(referrerUserId).trim();
+  }
+  const em = typeof referrerEmail === 'string' ? referrerEmail.trim().toLowerCase() : '';
+  if (em) body.referrerEmail = em;
+  if (!body.referrerUserId && !body.referrerEmail) {
+    throw new Error('referrerUserId or referrer email is required');
+  }
+  if (reason) body.reason = String(reason);
+  const res = await fetchWithAuth(`/admin/ib/clients/${encodeURIComponent(clientUserId)}/referrer`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to update client referrer');
+  return res.json();
+}
+
+/** Move IB in hierarchy (parentId). parentUserId null/omit = root. */
+export async function putIbProfileParent(ibUserId, parentUserId) {
+  const res = await fetchWithAuth(`/admin/ib/profiles/${encodeURIComponent(ibUserId)}/parent`, {
+    method: 'PUT',
+    body: JSON.stringify({ parentUserId: parentUserId == null || parentUserId === '' ? null : parentUserId }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to update IB parent');
+  return res.json();
+}
+
+/** Signup joinings vs commission-based clients for one IB */
+export async function getIbReferralOverview(ibUserId, params = {}) {
+  const q = new URLSearchParams(params).toString();
+  const res = await fetchWithAuth(
+    `/admin/ib/profiles/${encodeURIComponent(ibUserId)}/referral-overview${q ? `?${q}` : ''}`
+  );
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch referral overview');
+  return res.json();
+}
+
+/** Users with no referrer or broken referrer → IB */
+export async function getIbReferrerGaps(params = {}) {
+  const q = new URLSearchParams(params).toString();
+  const res = await fetchWithAuth(`/admin/ib/referrer-gaps${q ? `?${q}` : ''}`);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch referrer gaps');
+  return res.json();
+}
+
 export async function getIbCommissions(params = {}) {
   const q = new URLSearchParams(params).toString();
   const res = await fetchWithAuth(`/admin/ib/commissions${q ? `?${q}` : ''}`);
@@ -146,10 +228,15 @@ export async function getIbSettings() {
   return res.json();
 }
 
-export async function updateIbSettings(ratePerLotByLevel) {
+/** @param {object} body — { ratePerLotByLevel } and/or { defaultReferrerUserId }; or pass rate map only for backward compat */
+export async function updateIbSettings(body) {
+  const payload =
+    body && typeof body === 'object' && body.ratePerLotByLevel === undefined && body.defaultReferrerUserId === undefined
+      ? { ratePerLotByLevel: body }
+      : body;
   const res = await fetchWithAuth('/admin/ib/settings', {
     method: 'PUT',
-    body: JSON.stringify({ ratePerLotByLevel }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to update IB settings');
   return res.json();
@@ -320,6 +407,50 @@ export async function putHybridRules(rules) {
   return res.json();
 }
 
+/** Margin stop-out / warning thresholds (tick engine); persisted in Mongo, effective immediately after save. */
+export async function getMarginRiskSettings() {
+  const res = await fetchWithAuth('/admin/trading/margin-risk');
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to fetch margin risk settings');
+  return res.json();
+}
+
+export async function putMarginRiskSettings(body) {
+  const res = await fetchWithAuth('/admin/trading/margin-risk', {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to update margin risk settings');
+  }
+  return res.json();
+}
+
+/** Super Admin: platform env overrides (Mongo → process.env). Values returned masked. */
+export async function getPlatformEnv() {
+  const res = await fetchWithAuth('/admin/platform-env');
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 403) throw new Error(data.error || 'Super Admin role required');
+    throw new Error(data.error || 'Failed to load platform environment');
+  }
+  return res.json();
+}
+
+/** Super Admin: set or clear (empty string) one key */
+export async function putPlatformEnv(key, value) {
+  const res = await fetchWithAuth('/admin/platform-env', {
+    method: 'PUT',
+    body: JSON.stringify({ key, value: value === undefined ? '' : value }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 403) throw new Error(data.error || 'Super Admin role required');
+    throw new Error(data.error || 'Failed to update environment key');
+  }
+  return res.json();
+}
+
 // ---------- PAMM / Bull Run fund (admin) ----------
 export async function listPammFunds() {
   const res = await fetchWithAuth('/admin/pamm/funds');
@@ -453,6 +584,28 @@ export async function resolveAlert(id) {
     body: JSON.stringify({ resolved: true }),
   });
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to resolve alert');
+  return res.json();
+}
+
+/** Platform maintenance (manual + schedule) */
+export async function getMaintenance() {
+  const res = await fetchWithAuth('/admin/maintenance');
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to load maintenance settings');
+  }
+  return res.json();
+}
+
+export async function putMaintenance(body) {
+  const res = await fetchWithAuth('/admin/maintenance', {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to save maintenance settings');
+  }
   return res.json();
 }
 

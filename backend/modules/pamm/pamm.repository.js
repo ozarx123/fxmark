@@ -219,13 +219,15 @@ async function listAllocationsByManager(managerId, options = {}) {
   }));
 }
 
-async function updateAllocation(id, update) {
+async function updateAllocation(id, update, options = {}) {
   const col = await allocationsCol();
   if (!ObjectId.isValid(id)) return null;
+  const opts = { returnDocument: 'after' };
+  if (options.session) opts.session = options.session;
   const result = await col.findOneAndUpdate(
     { _id: new ObjectId(id) },
     { $set: { ...update, updatedAt: new Date() } },
-    { returnDocument: 'after' }
+    opts
   );
   return result ? { id: result._id.toString(), ...result, _id: undefined } : null;
 }
@@ -265,7 +267,7 @@ async function listTradesByManager(managerId, options = {}) {
 async function getFundCumulativePnl(fundId) {
   const col = await tradesCol();
   const result = await col.aggregate([
-    { $match: { managerId: fundId } },
+    { $match: { managerId: fundId, excludedFromFundMetrics: { $ne: true } } },
     { $group: { _id: null, total: { $sum: '$pnl' } } },
   ]).next();
   return result ? (result.total || 0) : 0;
@@ -280,6 +282,7 @@ async function getFundTradesPnLByPeriod(fundId) {
   let todayProfit = 0;
   const byMonth = {};
   for (const t of trades) {
+    if (t.excludedFromFundMetrics === true) continue;
     const pnl = Number(t.pnl) || 0;
     const created = t.createdAt ? new Date(t.createdAt) : null;
     if (created && created >= todayStart) todayProfit += pnl;
@@ -296,6 +299,24 @@ async function getFundTradesPnLByPeriod(fundId) {
   return { todayProfit, monthlyPerformance, allTrades: trades };
 }
 
+/**
+ * After an economic rollback, the trade row stays for history but must not drive investor % / charts.
+ * Idempotent: safe to call multiple times.
+ */
+async function excludeTradeFromFundMetrics(positionId) {
+  if (!positionId) return { modifiedCount: 0 };
+  const col = await tradesCol();
+  const pid = String(positionId);
+  const or = [{ positionId: pid }];
+  if (ObjectId.isValid(pid) && pid.length === 24) or.push({ positionId: new ObjectId(pid) });
+  const now = new Date();
+  const r = await col.updateMany(
+    { $or: or },
+    { $set: { excludedFromFundMetrics: true, excludedFromFundMetricsAt: now } }
+  );
+  return { modifiedCount: r.modifiedCount };
+}
+
 /** Resolve PAMM fund id from a closed position id (manager_trades stores positionId). */
 async function getFundIdByPositionId(positionId) {
   if (!positionId) return null;
@@ -305,13 +326,15 @@ async function getFundIdByPositionId(positionId) {
 }
 
 /** Increment Bull Run reserve (fundType 'ai'). Uses $inc for reserveBalance on pamm_managers. */
-async function incrementFundReserve(fundId, amount) {
+async function incrementFundReserve(fundId, amount, options = {}) {
   if (!ObjectId.isValid(fundId) || !Number.isFinite(amount)) return null;
   const col = await managersCol();
+  const opts = { returnDocument: 'after' };
+  if (options.session) opts.session = options.session;
   const result = await col.findOneAndUpdate(
     { _id: new ObjectId(fundId) },
     { $inc: { reserveBalance: Number(amount) }, $set: { updatedAt: new Date() } },
-    { returnDocument: 'after' }
+    opts
   );
   return result ? (result.reserveBalance != null ? Number(result.reserveBalance) : 0) : null;
 }
@@ -365,6 +388,7 @@ export default {
   listTradesByManager,
   getFundCumulativePnl,
   getFundTradesPnLByPeriod,
+  excludeTradeFromFundMetrics,
   getFundIdByPositionId,
   incrementFundReserve,
   recordAcceptance,

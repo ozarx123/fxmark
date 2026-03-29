@@ -43,7 +43,12 @@ coverage/
 frontend-web/
 frontend-admin/
 mobile-flutter/
-docker/
+# Keep docker/Dockerfile.backend.prod in context for Cloud Build (do not ignore whole docker/)
+docker/*.ps1
+docker/*.sh
+
+# Dev / pentest / stress scripts — not needed at runtime in Cloud Run
+backend/scripts/
 
 # Archives
 *.zip

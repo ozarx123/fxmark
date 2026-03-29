@@ -5,19 +5,16 @@
 import tradingAccountRepo from './trading-account.repository.js';
 import positionsService from './positions.service.js';
 import walletRepo from '../wallet/wallet.repository.js';
-
-/** Contract size for margin: XAU/GOLD 100 oz, forex 100k units. */
-function getContractSize(symbol) {
-  const s = String(symbol || '').toUpperCase();
-  return (s.includes('XAU') || s === 'GOLD') ? 100 : 100000;
-}
+import { getLastPrice } from '../../src/services/lastQuotePrices.js';
+import { getContractSize, computeUnrealizedPnl } from './unrealized-pnl.js';
 
 /**
  * Get account summary (balance, equity, marginUsed, freeMargin, marginLevel).
  * Used by GET /trading/account-summary.
- * - Demo: balance/equity from trading_accounts (DB).
- * - Live: balance/equity from wallet (DB) so terminal shows real funds.
- * Equity = balance server-side (floating PnL would require live prices).
+ * - Demo / PAMM: balance from trading_accounts.
+ * - Live: balance from USD wallet.
+ * - Equity: balance + unrealized PnL on open positions (last tick price from lastQuotePrices,
+ *   then position currentPrice, then openPrice).
  */
 async function getAccountSummary(userId, accountId) {
   const account = await getAccount(userId, accountId);
@@ -36,6 +33,7 @@ async function getAccountSummary(userId, accountId) {
   const leverage = Math.max(1, Number(account.leverage) || 100);
   const positions = await positionsService.getOpenPositions(userId, { accountId, limit: 500 });
   let marginUsed = 0;
+  let floatingPnl = 0;
   for (const pos of positions) {
     const openPrice = Number(pos.openPrice ?? pos.open_price) || 0;
     const volume = Number(pos.volume ?? pos.lots) || 0;
@@ -43,8 +41,11 @@ async function getAccountSummary(userId, accountId) {
       const contractSize = getContractSize(pos.symbol);
       marginUsed += (volume * contractSize * openPrice) / leverage;
     }
+    const mark =
+      getLastPrice(pos.symbol) ?? (Number(pos.currentPrice) || Number(pos.openPrice) || null);
+    floatingPnl += computeUnrealizedPnl(pos, mark);
   }
-  const equity = balance;
+  const equity = balance + floatingPnl;
   const freeMargin = Math.max(0, equity - marginUsed);
   const marginLevel = marginUsed > 0 ? (equity / marginUsed) * 100 : null;
   return {

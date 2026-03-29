@@ -15,6 +15,9 @@ export const ADMIN_ROLES = [
   'support_manager',
 ];
 
+/** Super Admin only (e.g. environment manager, bulk import) */
+export const SUPERADMIN_ROLES = ['superadmin', 'super_admin'];
+
 /** Roles that can access IB section (/ib) */
 export const IB_ROLES = [
   'master_ib',

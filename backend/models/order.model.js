@@ -18,6 +18,15 @@ const indexes = [
   { keys: { userId: 1, createdAt: -1 }, options: {} },
   { keys: { userId: 1, status: 1 }, options: {} },
   { keys: { userId: 1, symbol: 1 }, options: {} },
+  {
+    keys: { userId: 1, accountScope: 1, clientOrderId: 1 },
+    options: {
+      unique: true,
+      partialFilterExpression: {
+        clientOrderId: { $exists: true, $type: 'string' },
+      },
+    },
+  },
 ];
 
 export { COLLECTION, schema, indexes };

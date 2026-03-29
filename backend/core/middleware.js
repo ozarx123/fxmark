@@ -2,6 +2,7 @@
  * Global middleware (ESM)
  */
 import jwtStrategy from '../modules/auth/jwt.strategy.js';
+import { isAccessJtiRevoked } from '../modules/auth/token-revocation.service.js';
 import userRepo from '../modules/users/user.repository.js';
 import { getDb } from '../config/mongo.js';
 
@@ -82,6 +83,7 @@ export const optionalAuthenticate = async (req, res, next) => {
     if (!token) return next();
     const payload = jwtStrategy.decode(token);
     if (!payload) return next();
+    if (payload.jti && (await isAccessJtiRevoked(payload.jti))) return next();
     req.user = payload;
     if (!payload.role && payload.id) {
       const user = await userRepo.findById(payload.id);

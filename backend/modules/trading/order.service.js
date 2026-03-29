@@ -6,6 +6,7 @@
 import orderRepo from './order.repository.js';
 import executionRouter from './execution-router.js';
 import { validateTradingPermission } from './trading-permission.validator.js';
+import marginService from './margin.service.js';
 
 const SIDES = ['buy', 'sell'];
 const MARKET = 'market';
@@ -70,6 +71,34 @@ function validatePlace(symbol, side, volume, type, price, stopLoss, takeProfit) 
   };
 }
 
+function normalizeClientOrderId(raw) {
+  if (raw == null || raw === '') return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  if (s.length > 128) {
+    const err = new Error('clientOrderId must be at most 128 characters');
+    err.statusCode = 400;
+    throw err;
+  }
+  return s;
+}
+
+function resultFromExistingOrder(existing) {
+  const base = {
+    idempotentReplay: true,
+    orderId: existing.id,
+    status: existing.status,
+    order: existing,
+  };
+  if (existing.status === 'filled') {
+    return { ...base, positionId: existing.positionId ?? undefined };
+  }
+  if (existing.status === 'rejected') {
+    return { ...base, rejectReason: existing.rejectReason };
+  }
+  return base;
+}
+
 async function placeOrder(userId, body, accountId = null) {
   const { symbol, side, volume, type, price, stopLoss, takeProfit } = validatePlace(
     body.symbol,
@@ -85,8 +114,37 @@ async function placeOrder(userId, body, accountId = null) {
   const hasValidExecPrice = execPrice != null && !Number.isNaN(execPrice) && execPrice > 0;
   const isPendingType = PENDING_TYPES.includes(type);
 
+  const clientOrderId = normalizeClientOrderId(body.clientOrderId);
+  const accountScope = accountId ? String(accountId) : 'default';
+
+  if (clientOrderId) {
+    const existing = await orderRepo.findByClientOrderKey(userId, accountScope, clientOrderId);
+    if (existing) {
+      return resultFromExistingOrder(existing);
+    }
+  }
+
+  // Market orders require execution price; reject before creating order
+  if (type === MARKET && !hasValidExecPrice) {
+    const err = new Error('Market orders require a current price. Please wait for the price feed or provide execution price.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  await validateTradingPermission(userId, accountId, { symbol, volume });
+
+  if (type === MARKET && hasValidExecPrice && accountId) {
+    const marginCheck = await marginService.checkMarginForNewPosition(userId, accountId, symbol, volume, execPrice);
+    if (!marginCheck.allowed) {
+      const err = new Error(marginCheck.reason || 'Insufficient margin');
+      err.statusCode = 400;
+      throw err;
+    }
+  }
+
   const orderDoc = {
     userId,
+    accountScope,
     symbol,
     side,
     volume,
@@ -96,20 +154,21 @@ async function placeOrder(userId, body, accountId = null) {
     filledVolume: 0,
   };
   if (accountId) orderDoc.accountId = accountId;
+  if (clientOrderId) orderDoc.clientOrderId = clientOrderId;
   if (stopLoss != null) orderDoc.stopLoss = stopLoss;
   if (takeProfit != null) orderDoc.takeProfit = takeProfit;
   if (type === MARKET && hasValidExecPrice) orderDoc.price = execPrice;
 
-  await validateTradingPermission(userId, accountId, { symbol, volume });
-
-  // Market orders require execution price; reject before creating order
-  if (type === MARKET && !hasValidExecPrice) {
-    const err = new Error('Market orders require a current price. Please wait for the price feed or provide execution price.');
-    err.statusCode = 400;
-    throw err;
+  let orderId;
+  try {
+    orderId = await orderRepo.create(orderDoc);
+  } catch (e) {
+    if (e?.code === 11000 && clientOrderId) {
+      const race = await orderRepo.findByClientOrderKey(userId, accountScope, clientOrderId);
+      if (race) return resultFromExistingOrder(race);
+    }
+    throw e;
   }
-
-  const orderId = await orderRepo.create(orderDoc);
   console.log('[orders] order created', { orderId, symbol: orderDoc.symbol, side: orderDoc.side, volume: orderDoc.volume, type: orderDoc.type });
 
   // Market order with execution price → route through execution layer (A_BOOK / B_BOOK / HYBRID)
@@ -121,9 +180,10 @@ async function placeOrder(userId, body, accountId = null) {
       const updatedOrder = await orderRepo.findById(orderId, userId, accountId);
       return { orderId, status: 'filled', order: updatedOrder, positionId: result.positionId };
     }
-    const err = new Error(result.reason || 'Execution failed');
-    err.statusCode = 502;
-    throw err;
+    const rejectReason = String(result.reason || 'Execution failed').slice(0, 500);
+    await orderRepo.updateStatus(orderId, userId, 'rejected', { rejectReason }, accountId);
+    const updatedOrder = await orderRepo.findById(orderId, userId, accountId);
+    return { orderId, status: 'rejected', order: updatedOrder, rejectReason };
   }
 
   // Pending orders (buy_limit, sell_limit, buy_stop, sell_stop) → stored for trigger engine

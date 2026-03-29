@@ -1,5 +1,19 @@
 # Backend Trading System Audit Report
 
+## Updates (in progress / resolved)
+
+| Item | Status |
+|------|--------|
+| Stuck `pending` market orders on execution failure | **Resolved** — order marked `rejected` with `rejectReason`; HTTP 201 with `status: rejected` |
+| `emitTradeUpdate(userId, null)` on close / SLTP | **Resolved** — uses active `accountId` |
+| Cross-account position close/modify | **Resolved** — `403` when `position.accountId` ≠ request account |
+| Idempotent `POST /trading/orders` | **Resolved** — optional `clientOrderId` + unique index `(userId, accountScope, clientOrderId)` |
+| Pre-trade margin | **Partial** — `margin.service.checkMarginForNewPosition` wired into `placeOrder` (market), `openPosition`, pending trigger |
+| Zero-equity auto-close | **Resolved** — `enforceEquityFloorForAccounts` enabled in `checkAndExecuteTPLS` for all account types (live wallet balance; demo/PAMM from DB; equity uses all open positions on the account) |
+| Real LP / FIX | **Unchanged** — still stub; see §1.8 |
+
+Lifecycle doc: [docs/TRADING_ORDER_LIFECYCLE.md](docs/TRADING_ORDER_LIFECYCLE.md).
+
 ## Scope
 
 Verification of: Account engine, Margin calculation, Equity calculation, Order execution flow, Position management, Risk engine, Exposure tracking, Liquidity bridge (FIX/LP). Plus UI ↔ backend order execution connectivity.
@@ -27,9 +41,9 @@ Verification of: Account engine, Margin calculation, Equity calculation, Order e
 | Margin used in summary | `trading-account.service.js` → `getAccountSummary` | **Implemented.** `marginUsed = Σ (volume × contractSize × openPrice) / leverage` per open position. Contract size: XAU 100, forex 100k. |
 | Dedicated margin service | `modules/trading/margin.service.js` | **Stub.** `getMargin()` returns zeros; `checkMargin()` always returns `{ allowed: true }`. Not used anywhere. |
 | Pre-trade margin check | — | **Missing.** `order.service.placeOrder` and `openPosition` do not call any margin check. Orders can be placed and positions opened regardless of free margin. |
-| Margin call / close | `positions.service.js` → `enforceEquityFloorForAccounts` | **Implemented but disabled.** Zero-equity close loop exists; call is commented out in `checkAndExecuteTPLS` (“temporarily disabled until margin/equity integration is finalized”). |
+| Margin call / close | `positions.service.js` → `enforceEquityFloorForAccounts` | **Enabled.** Invoked from `checkAndExecuteTPLS` after TP/SL on each tick (only runs when that symbol has open positions). If approximate equity &lt; 0 and there is unrealized loss, closes **all** open positions on that account. Applies to **live, demo, and PAMM**: live balance from wallet; others from `trading_accounts`. Equity = balance + Σ unrealized PnL over **all** open positions (tick price for current symbol; `currentPrice` / `openPrice` for other symbols). |
 
-**Conclusion:** Margin *display* (marginUsed, freeMargin, marginLevel) works. Margin *enforcement* (pre-trade check, margin call) is missing or turned off.
+**Conclusion:** Margin *display* (marginUsed, freeMargin, marginLevel) works. **Zero-equity auto-close** runs on the tick path. Pre-trade margin enforcement may still be partial—see `margin.service.js` and table above.
 
 ---
 
@@ -38,9 +52,9 @@ Verification of: Account engine, Margin calculation, Equity calculation, Order e
 | Component | Location | Status |
 |-----------|----------|--------|
 | In account summary | `trading-account.service.js` → `getAccountSummary` | **Equity = balance.** No floating PnL. Comment: “Equity = balance server-side (floating PnL would require live prices).” |
-| In zero-equity logic | `positions.service.js` → `enforceEquityFloorForAccounts` | **Equity = balance + Σ PnL** (per-symbol price). Used only when equity floor is enabled (currently disabled). |
+| In zero-equity logic | `positions.service.js` → `enforceEquityFloorForAccounts` | **Equity = balance + Σ PnL** over all open positions on the account (mark rules as in §1.2). **Enabled** on each qualifying tick. |
 
-**Conclusion:** API equity is balance-only. Real-time equity (balance + floating PnL) exists only inside the disabled equity-floor path. Terminal can show client-side floating PnL but backend summary does not.
+**Conclusion:** GET account-summary still shows **equity = balance** (no floating PnL there). Floating PnL is computed inside `enforceEquityFloorForAccounts` when deciding auto-close. Terminal can show client-side floating PnL; aligning summary API with the same mark methodology is still optional (see §5).
 
 ---
 
@@ -84,14 +98,14 @@ Verification of: Account engine, Margin calculation, Equity calculation, Order e
 | Trading permission | `trading-permission.validator.js` | **Implemented.** Client/account, KYC, symbol category. |
 | Daily loss / drawdown | `admin/trading-limits.service.js` → `checkTradingAllowed` | **Implemented.** Called on close (live PnL post). |
 | TP/SL risk | `positions.service.js` → `checkAndExecuteTPLS` | **Implemented.** Per-tick. |
-| Zero-equity / margin call | `positions.service.js` → `enforceEquityFloorForAccounts` | **Implemented but not called.** Comment: disabled until margin/equity finalised. |
+| Zero-equity / margin call | `positions.service.js` → `enforceEquityFloorForAccounts` | **Active.** Called from `checkAndExecuteTPLS` after TP/SL; all account types; see §1.2. |
 | Pre-trade risk (margin) | — | **Missing.** No margin or equity check before opening a position. |
 | A-Book router | `risk-management/a-book.router.js` | **Stub.** Checks FIX session state; TODO send NewOrderSingle. |
 | B-Book router | `risk-management/b-book.router.js` | **Stub.** TODO internal fill or hedge. |
 | Hedging service | `risk-management/hedging.service.js` | **Stub.** Calls `aBookRouter.route`; TODO create hedge order. |
 | AI risk switch | `risk-management/ai-risk-switch.js` | **Present.** (Not fully traced; can redirect risk.) |
 
-**Conclusion:** Permission and daily-loss checks exist; TP/SL works. Margin-based risk (pre-trade and margin call) and hedging/risk routers are stubbed or disabled.
+**Conclusion:** Permission and daily-loss checks exist; TP/SL and zero-equity auto-close work on ticks. Pre-trade margin and hedging/risk routers may still be partial or stubbed—see `margin.service` and §1.2.
 
 ---
 
@@ -148,7 +162,7 @@ Verification of: Account engine, Margin calculation, Equity calculation, Order e
    `margin.service.js` is a stub. `getMargin` and `checkMargin` should use balance, open positions, and (for equity) live prices; `checkMargin` should be used in the order/execution path.
 
 3. **Equity with floating PnL**  
-   Account summary equity is balance only. For margin and risk, equity should be balance + floating PnL (using current prices). Requires price feed integration in account/margin layer.
+   Account summary equity is balance only. `enforceEquityFloorForAccounts` already uses balance + floating PnL (approximate marks) for auto-close on ticks; exposing the same in **GET account-summary** still needs price feed integration in that layer.
 
 4. **Exposure aggregation**  
    No real long/short exposure by symbol or client. Needed for hedging and risk dashboards.
@@ -160,7 +174,7 @@ Verification of: Account engine, Margin calculation, Equity calculation, Order e
    Hedging service and A/B-book routers are stubs. No automatic hedge when B-Book exposure exceeds limits.
 
 7. **Margin call enforcement**  
-   Zero-equity close logic exists but is disabled. No proactive margin call (e.g. at 100% or 150% margin level) before zero equity.
+   Zero-equity auto-close runs on ticks (`enforceEquityFloorForAccounts`). No separate proactive margin-level stop-out (e.g. at 100% or 150% margin level) before that floor unless added.
 
 ---
 
@@ -170,7 +184,7 @@ Verification of: Account engine, Margin calculation, Equity calculation, Order e
 |------|----------|-------------|
 | No pre-trade margin check | **High** | Users can open positions until balance is exhausted or negative if combined with other bugs. |
 | Equity = balance only | **Medium** | Summary and any future server-side margin logic underestimate risk when there are large open losses. |
-| Margin call disabled | **Medium** | Negative equity can persist until manual or TP/SL close; no forced close at a margin level. |
+| Margin level stop-out only partial | **Medium** | Zero-equity close exists on ticks; no configurable margin-level stop-out (e.g. 100% / 150%) unless added. |
 | A-Book is internal execution | **Medium** | No real pass-through to LP; “A_BOOK” mode is misleading. |
 | No exposure aggregation | **Low** | Hedging and net exposure reporting cannot be built on current data. |
 | Stub FIX handler | **Low** | If FIX is connected later, execution reports must be implemented or orders/positions will desync. |
@@ -190,9 +204,10 @@ Verification of: Account engine, Margin calculation, Equity calculation, Order e
    - In `getAccountSummary`, compute equity = balance + Σ floating PnL for account’s open positions.  
    - Optionally cache per account with short TTL to avoid heavy work on every request.
 
-3. **Re-enable and tune margin call**  
-   - Re-enable `enforceEquityFloorForAccounts` in `checkAndExecuteTPLS` (or a dedicated margin job).  
-   - Add a margin-level-based close (e.g. close or warn when margin level &lt; 100% or 150%) with configurable thresholds and possibly a warning event before close.
+3. **Tune margin / equity risk (beyond zero floor)**  
+   - `enforceEquityFloorForAccounts` is **enabled** in `checkAndExecuteTPLS` (or could be moved to a dedicated margin job if tick load is a concern).  
+   - Add a margin-level-based close or warn (e.g. when margin level &lt; 100% or 150%) with configurable thresholds and possibly a warning event before close.  
+   - Optionally align `getAccountSummary` equity with the same mark methodology as the equity floor.
 
 4. **Exposure manager implementation**  
    - In `exposure.manager.js`, aggregate open positions by symbol (and optionally by account/client): long = Σ buy volume, short = Σ sell volume (or net position).  
@@ -219,10 +234,10 @@ Verification of: Account engine, Margin calculation, Equity calculation, Order e
 |--------|--------|------------|-------|
 | Account engine | ✅ | ✅ | Summary and resolve; no floating PnL in equity. |
 | Margin calculation | ⚠️ | ❌ | Display only; service stubbed; no pre-trade check. |
-| Equity calculation | ⚠️ | ⚠️ | Summary = balance; real equity only in disabled path. |
+| Equity calculation | ⚠️ | ⚠️ | Summary = balance; floating PnL used in equity-floor path on ticks. |
 | Order execution flow | ✅ | ✅ | Validate → create → route → execute or store; pending engine. |
 | Position management | ✅ | ✅ | Open, close, TP/SL, update SL/TP; tick-driven. |
-| Risk engine | ⚠️ | ⚠️ | Permission + daily loss; no margin; margin call off. |
+| Risk engine | ⚠️ | ⚠️ | Permission + daily loss + zero-equity close on ticks; pre-trade margin partial. |
 | Exposure tracking | ❌ | ❌ | Stubbed. |
 | Liquidity bridge (FIX/LP) | ❌ | ❌ | Stubbed; A-Book runs internally. |
 | UI ↔ backend | ✅ | ✅ | Orders, positions, summary, close, SL/TP wired. |

@@ -65,6 +65,9 @@ export async function placeOrder(payload, opts = {}) {
   };
   if (payload.stopLoss != null && payload.stopLoss !== '') body.stopLoss = Number(payload.stopLoss);
   if (payload.takeProfit != null && payload.takeProfit !== '') body.takeProfit = Number(payload.takeProfit);
+  if (payload.clientOrderId != null && String(payload.clientOrderId).trim() !== '') {
+    body.clientOrderId = String(payload.clientOrderId).trim();
+  }
   const res = await fetchWithAuth('/trading/orders', { method: 'POST', body: JSON.stringify(body) }, accountId, accountNumber);
   if (!res.ok) throw new Error(await parseErrorResponse(res, 'Failed to place order'));
   return res.json();

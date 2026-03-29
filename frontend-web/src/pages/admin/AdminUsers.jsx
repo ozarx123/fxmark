@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { APPROVAL_STATUSES } from './mockUsersData';
-import { listUsers, updateUser, addFundsToWallet } from '../../api/adminApi';
+import { listUsers, updateUser, addFundsToWallet, getIbProfiles, putClientReferrer } from '../../api/adminApi';
 import { useAuth } from '../../context/AuthContext';
 /** Roles supported by backend (subset for editing) */
 const EDITABLE_ROLES = [
@@ -26,6 +26,7 @@ export default function AdminUsers() {
   const [editingUser, setEditingUser] = useState(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [addFundsUser, setAddFundsUser] = useState(null);
+  const [assignIbUser, setAssignIbUser] = useState(null);
   const [saving, setSaving] = useState(false);
 
   const formatCurrency = (n) =>
@@ -130,7 +131,7 @@ export default function AdminUsers() {
             <label>Search</label>
             <input
               type="text"
-              placeholder="Email..."
+              placeholder="Email, name, or account no.…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="filter-input search-input"
@@ -171,11 +172,12 @@ export default function AdminUsers() {
           <table className="table kpi-table users-table">
             <thead>
               <tr>
-                <th>User ID</th>
+                <th>Account no.</th>
                 <th>User</th>
                 <th>Role</th>
                 <th>Approval</th>
                 <th>Balance</th>
+                <th>Referrer</th>
                 <th>Created</th>
                 <th>Actions</th>
               </tr>
@@ -183,22 +185,22 @@ export default function AdminUsers() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="empty-cell">
+                  <td colSpan={8} className="empty-cell">
                     Loading…
                   </td>
                 </tr>
               ) : users.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="empty-cell">
+                  <td colSpan={8} className="empty-cell">
                     No users match the filters.
                   </td>
                 </tr>
               ) : (
                 users.map((user) => (
                   <tr key={user.id}>
-                    <td className="admin-user-id-cell">
-                      <code className="admin-user-id" title={user.id}>
-                        {user.id}
+                    <td>
+                      <code className="admin-user-id" title="users.accountNo (not MT/trading account)">
+                        {user.accountNo != null && String(user.accountNo).trim() !== '' ? user.accountNo : '—'}
                       </code>
                     </td>
                     <td>
@@ -243,6 +245,29 @@ export default function AdminUsers() {
                       )}
                     </td>
                     <td>{formatCurrency(user.balance ?? 0)}</td>
+                    <td style={{ maxWidth: '12rem', fontSize: '0.85rem' }}>
+                      {user.role === 'user' ? (
+                        <>
+                          <div>
+                            {user.referrerId ? (
+                              <code className="admin-user-id" title={user.referrerId}>
+                                {user.referrerId.length > 12 ? `${user.referrerId.slice(0, 10)}…` : user.referrerId}
+                              </code>
+                            ) : (
+                              <span className="muted">None</span>
+                            )}
+                            {user.referralSource ? (
+                              <span className="muted"> · {user.referralSource}</span>
+                            ) : null}
+                          </div>
+                          <button type="button" className="btn-link" style={{ paddingLeft: 0 }} onClick={() => setAssignIbUser(user)}>
+                            Assign IB
+                          </button>
+                        </>
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
+                    </td>
                     <td>{user.createdAt ? new Date(user.createdAt).toLocaleDateString() : '—'}</td>
                     <td>
                       <div className="row-actions">
@@ -291,6 +316,121 @@ export default function AdminUsers() {
           saving={saving}
         />
       )}
+
+      {assignIbUser && (
+        <AssignIbModal
+          user={assignIbUser}
+          onClose={() => setAssignIbUser(null)}
+          onSaved={() => {
+            setAssignIbUser(null);
+            loadUsers();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function AssignIbModal({ user, onClose, onSaved }) {
+  const [profiles, setProfiles] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedIbUserId, setSelectedIbUserId] = useState('');
+  const [reason, setReason] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const list = await getIbProfiles({ limit: 200 });
+        if (!cancelled) setProfiles(Array.isArray(list) ? list : []);
+      } catch (e) {
+        if (!cancelled) setErr(e.message || 'Failed to load IB list');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!selectedIbUserId) {
+      setErr('Select an introducing broker');
+      return;
+    }
+    setSaving(true);
+    setErr('');
+    try {
+      await putClientReferrer(user.id, selectedIbUserId, { reason: reason.trim() || undefined });
+      onSaved();
+    } catch (e2) {
+      setErr(e2.message || 'Failed to assign');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-content admin-modal" onClick={(e) => e.stopPropagation()}>
+        <h3>Assign introducing broker</h3>
+        <p className="modal-subtitle muted">
+          Client: <strong>{user.email}</strong>
+          {user.accountNo != null && String(user.accountNo).trim() !== '' && (
+            <>
+              {' '}
+              · Account no.: <code className="admin-user-id">{user.accountNo}</code>
+            </>
+          )}
+          {' '}
+          · Clearing referrer is not allowed — choose a valid IB.
+        </p>
+        {err && <p className="auth-error" style={{ marginBottom: '0.5rem' }}>{err}</p>}
+        {loading ? (
+          <p className="muted">Loading IB profiles…</p>
+        ) : (
+          <form onSubmit={submit}>
+            <div className="filter-group">
+              <label>IB (user)</label>
+              <select
+                className="filter-select"
+                value={selectedIbUserId}
+                onChange={(e) => setSelectedIbUserId(e.target.value)}
+                required
+              >
+                <option value="">Select…</option>
+                {profiles.map((p) => (
+                  <option key={p.userId} value={String(p.userId)}>
+                    {p.email || p.userId} · {p.referralCode || 'no code'}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="filter-group">
+              <label>Reason (optional, audit)</label>
+              <input
+                type="text"
+                className="filter-input"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                maxLength={500}
+                placeholder="e.g. CRM ticket #123"
+              />
+            </div>
+            <div className="modal-actions">
+              <button type="button" className="btn btn-secondary" onClick={onClose} disabled={saving}>
+                Cancel
+              </button>
+              <button type="submit" className="btn btn-primary" disabled={saving || profiles.length === 0}>
+                {saving ? 'Saving…' : 'Assign'}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
     </div>
   );
 }
@@ -311,9 +451,11 @@ function AddFundsModal({ user, onSave, onClose, saving }) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content admin-modal" onClick={(e) => e.stopPropagation()}>
         <h3>Add funds to {user?.email}</h3>
-        <p className="modal-subtitle muted">
-          User ID: <code className="admin-user-id">{user?.id}</code>
-        </p>
+        {user?.accountNo != null && String(user.accountNo).trim() !== '' && (
+          <p className="modal-subtitle muted">
+            Account no.: <code className="admin-user-id">{user.accountNo}</code>
+          </p>
+        )}
         <p className="modal-subtitle">
           Current balance: {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(user?.balance ?? 0)}
         </p>
@@ -383,7 +525,10 @@ function UserFormModal({ user, onSave, onClose, roles, approvalStatuses, saving 
       <div className="modal-content admin-modal user-form-modal" onClick={(e) => e.stopPropagation()}>
         <h3>Edit user: {user?.email}</h3>
         <p className="modal-subtitle muted" style={{ marginBottom: '1rem' }}>
-          User ID: <code className="admin-user-id">{user?.id}</code>
+          Account no. (login):{' '}
+          <code className="admin-user-id" title="users.accountNo">
+            {user?.accountNo != null && String(user.accountNo).trim() !== '' ? user.accountNo : '—'}
+          </code>
         </p>
         <form onSubmit={handleSubmit}>
           <div className="form-row">

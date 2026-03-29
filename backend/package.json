@@ -12,7 +12,11 @@
     "test:login": "node scripts/test-login.js",
     "test:ib": "node scripts/test-ib-commission.js",
     "test:all": "node scripts/test-all-apis.js",
+    "test:trading-workflows": "node scripts/test-trading-order-workflows.js",
+    "test:equity-floor": "node scripts/test-equity-floor-workflow.js",
     "test:updated": "node scripts/test-updated-features.js",
+    "test:maintenance": "node scripts/test-maintenance.js",
+    "test:ib-hierarchy": "node --test modules/ib/ib-hierarchy.service.test.js",
     "test:pamm-wallet": "node scripts/test-pamm-wallet.js",
     "fix-wallet-userids": "node scripts/fix-wallet-userid-strings.js",
     "ensure-indexes": "node scripts/ensure-indexes.js",
@@ -35,7 +39,10 @@
     "test:verification": "node scripts/test-verification-email.js",
     "test:signup-verification": "node scripts/test-signup-verification-email.js",
     "test:password-reset-e2e": "node scripts/test-password-reset-e2e.js",
-    "test:frontend-verify": "node scripts/frontend-verification-test.js"
+    "test:frontend-verify": "node scripts/frontend-verification-test.js",
+    "security:routes": "node scripts/security-route-inventory.js",
+    "security:pentest": "node scripts/security-pentest-smoke.js",
+    "stress:test": "node scripts/stress-test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
@@ -51,7 +58,8 @@
     "mongo-sanitize": "^1.1.0",
     "mongodb": "^6.21.0",
     "node-fetch": "^3.3.2",
-    "nodemailer": "^6.9.16",
+    "nodemailer": "^8.0.4",
+    "otplib": "^12.0.1",
     "pdfkit": "^0.15.0",
     "socket.io": "^4.8.0",
     "ws": "^8.18.0"
