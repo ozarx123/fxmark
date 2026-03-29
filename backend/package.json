@@ -39,10 +39,7 @@
     "test:verification": "node scripts/test-verification-email.js",
     "test:signup-verification": "node scripts/test-signup-verification-email.js",
     "test:password-reset-e2e": "node scripts/test-password-reset-e2e.js",
-    "test:frontend-verify": "node scripts/frontend-verification-test.js",
-    "security:routes": "node scripts/security-route-inventory.js",
-    "security:pentest": "node scripts/security-pentest-smoke.js",
-    "stress:test": "node scripts/stress-test.js"
+    "test:frontend-verify": "node scripts/frontend-verification-test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
