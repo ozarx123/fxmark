@@ -28,6 +28,7 @@ router.get('/deposits', controller.listDeposits);
 router.get('/withdrawals', controller.listWithdrawals);
 router.get('/trades', controller.listTrades);
 router.get('/transfers', controller.listTransfers);
+router.post('/deposits/nowpayments', controller.createNowpaymentsDeposit);
 router.post('/deposits', controller.createDeposit);
 router.post('/deposits/:id/confirm', controller.confirmDeposit);
 router.post('/withdrawals', withdrawalRequestLimit, controller.requestWithdrawal);

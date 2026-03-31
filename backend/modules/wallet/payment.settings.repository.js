@@ -14,6 +14,7 @@ export const SUPPORTED_METHOD_IDS = [
   'neteller',
   'skrill',
   'alipay',
+  'nowpayments',
 ];
 
 export const METHOD_LABELS = {
@@ -23,6 +24,7 @@ export const METHOD_LABELS = {
   neteller: 'Neteller',
   skrill: 'Skrill',
   alipay: 'Alipay',
+  nowpayments: 'Crypto (USDT BEP20 — NOWPayments)',
 };
 
 function defaultMethods() {
@@ -48,6 +50,48 @@ function defaultSettings() {
   };
 }
 
+/**
+ * When PAYMENT_PSP_ENABLED=true|1, force PSP on for reads (createDeposit, payment-methods API).
+ * If no method is enabled in DB, enables card + bank_transfer so local/demo wallets work without admin.
+ */
+function applyPaymentEnvOverrides(settings) {
+  const envOn =
+    process.env.PAYMENT_PSP_ENABLED === 'true' ||
+    process.env.PAYMENT_PSP_ENABLED === '1';
+  if (!envOn) return settings;
+
+  const methods = defaultMethods();
+  if (settings.methods && typeof settings.methods === 'object') {
+    for (const id of SUPPORTED_METHOD_IDS) {
+      const c = settings.methods[id];
+      if (c && typeof c === 'object') {
+        methods[id] = {
+          enabled: Boolean(c.enabled),
+          minAmount: Number.isFinite(c.minAmount) ? c.minAmount : methods[id].minAmount,
+          maxAmount: Number.isFinite(c.maxAmount) ? c.maxAmount : methods[id].maxAmount,
+        };
+      }
+    }
+  }
+  const hasAny = SUPPORTED_METHOD_IDS.some((id) => methods[id].enabled);
+  if (!hasAny) {
+    methods.card.enabled = true;
+    methods.bank_transfer.enabled = true;
+    const nowpaymentsEnabled = ['1', 'true'].includes(String(process.env.NOWPAYMENTS_ENABLED || '').toLowerCase())
+      && !!String(process.env.NOWPAYMENTS_API_KEY || '').trim();
+    if (nowpaymentsEnabled) {
+      methods.nowpayments.enabled = true;
+    }
+  }
+  return {
+    ...settings,
+    pspEnabled: true,
+    minDeposit: settings.minDeposit ?? 20,
+    maxDeposit: settings.maxDeposit ?? 100000,
+    methods,
+  };
+}
+
 async function collection() {
   const db = await getDb();
   return db.collection(COLLECTION);
@@ -62,8 +106,18 @@ export async function getPaymentSettings() {
     await col.insertOne(defaults);
     doc = defaults;
   }
+  const base = defaultMethods();
+  const merged = { ...base, ...(doc.methods || {}) };
+  for (const id of SUPPORTED_METHOD_IDS) {
+    merged[id] = {
+      enabled: Boolean(merged[id]?.enabled),
+      minAmount: Number.isFinite(merged[id]?.minAmount) ? merged[id].minAmount : base[id].minAmount,
+      maxAmount: Number.isFinite(merged[id]?.maxAmount) ? merged[id].maxAmount : base[id].maxAmount,
+    };
+  }
+  doc = { ...doc, methods: merged };
   const { _id, ...rest } = doc;
-  return { id: _id, ...rest };
+  return applyPaymentEnvOverrides({ id: _id, ...rest });
 }
 
 /** Update payment settings (merge with existing) */

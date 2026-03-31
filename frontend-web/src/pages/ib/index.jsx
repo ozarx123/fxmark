@@ -11,6 +11,14 @@ const formatDate = (d) => {
   return new Date(d).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
 };
 
+/** PAMM commission row from API (camelCase) or legacy snake_case */
+function pammRowCommissionAmount(c) {
+  const v = c.commissionAmount ?? c.commission_amount;
+  return Number(v ?? 0);
+}
+
+const PAMM_IB_MIN_DISPLAY_DATE = new Date('2026-03-30T00:00:00.000Z');
+
 /** Build combined referral activity log (joinings + commissions) sorted by date desc */
 function buildReferralLogs(joinings, commissions, referrals, currency) {
   const clientMap = Object.fromEntries(
@@ -101,7 +109,7 @@ export default function Ib() {
         ibApi.listReferrals().catch(() => []),
         ibApi.listReferralJoinings().catch(() => []),
         ibApi.listCommissions().catch(() => []),
-        ibApi.listPammCommissions().catch((e) => {
+        ibApi.listPammCommissions({ startDate: '2026-03-30' }).catch((e) => {
           setPammCommissionsError(e?.message || 'Could not load PAMM commission');
           return [];
         }),
@@ -113,7 +121,11 @@ export default function Ib() {
       setReferrals(Array.isArray(refRes) ? refRes : []);
       setJoinings(Array.isArray(joinRes) ? joinRes : []);
       setCommissions(Array.isArray(commRes) ? commRes : []);
-      const pammList = Array.isArray(pammRes) ? pammRes : [];
+      const pammList = Array.isArray(pammRes?.commissions)
+        ? pammRes.commissions
+        : Array.isArray(pammRes)
+          ? pammRes
+          : [];
       setPammCommissions(pammList);
       setPayouts(Array.isArray(payRes) ? payRes : []);
     } catch (e) {
@@ -131,6 +143,21 @@ export default function Ib() {
     () => buildReferralLogs(joinings, commissions, referrals, balance?.currency ?? 'USD'),
     [joinings, commissions, referrals, balance?.currency]
   );
+
+  const pammCommissionsFiltered = useMemo(() => {
+    return pammCommissions.filter((row) => {
+      const d = row.date ?? row.created_at;
+      if (!d) return false;
+      return new Date(d) >= PAMM_IB_MIN_DISPLAY_DATE;
+    });
+  }, [pammCommissions]);
+
+  const pammTotalForDisplay = useMemo(() => {
+    const sum = pammCommissionsFiltered
+      .filter((c) => pammRowCommissionAmount(c) > 0)
+      .reduce((s, c) => s + pammRowCommissionAmount(c), 0);
+    return Math.round(sum * 100) / 100;
+  }, [pammCommissionsFiltered]);
 
   const handleRegister = async (e) => {
     e?.preventDefault();
@@ -389,17 +416,10 @@ export default function Ib() {
           <h2>PAMM commission</h2>
           <p className="muted">Commission from referred clients who invest in PAMM Bull Run (last 30 days). Credited to your wallet when their trades close in profit.</p>
           {pammCommissionsError && <p className="form-error">{pammCommissionsError}</p>}
-          {pammCommissions.filter((c) => (c.commission_amount ?? 0) > 0).length > 0 && (
+          {pammCommissionsFiltered.filter((c) => pammRowCommissionAmount(c) > 0).length > 0 && (
             <div className="card" style={{ marginBottom: '1rem', maxWidth: '16rem' }}>
               <h3>PAMM total (30d)</h3>
-              <p className="card-value">
-                {formatCurrency(
-                  pammCommissions
-                    .filter((c) => (c.commission_amount ?? 0) > 0)
-                    .reduce((s, c) => s + (c.commission_amount ?? 0), 0),
-                  currency
-                )}
-              </p>
+              <p className="card-value">{formatCurrency(pammTotalForDisplay, currency)}</p>
             </div>
           )}
           <div className="table-wrap">
@@ -408,23 +428,51 @@ export default function Ib() {
                 <tr>
                   <th>Date</th>
                   <th>Level</th>
-                  <th>Amount</th>
+                  <th>Investor</th>
+                  <th>Invested amount</th>
+                  <th>Commission</th>
                 </tr>
               </thead>
               <tbody>
-                {pammCommissions.filter((c) => (c.commission_amount ?? 0) > 0).length === 0 ? (
-                  <tr><td colSpan={3} className="empty-cell">{pammCommissionsError ? '—' : 'No PAMM commission yet'}</td></tr>
+                {pammCommissionsFiltered.filter((c) => pammRowCommissionAmount(c) > 0).length === 0 ? (
+                  <tr><td colSpan={5} className="empty-cell">{pammCommissionsError ? '—' : 'No PAMM commission yet'}</td></tr>
                 ) : (
-                  pammCommissions
-                    .filter((c) => (c.commission_amount ?? 0) > 0)
+                  pammCommissionsFiltered
+                    .filter((c) => pammRowCommissionAmount(c) > 0)
                     .slice(0, 50)
-                    .map((c) => (
-                      <tr key={c.id}>
-                        <td>{formatDate(c.created_at)}</td>
-                        <td>L{c.level_number ?? '—'}</td>
-                        <td>{formatCurrency(c.commission_amount, currency)}</td>
-                      </tr>
-                    ))
+                    .map((c) => {
+                      const rowId = c.id ?? `${c.date}-${c.level}-${c.investorAccountNumber ?? ''}`;
+                      const when = c.date ?? c.created_at;
+                      const levelLabel =
+                        c.level != null
+                          ? String(c.level)
+                          : c.level_number != null
+                            ? `L${c.level_number}`
+                            : '—';
+                      const invested =
+                        c.investedAmount != null
+                          ? Number(c.investedAmount)
+                          : Number(c.active_capital_base ?? 0);
+                      const comm = pammRowCommissionAmount(c);
+                      const acct = c.investorAccountNumber || c.investor?.accountNumber || '—';
+                      return (
+                        <tr key={rowId}>
+                          <td>{formatDate(when)}</td>
+                          <td>{levelLabel}</td>
+                          <td>{acct}</td>
+                          <td>{formatCurrency(invested, currency)}</td>
+                          <td
+                            style={
+                              comm > 0
+                                ? { color: 'var(--fxmark-success, #16A34A)', fontWeight: 600 }
+                                : undefined
+                            }
+                          >
+                            {formatCurrency(comm, currency)}
+                          </td>
+                        </tr>
+                      );
+                    })
                 )}
               </tbody>
             </table>

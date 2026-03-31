@@ -66,6 +66,8 @@ export function initWebSocket(server, options = {}) {
     }
     socket.userId = payload.id;
     socket.auth = true;
+    const aid = socket.handshake.auth?.accountId;
+    socket.tradingAccountId = aid != null && String(aid).trim() ? String(aid).trim() : null;
     next();
   });
 
@@ -75,7 +77,10 @@ export function initWebSocket(server, options = {}) {
       socket.join(`user:${socket.userId}`);
       try {
         const { emitTradeUpdate } = await import('./services/tradeEvents.js');
-        emitTradeUpdate(socket.userId, null);
+        // Scope to active trading account when client sends handshake auth.accountId (avoids null = all accounts snapshot).
+        if (socket.tradingAccountId) {
+          emitTradeUpdate(socket.userId, socket.tradingAccountId);
+        }
       } catch (e) {
         console.warn('[ws] Initial trade emit failed:', e.message);
       }

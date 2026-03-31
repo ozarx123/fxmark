@@ -5,8 +5,6 @@ import FxmarkLogo from '../../components/FxmarkLogo';
 import ProfileAvatar from '../../components/ProfileAvatar';
 import { getApiBase } from '../../config/apiBase.js';
 
-const API_BASE = getApiBase();
-
 const COUNTRIES = [
   'United States', 'United Kingdom', 'Canada', 'Australia', 'Germany', 'France',
   'Japan', 'Singapore', 'South Korea', 'India', 'Brazil', 'Netherlands',
@@ -55,7 +53,7 @@ export default function ProfileSetup() {
     }
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/users/profile`, {
+      const res = await fetch(`${getApiBase()}/users/profile`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',

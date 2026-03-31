@@ -30,6 +30,38 @@ function getAuthToken() {
   }
 }
 
+/** Active trading account from AccountContext persistence (must match REST X-Account-Id). */
+function getStoredTradingAccountId() {
+  try {
+    const raw = localStorage.getItem('fxmark_account');
+    if (!raw) return null;
+    const d = JSON.parse(raw);
+    return d.activeAccountId || null;
+  } catch {
+    return null;
+  }
+}
+
+function buildSocketAuth(accountIdOverride = undefined) {
+  const token = getAuthToken();
+  const accountId = accountIdOverride !== undefined ? accountIdOverride : getStoredTradingAccountId();
+  if (!token) return {};
+  return accountId ? { token, accountId } : { token };
+}
+
+/**
+ * Update Socket.IO auth with JWT + optional trading account (for scoped trade:update).
+ * Call when the user switches account or after login.
+ */
+export function syncDatafeedSocketAuth(accountId) {
+  if (!socket) return;
+  socket.auth = buildSocketAuth(accountId ?? null);
+  if (socket.connected) {
+    socket.disconnect();
+    socket.connect();
+  }
+}
+
 /**
  * Get or create the shared Socket.IO client for datafeed + trade updates
  */
@@ -47,7 +79,6 @@ export function getDatafeedSocket() {
   // In dev, some environments log failed WS upgrade attempts to the console even
   // when long-polling works; polling-only keeps the console clean locally.
   const transports = import.meta.env.DEV ? ['polling'] : ['polling', 'websocket'];
-  const token = getAuthToken();
   socket = io(url, {
     path: '/socket.io',
     transports,
@@ -57,7 +88,7 @@ export function getDatafeedSocket() {
     reconnectionDelay: 1000,
     reconnectionDelayMax: 10000,
     timeout: 20000,
-    auth: token ? { token } : {},
+    auth: buildSocketAuth(),
   });
   if (import.meta.env.DEV) {
     socket.on('connect', () => console.log('[datafeed] Socket.IO connected'));

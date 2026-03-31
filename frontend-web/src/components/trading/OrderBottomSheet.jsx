@@ -42,6 +42,7 @@ export default function OrderBottomSheet({
   }, []);
 
   const handleConfirm = async () => {
+    if (loading) return;
     if (!marketPrice || !Number.isFinite(Number(marketPrice))) {
       onError?.('Market price not available');
       return;

@@ -39,6 +39,7 @@ export async function maintenanceApiGate(req, res, next) {
   const p = apiSubPath(req);
 
   if (p === '/platform/maintenance' || p === '/health') return next();
+  if (p === '/webhooks/nowpayments') return next();
 
   let active;
   let message;

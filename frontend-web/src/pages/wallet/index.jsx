@@ -77,12 +77,21 @@ export default function Wallet() {
     if (!isAuthenticated) return;
     setError('');
     try {
-      const { id } = await walletApi.createDeposit({
-        amount: data.amount,
-        currency: data.currency,
-        gateway: data.gateway,
-      });
-      await walletApi.confirmDeposit(id);
+      const method = data.payment_method || data.gateway;
+      if (method === 'nowpayments') {
+        await walletApi.createNowpaymentsDeposit({
+          amount: data.amount,
+          currency: data.currency,
+        });
+      } else {
+        const { id } = await walletApi.createDeposit({
+          amount: data.amount,
+          currency: data.currency,
+          gateway: data.gateway,
+          payment_method: method,
+        });
+        await walletApi.confirmDeposit(id);
+      }
       setDepositModalOpen(false);
       loadWalletData();
       refreshFinance();

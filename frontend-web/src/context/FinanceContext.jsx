@@ -2,18 +2,20 @@
  * FinanceContext — shared finance/ledger state across Dashboard, Wallet, Finance.
  * Uses wallet API as single source of truth for balance/equity display.
  */
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from './AuthContext';
 import * as financeApi from '../api/financeApi';
 import * as walletApi from '../api/walletApi';
+import { hasRole, ADMIN_ROLES } from '../config/roleRoutes.js';
+import { filterInvestorLedgerEntries } from '../utils/investorPammLedgerView.js';
 
 const FinanceContext = createContext(null);
 
 export function FinanceProvider({ children }) {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   const [balances, setBalances] = useState([]);
   const [pnl, setPnl] = useState(null);
-  const [entries, setEntries] = useState([]);
+  const [entriesRaw, setEntriesRaw] = useState([]);
   const [walletBalanceFromApi, setWalletBalanceFromApi] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -26,12 +28,12 @@ export function FinanceProvider({ children }) {
       const [balRes, pnlRes, entriesRes, walletRes] = await Promise.all([
         financeApi.getLedgerBalances().catch(() => []),
         financeApi.getPnl().catch(() => null),
-        financeApi.getLedgerEntries({ limit: 50 }).catch(() => []),
+        financeApi.getLedgerEntries({ limit: 200 }).catch(() => []),
         walletApi.getBalance('USD').catch(() => null),
       ]);
       setBalances(Array.isArray(balRes) ? balRes : []);
       setPnl(pnlRes);
-      setEntries(Array.isArray(entriesRes) ? entriesRes : []);
+      setEntriesRaw(Array.isArray(entriesRes) ? entriesRes : []);
       setWalletBalanceFromApi(walletRes?.balance ?? 0);
     } catch (e) {
       setError(e.message || 'Failed to load finance');
@@ -57,10 +59,17 @@ export function FinanceProvider({ children }) {
   const walletBalance = walletBalanceFromApi != null ? walletBalanceFromApi : (pnl?.walletBalance ?? 0);
   const realizedPnl = pnl?.realized ?? 0;
 
+  const adminLedgerView = hasRole(user?.role, ADMIN_ROLES);
+  const entries = useMemo(() => {
+    if (adminLedgerView) return entriesRaw;
+    return filterInvestorLedgerEntries(entriesRaw);
+  }, [entriesRaw, adminLedgerView]);
+
   const value = {
     balances,
     pnl,
     entries,
+    entriesRaw,
     walletBalance,
     realizedPnl,
     loading,

@@ -76,7 +76,32 @@ export default function PammFundDetail() {
     );
   }
 
-  const { fund, stats, myAllocation, bullRun } = detail;
+  const isInvestorMinimalBullRunResponse = !!(
+    detail
+    && typeof detail === 'object'
+    && Number.isFinite(Number(detail.todayProfit))
+    && Number.isFinite(Number(detail.balance))
+    && Number.isFinite(Number(detail.totalProfit))
+  );
+
+  const fund = isInvestorMinimalBullRunResponse ? null : detail.fund;
+  const stats = isInvestorMinimalBullRunResponse ? null : detail.stats;
+  const myAllocation = isInvestorMinimalBullRunResponse
+    ? {
+        id: `inv-min-${fundId}`,
+        allocatedBalance: Number(detail.balance) || 0,
+        realizedPnl: Number(detail.totalProfit) || 0,
+      }
+    : detail.myAllocation;
+  const bullRun = isInvestorMinimalBullRunResponse
+    ? {
+        todayProfit: Number(detail.todayProfit) || 0,
+        balance: Number(detail.balance) || 0,
+        totalProfit: Number(detail.totalProfit) || 0,
+        history: Array.isArray(detail.history) ? detail.history : [],
+        hasActiveTrade: detail.hasActiveTrade === true,
+      }
+    : detail.bullRun;
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -91,7 +116,9 @@ export default function PammFundDetail() {
     }
   };
 
-  const isManager = !!(fund?.userId && user?.id && String(fund.userId) === String(user.id));
+  const isManager = isInvestorMinimalBullRunResponse
+    ? false
+    : !!(fund?.userId && user?.id && String(fund.userId) === String(user.id));
 
   if (bullRun) {
     return (

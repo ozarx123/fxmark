@@ -1,19 +1,23 @@
 import { getApiBase } from '../config/apiBase.js';
+import { getAuthAccessToken } from '../lib/authAccessToken.js';
 
 /**
  * PAMM API — Bull Run (PAMM AI) fund detail, follow, add funds, withdraw, unfollow
  */
-const API_BASE = getApiBase();
-
 function getToken() {
-  return localStorage.getItem('fxmark_token');
+  return getAuthAccessToken();
 }
 
 async function fetchWithAuth(url, options = {}) {
+  const method = (options.method || 'GET').toUpperCase();
   const token = getToken();
+  if (!token && method !== 'GET' && method !== 'HEAD') {
+    throw new Error('Please sign in again to use PAMM deposit or withdrawal.');
+  }
   const headers = { 'Content-Type': 'application/json', ...options.headers };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(`${API_BASE}${url}`, { ...options, headers });
+  const base = getApiBase();
+  const res = await fetch(`${base}${url}`, { ...options, headers });
   return res;
 }
 
@@ -23,7 +27,7 @@ export async function listManagers(params = {}) {
   if (params.public !== undefined) q.set('public', params.public);
   if (params.limit) q.set('limit', params.limit);
   const url = `/pamm/managers${q.toString() ? `?${q}` : ''}`;
-  const res = await fetch(`${API_BASE}${url}`);
+  const res = await fetch(`${getApiBase()}${url}`);
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to load managers');
   return res.json();
 }
@@ -66,14 +70,32 @@ export async function unfollow(allocationId) {
   return res.json();
 }
 
+function pammErrorMessage(res, data, fallback) {
+  if (res.status === 401) {
+    const reason = data?.reason;
+    if (reason === 'missing_authorization') {
+      return 'No access token was sent. Log out, log in again, then retry Add funds.';
+    }
+    if (reason === 'invalid_or_expired_token' || reason === 'token_missing_subject') {
+      return 'Your session token is invalid or expired. Log in again.';
+    }
+    if (reason === 'token_revoked') {
+      return 'Your session was ended (e.g. log out elsewhere). Log in again.';
+    }
+    return data?.error || 'Please sign in again — your session may have expired.';
+  }
+  return data?.error || data?.message || fallback;
+}
+
 /** Request withdrawal from allocation. Blocked when fund has active trade. */
 export async function withdraw(allocationId, amount) {
   const res = await fetchWithAuth('/pamm/withdraw', {
     method: 'POST',
     body: JSON.stringify({ allocationId, amount: Number(amount) }),
   });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to withdraw');
-  return res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(pammErrorMessage(res, data, 'Failed to withdraw'));
+  return data;
 }
 
 /** Add funds to existing allocation. */
@@ -82,8 +104,9 @@ export async function addFunds(allocationId, amount) {
     method: 'POST',
     body: JSON.stringify({ allocationId, amount: Number(amount) }),
   });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to add funds');
-  return res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(pammErrorMessage(res, data, 'Failed to add funds'));
+  return data;
 }
 
 /** Manager only: list investors for a fund (requires auth). */
@@ -106,7 +129,7 @@ export async function getInvestorDetail(fundId, followerId) {
 
 /** Public PAMM config (e.g. enabled for users). */
 export async function getPammConfig() {
-  const res = await fetch(`${API_BASE}/pamm/config`);
+  const res = await fetch(`${getApiBase()}/pamm/config`);
   if (!res.ok) return { enabledForUsers: true };
   const data = await res.json().catch(() => ({}));
   return {

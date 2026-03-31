@@ -156,13 +156,14 @@ async function listPammCommissions(req, res, next) {
     const profile = await ibRepo.getProfileByUserId(userId) || await ibRepo.getProfileById(userId);
     const effectiveIbId = profile?.userId != null ? String(profile.userId) : userId;
 
-    const { from, to, limit } = req.query;
+    const { from, to, limit, startDate } = req.query;
     const options = {};
     if (from) options.from = new Date(from);
     if (to) options.to = new Date(to);
     if (limit != null) options.limit = Math.min(parseInt(limit, 10) || 100, 200);
-    const list = await ibRepo.listPammIbCommissionLogsForIb(effectiveIbId, options);
-    res.json(list);
+    if (startDate) options.startDate = String(startDate).trim();
+    const payload = await ibRepo.listPammIbCommissionLogsWithInvestorDetails(effectiveIbId, options);
+    res.json(payload);
   } catch (e) {
     next(e);
   }

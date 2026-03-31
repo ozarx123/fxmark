@@ -5,6 +5,7 @@ import { randomBytes } from 'crypto';
 import { getDb } from '../../config/mongo.js';
 import { ObjectId } from 'mongodb';
 import userRepo from '../users/user.repository.js';
+import pammRepo from '../pamm/pamm.repository.js';
 
 function generateReferralCode() {
   return randomBytes(9)
@@ -282,6 +283,14 @@ async function ensurePammIbPayoutUniqueIndex() {
     );
   } catch (e) {
     if (e?.code !== 11000) console.warn('[ib] pamm_ib payout unique index:', e.message);
+  }
+  try {
+    await col.createIndex(
+      { investor_id: 1, created_at: -1 },
+      { name: 'pamm_ib_commission_investor_created' }
+    );
+  } catch (e) {
+    if (e?.code !== 11000) console.warn('[ib] pamm_ib commission investor index:', e.message);
   }
   pammIbPayoutIndexEnsured = true;
 }
@@ -588,6 +597,105 @@ async function listPammIbCommissionLogsForIb(ibId, options = {}) {
   }));
 }
 
+/** IB dashboard: hide PAMM commission rows before this instant (UTC). Override with options.startDate (ISO). */
+const PAMM_IB_DASHBOARD_MIN_CREATED_AT = new Date('2026-03-30T00:00:00.000Z');
+
+/**
+ * Merge IB dashboard date options with minimum visible date. Does not change listPammIbCommissionLogsForIb behavior when called without these options (e.g. audit scripts).
+ * @param {object} options - { from?, to?, limit?, startDate? }
+ */
+function resolvePammIbDashboardCommissionQueryOptions(options = {}) {
+  const minStart =
+    options.startDate != null && !Number.isNaN(new Date(options.startDate).getTime())
+      ? new Date(options.startDate)
+      : PAMM_IB_DASHBOARD_MIN_CREATED_AT;
+
+  const limit = options.limit != null ? Math.min(Number(options.limit) || 200, 200) : 200;
+
+  const rawFrom = options.from;
+  const rawTo = options.to;
+
+  if (rawFrom != null || rawTo != null) {
+    const from = rawFrom != null ? new Date(rawFrom) : minStart;
+    const effectiveFrom = from.getTime() < minStart.getTime() ? minStart : from;
+    const out = { limit, from: effectiveFrom };
+    if (rawTo != null) out.to = new Date(rawTo);
+    return out;
+  }
+
+  const now = new Date();
+  const startOfTodayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const windowStart = new Date(startOfTodayUtc.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const effectiveFrom = windowStart.getTime() < minStart.getTime() ? minStart : windowStart;
+  const endWithBuffer = new Date(now.getTime() + 60 * 1000);
+  return { limit, from: effectiveFrom, to: endWithBuffer };
+}
+
+/**
+ * PAMM IB commission rows for dashboard with investor + invested amount (read-only enrichment).
+ * @returns {{ total30d: number, commissions: object[] }}
+ */
+async function listPammIbCommissionLogsWithInvestorDetails(ibId, options = {}) {
+  await ensurePammIbPayoutUniqueIndex();
+  const queryOpts = resolvePammIbDashboardCommissionQueryOptions(options);
+  const logs = await listPammIbCommissionLogsForIb(ibId, queryOpts);
+  if (!logs.length) {
+    return { total30d: 0, commissions: [] };
+  }
+
+  const investorIds = [...new Set(logs.map((l) => l.investor_id).filter(Boolean))];
+  const pairKeys = new Map();
+  for (const l of logs) {
+    if (l.investor_id && l.pool_id != null) {
+      const k = `${l.investor_id}:${String(l.pool_id)}`;
+      if (!pairKeys.has(k)) {
+        pairKeys.set(k, { followerId: l.investor_id, managerId: String(l.pool_id) });
+      }
+    }
+  }
+  const pairs = [...pairKeys.values()];
+
+  const [userMap, allocMap] = await Promise.all([
+    userRepo.findManyByIds(investorIds),
+    pammRepo.getActiveAllocationBalancesForPairs(pairs),
+  ]);
+
+  const commissions = logs.map((c) => {
+    const invId = c.investor_id;
+    const u = invId ? userMap.get(invId) : null;
+    const investorAccountNumber = u?.accountNo != null ? u.accountNo : null;
+    const poolKey = invId != null && c.pool_id != null ? `${invId}:${String(c.pool_id)}` : null;
+    let invested = poolKey ? allocMap.get(poolKey) : null;
+    if (invested == null || Number.isNaN(invested)) {
+      invested = c.active_capital_base != null ? Number(c.active_capital_base) : 0;
+    } else {
+      invested = Number(invested);
+    }
+    const amt = Number(c.commission_amount ?? 0);
+    const levNum = c.level_number;
+    const levLabel = levNum != null && Number.isFinite(Number(levNum)) ? `L${levNum}` : '—';
+    const created = c.created_at instanceof Date ? c.created_at : new Date(c.created_at);
+    return {
+      id: c.id,
+      date: created.toISOString(),
+      level: levLabel,
+      commissionAmount: Math.round(amt * 100) / 100,
+      investedAmount: Math.round(invested * 100) / 100,
+      investorAccountNumber,
+      investor: {
+        id: invId || '',
+        accountNumber: investorAccountNumber,
+      },
+    };
+  });
+
+  const total30d = commissions
+    .filter((x) => x.commissionAmount > 0)
+    .reduce((s, x) => s + x.commissionAmount, 0);
+
+  return { total30d: Math.round(total30d * 100) / 100, commissions };
+}
+
 /** Get hierarchy depth (level) for an IB: 1 = top, 2 = under level 1, etc. */
 async function getHierarchyDepth(userId) {
   const col = await profilesCol();
@@ -882,6 +990,7 @@ export default {
   listCompanyCommissionPoolEntries,
   listPammIbCommissionLogs,
   listPammIbCommissionLogsForIb,
+  listPammIbCommissionLogsWithInvestorDetails,
   incrementPammInvestorDailyCreditedProfit,
   getPammInvestorDailyCreditedProfit,
   getPammIbCommissionPaidToday,

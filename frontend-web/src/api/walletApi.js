@@ -1,19 +1,18 @@
 import { getApiBase } from '../config/apiBase.js';
+import { getAuthAccessToken } from '../lib/authAccessToken.js';
 
 /**
  * Wallet API — balance, deposits, withdrawals (requires Bearer token)
  */
-const API_BASE = getApiBase();
-
 function getToken() {
-  return localStorage.getItem('fxmark_token');
+  return getAuthAccessToken();
 }
 
 async function fetchWithAuth(url, options = {}) {
   const token = getToken();
   const headers = { 'Content-Type': 'application/json', ...options.headers };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(`${API_BASE}${url}`, { ...options, headers });
+  const res = await fetch(`${getApiBase()}${url}`, { ...options, headers });
   return res;
 }
 
@@ -27,8 +26,14 @@ export async function getBalance(currency = 'USD') {
 /** Get available payment methods (when PSP is enabled) */
 export async function getPaymentMethods() {
   const res = await fetchWithAuth('/wallet/payment-methods');
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to load payment methods');
-  return res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (res.status === 401) {
+      throw new Error('Unauthorized');
+    }
+    throw new Error(data.error || data.message || 'Failed to load payment methods');
+  }
+  return data;
 }
 
 /** List deposits */
@@ -74,6 +79,23 @@ export async function createDeposit(payload) {
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error || 'Failed to create deposit');
+  }
+  return res.json();
+}
+
+/** Create NOWPayments deposit (USDT BEP20), returns payment details/invoice */
+export async function createNowpaymentsDeposit(payload) {
+  const body = {
+    amount: Number(payload.amount),
+    currency: payload.currency || 'USD',
+  };
+  const res = await fetchWithAuth('/wallet/deposits/nowpayments', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to create NOWPayments deposit');
   }
   return res.json();
 }

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react';
-import { createChart } from 'lightweight-charts';
+import { createChart, CandlestickSeries, LineSeries } from 'lightweight-charts';
 import { getCurrentBarStart } from '../lib/candleTime.js';
 import { generateSampleOHLC } from '../lib/sampleOHLC.js';
 import { sma, bollingerBands, rsi } from '../lib/indicatorUtils.js';
@@ -289,7 +289,7 @@ function FxChart({
     };
 
     seriesRef.current = showCandles
-      ? chart.addCandlestickSeries({
+      ? chart.addSeries(CandlestickSeries, {
           // Inverted & brighter: solid green up candles, solid red down candles
           upColor: '#16a34a',
           downColor: '#ff0000',
@@ -299,7 +299,7 @@ function FxChart({
           wickDownColor: '#ff0000',
           priceFormat,
         })
-      : chart.addLineSeries({
+      : chart.addSeries(LineSeries, {
           color: '#f97373',
           lineWidth: 2,
           lastValueVisible: true,
@@ -386,7 +386,7 @@ function FxChart({
       const maData = sma(data, maPeriod);
       if (maData.length === 0) return;
       if (!refs.ma) {
-        refs.ma = chart.addLineSeries({
+        refs.ma = chart.addSeries(LineSeries, {
           color: '#f59e0b',
           lineWidth: 1,
           priceScaleId: 'right',
@@ -405,9 +405,9 @@ function FxChart({
       const { middle, upper, lower } = bollingerBands(data, bbPeriod, bbStd);
       if (middle.length === 0) return;
       if (!refs.bbUpper) {
-        refs.bbUpper = chart.addLineSeries({ color: 'rgba(34, 197, 94, 0.6)', lineWidth: 1, priceScaleId: 'right', priceFormat });
-        refs.bbMiddle = chart.addLineSeries({ color: 'rgba(34, 197, 94, 0.8)', lineWidth: 1, priceScaleId: 'right', priceFormat });
-        refs.bbLower = chart.addLineSeries({ color: 'rgba(34, 197, 94, 0.6)', lineWidth: 1, priceScaleId: 'right', priceFormat });
+        refs.bbUpper = chart.addSeries(LineSeries, { color: 'rgba(34, 197, 94, 0.6)', lineWidth: 1, priceScaleId: 'right', priceFormat });
+        refs.bbMiddle = chart.addSeries(LineSeries, { color: 'rgba(34, 197, 94, 0.8)', lineWidth: 1, priceScaleId: 'right', priceFormat });
+        refs.bbLower = chart.addSeries(LineSeries, { color: 'rgba(34, 197, 94, 0.6)', lineWidth: 1, priceScaleId: 'right', priceFormat });
       }
       try {
         refs.bbUpper.setData(upper);
@@ -425,7 +425,7 @@ function FxChart({
       const rsiData = rsi(data, rsiPeriod);
       if (rsiData.length === 0) return;
       if (!refs.rsi) {
-        refs.rsi = chart.addLineSeries({
+        refs.rsi = chart.addSeries(LineSeries, {
           color: '#8b5cf6',
           lineWidth: 1,
           priceScaleId: 'rsi',
@@ -473,7 +473,7 @@ function FxChart({
       const p2 = d.price2 != null && Number.isFinite(Number(d.price2)) ? Number(d.price2) : null;
       if (p1 == null || p2 == null) return;
       if (!trendRefs.get(id)) {
-        const lineSeries = chart.addLineSeries({
+        const lineSeries = chart.addSeries(LineSeries, {
           color: 'rgba(59, 130, 246, 0.9)',
           lineWidth: 2,
           priceScaleId: 'right',

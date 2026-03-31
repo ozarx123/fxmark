@@ -12,9 +12,12 @@ import financeRoutes from '../modules/finance/finance.routes.js';
 import tradingRoutes from '../modules/trading/trading.routes.js';
 import ibRoutes from '../modules/ib/ib.routes.js';
 import pammRoutes from '../modules/pamm/pamm.routes.js';
+import nowpaymentsWebhook from '../modules/nowpayments/nowpayments.webhook.controller.js';
 
 const router = express.Router();
 router.use(requireDb);
+
+router.post('/webhooks/nowpayments', nowpaymentsWebhook);
 
 router.use('/auth', authRoutes);
 router.use('/trading', tradingRoutes);

@@ -14,6 +14,7 @@ const DB_CHECK_TTL_MS = 5000;
 
 /** Returns 503 if MongoDB is unavailable (cached 5s). Skips /health on this router. */
 export const requireDb = async (req, res, next) => {
+  if (req.method === 'OPTIONS') return next();
   const path = req.path || '';
   if (path === '/health') return next();
   const now = Date.now();
@@ -28,7 +29,10 @@ export const requireDb = async (req, res, next) => {
     return next();
   }
   try {
-    if (!process.env.CONNECTION_STRING && !process.env.MONGODB_URI) {
+    const hasUri =
+      !!(process.env.CONNECTION_STRING && String(process.env.CONNECTION_STRING).trim()) ||
+      !!(process.env.MONGODB_URI && String(process.env.MONGODB_URI).trim());
+    if (!hasUri) {
       dbCheckOk = false;
       dbCheckLast = now;
       dbCheckLastError = 'CONNECTION_STRING / MONGODB_URI not set';
@@ -59,15 +63,34 @@ export const requestId = (req, res, next) => {
   next();
 };
 
+/** Case-insensitive `Bearer <jwt>`; trims token (avoids silent 401 when clients send `bearer`). */
+function parseBearerToken(req) {
+  const h = req.headers.authorization;
+  if (!h || typeof h !== 'string') return '';
+  const m = h.match(/^\s*Bearer\s+(\S+)/i);
+  return m ? String(m[1]).trim() : '';
+}
+
 export const authenticate = async (req, res, next) => {
   try {
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+    const token = parseBearerToken(req);
+    if (!token) {
+      return res.status(401).json({ error: 'Unauthorized', reason: 'missing_authorization' });
+    }
     const payload = jwtStrategy.decode(token);
-    if (!payload) return res.status(401).json({ error: 'Invalid token' });
-    req.user = payload;
-    if (!payload.role && payload.id) {
-      const user = await userRepo.findById(payload.id);
+    if (!payload) {
+      return res.status(401).json({ error: 'Invalid token', reason: 'invalid_or_expired_token' });
+    }
+    if (payload.jti && (await isAccessJtiRevoked(payload.jti))) {
+      return res.status(401).json({ error: 'Token revoked', reason: 'token_revoked' });
+    }
+    const uid = payload.id ?? payload.sub ?? payload.userId ?? payload._id;
+    if (uid == null || uid === '') {
+      return res.status(401).json({ error: 'Invalid token', reason: 'token_missing_subject' });
+    }
+    req.user = { ...payload, id: String(uid) };
+    if (!payload.role && req.user.id) {
+      const user = await userRepo.findById(req.user.id);
       if (user) req.user.role = user.role || 'user';
     }
     next();
@@ -79,14 +102,16 @@ export const authenticate = async (req, res, next) => {
 /** Like authenticate but does not require a token; sets req.user only when token is valid. */
 export const optionalAuthenticate = async (req, res, next) => {
   try {
-    const token = req.headers.authorization?.replace('Bearer ', '');
+    const token = parseBearerToken(req);
     if (!token) return next();
     const payload = jwtStrategy.decode(token);
     if (!payload) return next();
     if (payload.jti && (await isAccessJtiRevoked(payload.jti))) return next();
-    req.user = payload;
-    if (!payload.role && payload.id) {
-      const user = await userRepo.findById(payload.id);
+    const uid = payload.id ?? payload.sub ?? payload.userId ?? payload._id;
+    if (uid == null || uid === '') return next();
+    req.user = { ...payload, id: String(uid) };
+    if (!payload.role && req.user.id) {
+      const user = await userRepo.findById(req.user.id);
       if (user) req.user.role = user.role || 'user';
     }
     next();
@@ -131,6 +156,8 @@ function isMongoConnectivityError(err) {
   ) {
     return false;
   }
+  // MongoServerError includes duplicate key (11000), validation, etc. — not "DB unreachable"
+  if (err?.name === 'MongoServerError') return false;
   if (isMongoDriverErrorName(err)) return true;
   return (
     m.includes('mongodb') ||

@@ -5,7 +5,7 @@ import { useMarketDataContext } from '../../context/MarketDataContext';
 import { useTradingSocket } from '../../services/tradingSocket';
 import { useTradeNotifications } from '../../hooks/useTradeNotifications';
 import { useIsMobile } from '../../hooks/useMediaQuery';
-import { getDatafeedSocket } from '../../lib/datafeedSocket';
+import { getDatafeedSocket, syncDatafeedSocketAuth } from '../../lib/datafeedSocket';
 import * as tradingApi from '../../api/tradingApi';
 import { computeFloatingPnL, getPriceDifference } from '../../lib/positionPnL';
 import SymbolsQuotesPanel from '../../components/trading/SymbolsQuotesPanel';
@@ -53,6 +53,8 @@ export default function TerminalLayout() {
   const marginWarnShownRef = useRef(false);
   const tradeRefreshTimerRef = useRef(null);
   const quickOrderLockRef = useRef(false);
+  const placeOrderInFlightRef = useRef(false);
+  const accountIdRef = useRef(null);
   const [alerts, setAlerts] = useState([]);
 
   const addPriceAlert = useCallback((symbol, price, condition = 'above') => {
@@ -324,7 +326,7 @@ export default function TerminalLayout() {
     refreshLiveBalance?.();
   }, [loadTradingData, refreshLiveBalance]);
 
-  // Debounced refresh so burst socket events (trade:update + order_*) do not hammer the API.
+  // Debounced refresh: trade:update is authoritative (backend also emits order_*; those would duplicate refetches).
   useEffect(() => {
     const socket = getDatafeedSocket?.();
     if (!socket || !loadTradingData) return;
@@ -336,16 +338,17 @@ export default function TerminalLayout() {
         refreshLiveBalance?.();
       }, 280);
     };
-    socket.on('order_created', scheduleRefresh);
-    socket.on('order_triggered', scheduleRefresh);
-    socket.on('order_cancelled', scheduleRefresh);
-    socket.on('trade:update', scheduleRefresh);
+    const onTradeUpdate = (payload) => {
+      const active = accountIdRef.current;
+      if (payload && payload.accountId != null && active && String(payload.accountId) !== String(active)) {
+        return;
+      }
+      scheduleRefresh();
+    };
+    socket.on('trade:update', onTradeUpdate);
     socket.on('risk_event', scheduleRefresh);
     return () => {
-      socket.off('order_created', scheduleRefresh);
-      socket.off('order_triggered', scheduleRefresh);
-      socket.off('order_cancelled', scheduleRefresh);
-      socket.off('trade:update', scheduleRefresh);
+      socket.off('trade:update', onTradeUpdate);
       socket.off('risk_event', scheduleRefresh);
       if (tradeRefreshTimerRef.current) clearTimeout(tradeRefreshTimerRef.current);
     };
@@ -423,8 +426,11 @@ export default function TerminalLayout() {
       setOrderError('Market price not available.');
       return;
     }
+    if (quickOrderLockRef.current) return;
     setOrderError(null);
     setQuickOrderLoading(true);
+    quickOrderLockRef.current = true;
+    const clientOrderId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined;
     try {
       const result = await tradingApi.placeOrder({
         symbol: symbol.replace(/\//g, ''),
@@ -434,6 +440,7 @@ export default function TerminalLayout() {
         volume: vol,
         lots: vol,
         price: marketPrice,
+        ...(clientOrderId ? { clientOrderId } : {}),
       }, { accountId, accountNumber });
       if (result?.status === 'rejected') {
         setOrderError(result.rejectReason || result.order?.rejectReason || 'Order rejected');
@@ -512,6 +519,8 @@ export default function TerminalLayout() {
         setOrderError('Market price not available.');
         return;
       }
+      if (placeOrderInFlightRef.current) return;
+      placeOrderInFlightRef.current = true;
       setOrderError(null);
       const clientOrderId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : undefined;
       try {
@@ -538,6 +547,8 @@ export default function TerminalLayout() {
         loadTradingData();
       } catch (e) {
         throw e;
+      } finally {
+        placeOrderInFlightRef.current = false;
       }
     },
     [accountId, accountNumber, symbol, marketPrice, loadTradingData],

@@ -4,6 +4,7 @@ import {
   getWithdrawals,
   getWithdrawalDetail,
   updateWithdrawalStatus,
+  completeWithdrawal,
   getWithdrawalApprovalSettings,
   updateWithdrawalApprovalSettings,
   getActivity,
@@ -90,6 +91,25 @@ export default function AdminAccountsCommandCenter() {
       loadAll();
     } catch (e) {
       setError(e.message || 'Update failed');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleCompleteWithdrawal = async (id) => {
+    if (!window.confirm('Are you sure funds are sent to user?')) return;
+    setActionLoading(true);
+    setError('');
+    try {
+      const data = await completeWithdrawal(id);
+      const w = data.withdrawal;
+      if (w) {
+        setWithdrawals((prev) => prev.map((row) => (row.id === id ? { ...row, ...w } : row)));
+        setDetail((d) => (d && d.id === id ? { ...d, ...w } : d));
+      }
+      await loadAll();
+    } catch (e) {
+      setError(e.message || 'Completion failed');
     } finally {
       setActionLoading(false);
     }
@@ -283,7 +303,10 @@ export default function AdminAccountsCommandCenter() {
                         </>
                       )}
                       {w.status === 'approved' && (
-                        <button type="button" className="btn btn-sm btn-danger" onClick={() => handleStatusChange(w.id, 'rejected')} disabled={actionLoading}>Reject</button>
+                        <>
+                          <button type="button" className="btn btn-sm btn-success" onClick={() => handleCompleteWithdrawal(w.id)} disabled={actionLoading}>Complete</button>
+                          <button type="button" className="btn btn-sm btn-danger" onClick={() => handleStatusChange(w.id, 'rejected')} disabled={actionLoading}>Reject</button>
+                        </>
                       )}
                     </td>
                   </tr>
@@ -452,7 +475,7 @@ export default function AdminAccountsCommandCenter() {
                   maxLength={2000}
                 />
               </label>
-              <p><strong>Flow</strong> pending → review → approved → user Process → completed</p>
+              <p><strong>Flow</strong> pending → review → approved → Complete (admin) → completed</p>
               {detail.status === 'pending' && (
                 <div className="drawer-actions">
                   <button type="button" className="btn btn-secondary" onClick={() => handleStatusChange(detail.id, 'review')} disabled={actionLoading}>Send to review</button>
@@ -467,6 +490,7 @@ export default function AdminAccountsCommandCenter() {
               )}
               {detail.status === 'approved' && (
                 <div className="drawer-actions">
+                  <button type="button" className="btn btn-success" onClick={() => handleCompleteWithdrawal(detail.id)} disabled={actionLoading}>Complete</button>
                   <button type="button" className="btn btn-danger" onClick={() => handleStatusChange(detail.id, 'rejected')} disabled={actionLoading}>Reject (before payout)</button>
                 </div>
               )}

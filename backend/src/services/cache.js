@@ -10,18 +10,23 @@ import fs from 'fs';
 import dotenv from 'dotenv';
 import Redis from 'ioredis';
 
-// Ensure .env is loaded from backend root (works regardless of process cwd or import order)
+// Ensure backend env is loaded from backend root (works regardless of process cwd or import order)
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const envPath = path.resolve(__dirname, '../../.env');
+const requestedEnvFile = (process.env.BACKEND_ENV_FILE || '').trim();
+const envPath = requestedEnvFile
+  ? path.resolve(__dirname, '../../', requestedEnvFile)
+  : process.env.NODE_ENV === 'staging'
+    ? path.resolve(__dirname, '../../.env.staging')
+    : path.resolve(__dirname, '../../.env');
 const envExists = fs.existsSync(envPath);
 const result = dotenv.config({ path: envPath, override: true });
 if (!envExists) {
-  console.warn('[cache] .env not found at', envPath, '- Redis will be disabled unless REDIS_URL/REDIS_HOST is set in environment');
+  console.warn('[cache] env file not found at', envPath, '- Redis will be disabled unless REDIS_URL/REDIS_HOST is set in environment');
 } else if (result.error) {
-  console.warn('[cache] Failed to load .env:', result.error.message);
+  console.warn('[cache] Failed to load env file:', result.error.message);
 } else {
   const hasRedis = !!(process.env.REDIS_URL || (process.env.REDIS_HOST || '').trim());
-  console.log('[cache] .env loaded from', envPath, '| REDIS_URL/REDIS_HOST set:', hasRedis);
+  console.log('[cache] env loaded from', envPath, '| REDIS_URL/REDIS_HOST set:', hasRedis);
 }
 
 const memoryStore = new Map();
@@ -180,4 +185,38 @@ export async function del(key) {
   }
   memoryStore.delete(key);
   return Promise.resolve();
+}
+
+/**
+ * Distributed lock (Redis SET NX EX). Returns true if lock acquired.
+ * Without Redis: returns true (single-process; no cross-instance coordination).
+ */
+export async function acquireLock(key, ttlSeconds = 10) {
+  const redis = getRedis();
+  if (!redis) return true;
+  try {
+    const k = CACHE_PREFIX + 'lock:' + String(key);
+    const ok = await redis.set(k, '1', 'EX', Math.max(1, ttlSeconds), 'NX');
+    return ok === 'OK';
+  } catch (err) {
+    redisFailed = true;
+    console.warn('[cache] Redis lock failed:', err.message);
+    return false;
+  }
+}
+
+export async function releaseLock(key) {
+  await del('lock:' + String(key));
+}
+
+/** Close Redis so test/CLI processes can exit (ioredis keeps the event loop alive otherwise). */
+export async function closeRedisConnection() {
+  if (!redisClient) return;
+  try {
+    await redisClient.quit();
+  } catch {
+    /* ignore */
+  }
+  redisClient = null;
+  redisFailed = false;
 }

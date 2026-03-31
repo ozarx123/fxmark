@@ -264,6 +264,11 @@ async function login(payload) {
     err.statusCode = 401;
     throw err;
   }
+  if (!user.passwordHash || typeof user.passwordHash !== 'string') {
+    const err = new Error('Invalid email or password');
+    err.statusCode = 401;
+    throw err;
+  }
   const ok = await bcrypt.compare(password, user.passwordHash);
   if (!ok) {
     const err = new Error('Invalid email or password');
@@ -284,12 +289,23 @@ async function login(payload) {
 }
 
 async function createRefreshToken(userId) {
+  const uid = userId != null ? String(userId) : '';
+  if (!uid) {
+    const err = new Error('Invalid session');
+    err.statusCode = 401;
+    throw err;
+  }
   const jti = randomBytes(24).toString('hex');
-  const token = signRefreshToken({ id: userId, jti });
+  const token = signRefreshToken({ id: uid, jti });
   const decoded = jwt.decode(token);
+  if (!decoded?.exp || !Number.isFinite(decoded.exp)) {
+    const err = new Error('Token configuration error');
+    err.statusCode = 500;
+    throw err;
+  }
   const col = await refreshCollection();
   await col.insertOne({
-    userId,
+    userId: uid,
     jti,
     expiresAt: new Date(decoded.exp * 1000),
     createdAt: new Date(),

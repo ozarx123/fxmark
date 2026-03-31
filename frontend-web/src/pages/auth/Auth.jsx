@@ -5,8 +5,6 @@ import FxmarkLogo from '../../components/FxmarkLogo';
 import { getApiBase } from '../../config/apiBase.js';
 
 import { ensureUserRole } from '../../utils/authHelpers';
-
-const API_BASE = getApiBase();
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PASSWORD_MIN = 8;
 
@@ -53,9 +51,11 @@ export default function Auth() {
 
   const [loginIdentifier, setLoginIdentifier] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
 
   const [signupEmail, setSignupEmail] = useState('');
   const [signupPassword, setSignupPassword] = useState('');
+  const [showSignupPassword, setShowSignupPassword] = useState(false);
   const [signupName, setSignupName] = useState('');
   const [signupPhone, setSignupPhone] = useState('');
 
@@ -72,7 +72,7 @@ export default function Auth() {
     const isAccountNoLogin = !trimmedId.includes('@');
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/auth/login`, {
+      const res = await fetch(`${getApiBase()}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: trimmedId, password: loginPassword }),
@@ -132,7 +132,7 @@ export default function Auth() {
     }
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/auth/signup`, {
+      const res = await fetch(`${getApiBase()}/auth/signup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -181,7 +181,7 @@ export default function Auth() {
 
   const handleGoogleAuth = () => {
     const redirect = `${window.location.origin}/auth/callback`;
-    window.location.href = `${API_BASE}/auth/google?redirect=${encodeURIComponent(redirect)}`;
+    window.location.href = `${getApiBase()}/auth/google?redirect=${encodeURIComponent(redirect)}`;
   };
 
   return (
@@ -194,14 +194,14 @@ export default function Auth() {
           <button
             type="button"
             className={`auth-tab ${tab === 'login' ? 'active' : ''}`}
-            onClick={() => { setTab('login'); setError(''); }}
+            onClick={() => { setTab('login'); setError(''); setShowLoginPassword(false); }}
           >
             Login
           </button>
           <button
             type="button"
             className={`auth-tab ${tab === 'signup' ? 'active' : ''}`}
-            onClick={() => { setTab('signup'); setError(''); }}
+            onClick={() => { setTab('signup'); setError(''); setShowSignupPassword(false); }}
           >
             Sign up
           </button>
@@ -236,15 +236,36 @@ export default function Auth() {
             </label>
             <label className="auth-label">
               Password
-              <input
-                type="password"
-                className="auth-input"
-                placeholder="••••••••"
-                value={loginPassword}
-                onChange={(e) => setLoginPassword(e.target.value)}
-                required
-                autoComplete="current-password"
-              />
+              <div className="auth-password-field">
+                <input
+                  type={showLoginPassword ? 'text' : 'password'}
+                  className="auth-input"
+                  placeholder="••••••••"
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  required
+                  autoComplete="current-password"
+                />
+                <button
+                  type="button"
+                  className="auth-password-toggle"
+                  onClick={() => setShowLoginPassword((v) => !v)}
+                  aria-label={showLoginPassword ? 'Hide password' : 'Show password'}
+                  tabIndex={0}
+                >
+                  {showLoginPassword ? (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                      <line x1="1" y1="1" x2="23" y2="23" />
+                    </svg>
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                      <circle cx="12" cy="12" r="3" />
+                    </svg>
+                  )}
+                </button>
+              </div>
             </label>
             <div style={{ textAlign: 'right', marginTop: '-0.35rem', marginBottom: '0.35rem' }}>
               <Link to="/forgot-password" className="auth-link" style={{ fontSize: '0.9rem' }}>Forgot password?</Link>
@@ -291,16 +312,37 @@ export default function Auth() {
             </label>
             <label className="auth-label">
               Password
-              <input
-                type="password"
-                className="auth-input"
-                placeholder="Min 8 chars, uppercase, lowercase, number"
-                value={signupPassword}
-                onChange={(e) => setSignupPassword(e.target.value)}
-                required
-                minLength={8}
-                autoComplete="new-password"
-              />
+              <div className="auth-password-field">
+                <input
+                  type={showSignupPassword ? 'text' : 'password'}
+                  className="auth-input"
+                  placeholder="Min 8 chars, uppercase, lowercase, number"
+                  value={signupPassword}
+                  onChange={(e) => setSignupPassword(e.target.value)}
+                  required
+                  minLength={8}
+                  autoComplete="new-password"
+                />
+                <button
+                  type="button"
+                  className="auth-password-toggle"
+                  onClick={() => setShowSignupPassword((v) => !v)}
+                  aria-label={showSignupPassword ? 'Hide password' : 'Show password'}
+                  tabIndex={0}
+                >
+                  {showSignupPassword ? (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                      <line x1="1" y1="1" x2="23" y2="23" />
+                    </svg>
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                      <circle cx="12" cy="12" r="3" />
+                    </svg>
+                  )}
+                </button>
+              </div>
             </label>
             <button type="submit" className="auth-submit" disabled={loading}>
               {loading ? 'Creating account…' : 'Sign up'}
@@ -310,7 +352,16 @@ export default function Auth() {
 
         <p className="auth-footer">
           {tab === 'login' ? "Don't have an account? " : 'Already have an account? '}
-          <button type="button" className="auth-link" onClick={() => { setTab(tab === 'login' ? 'signup' : 'login'); setError(''); }}>
+          <button
+            type="button"
+            className="auth-link"
+            onClick={() => {
+              setTab(tab === 'login' ? 'signup' : 'login');
+              setError('');
+              setShowLoginPassword(false);
+              setShowSignupPassword(false);
+            }}
+          >
             {tab === 'login' ? 'Sign up' : 'Log in'}
           </button>
         </p>

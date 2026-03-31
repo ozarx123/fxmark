@@ -4,6 +4,7 @@ import {
   getWithdrawals,
   getWithdrawalDetail,
   updateWithdrawalStatus,
+  completeWithdrawal,
 } from '../../api/adminApi';
 
 const RISK_OPTIONS = [
@@ -108,6 +109,26 @@ export default function AdminFraudDashboard() {
       loadStats();
     } catch (e) {
       setError(e.message || 'Update failed');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleCompleteWithdrawal = async (id) => {
+    if (!window.confirm('Are you sure funds are sent to user?')) return;
+    setActionLoading(true);
+    setError('');
+    try {
+      const data = await completeWithdrawal(id);
+      const w = data.withdrawal;
+      if (w) {
+        setWithdrawals((prev) => prev.map((row) => (row.id === id ? { ...row, ...w } : row)));
+        setDetail((d) => (d && d.id === id ? { ...d, ...w } : d));
+      }
+      await loadWithdrawals();
+      loadStats();
+    } catch (e) {
+      setError(e.message || 'Completion failed');
     } finally {
       setActionLoading(false);
     }
@@ -324,14 +345,24 @@ export default function AdminFraudDashboard() {
                           </>
                         )}
                         {w.status === 'approved' && (
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-danger"
-                            onClick={() => handleStatusChange(w.id, 'rejected')}
-                            disabled={actionLoading}
-                          >
-                            Reject
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-success"
+                              onClick={() => handleCompleteWithdrawal(w.id)}
+                              disabled={actionLoading}
+                            >
+                              Complete
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-danger"
+                              onClick={() => handleStatusChange(w.id, 'rejected')}
+                              disabled={actionLoading}
+                            >
+                              Reject
+                            </button>
+                          </>
                         )}
                       </td>
                     </tr>
@@ -381,7 +412,7 @@ export default function AdminFraudDashboard() {
                   maxLength={2000}
                 />
               </label>
-              <p><strong>Flow</strong> pending → review → approved → completed (via user process)</p>
+              <p><strong>Flow</strong> pending → review → approved → Complete (admin) → completed</p>
               {detail.status === 'pending' && (
                 <div className="drawer-actions">
                   <button type="button" className="btn btn-secondary" onClick={() => handleStatusChange(detail.id, 'review')} disabled={actionLoading}>Send to review</button>
@@ -396,6 +427,7 @@ export default function AdminFraudDashboard() {
               )}
               {detail.status === 'approved' && (
                 <div className="drawer-actions">
+                  <button type="button" className="btn btn-success" onClick={() => handleCompleteWithdrawal(detail.id)} disabled={actionLoading}>Complete</button>
                   <button type="button" className="btn btn-danger" onClick={() => handleStatusChange(detail.id, 'rejected')} disabled={actionLoading}>Reject (before payout)</button>
                 </div>
               )}

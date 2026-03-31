@@ -19,8 +19,6 @@ export const CURATED_ENV_KEYS = [
   'API_URL',
   'FRONTEND_URL',
   'WEB_APP_URL',
-  'TWELVE_DATA_API_KEY',
-  'TWELVE_DATA_WS',
   'FINNHUB_API_KEY',
   'JWT_SECRET',
   'JWT_EXPIRY',
@@ -70,6 +68,9 @@ export function maskSecret(value) {
 
 /** Load DB overrides into process.env (call after Mongo ping, before feeds that read env). */
 export async function applyPlatformEnvOverridesFromDatabase() {
+  if (String(process.env.PLATFORM_ENV_OVERRIDES_ENABLED || 'true').toLowerCase() === 'false') {
+    return { applied: 0, skipped: true };
+  }
   let entries;
   try {
     entries = await repo.getEntries();
@@ -111,7 +112,7 @@ export async function listForAdmin() {
         'Mongo connection strings (CONNECTION_STRING / MONGODB_URI) cannot be stored here — set them in the host environment or backend/.env.',
       mergeOrder: 'On each process start, backend/.env loads first, then database overrides replace values for the same key names.',
       hotUpdate:
-        'Saving here updates process.env immediately. Feeds that read keys when they start (e.g. Finnhub/TwelveData) pick up changes after the next server restart unless they re-read env dynamically.',
+        'Saving here updates process.env immediately. Feeds that read keys when they start (e.g. Finnhub) pick up changes after the next server restart unless they re-read env dynamically.',
     },
   };
 }

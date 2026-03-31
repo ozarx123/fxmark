@@ -27,6 +27,7 @@ export async function emitTradeUpdate(userId, accountId = null) {
       positions,
       orders: pendingOrders,
       at: new Date().toISOString(),
+      accountId: accountId != null ? String(accountId) : null,
     });
   } catch (e) {
     console.warn('[tradeEvents] emitTradeUpdate failed:', e.message);

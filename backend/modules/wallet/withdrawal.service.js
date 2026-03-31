@@ -2,7 +2,6 @@
  * Withdrawal service — request/process withdrawals, deduct balance, post to ledger
  */
 import { MongoServerError } from 'mongodb';
-import { withTransaction } from '../../config/mongo.js';
 import walletRepo from './wallet.repository.js';
 import ledgerService from '../finance/ledger.service.js';
 import financialTransactionService from '../finance/financial-transaction.service.js';
@@ -78,7 +77,9 @@ async function requestWithdrawal(userId, currency, amount, destination) {
   };
 }
 
-async function processWithdrawal(withdrawalId, userId, clientIdempotencyKey) {
+async function processWithdrawal(withdrawalId, userId, clientIdempotencyKey, options = {}) {
+  const bypassFraudChecks = options.bypassFraudChecks === true;
+  const allowCryptoRailCompletion = options.allowCryptoRailCompletion === true;
   const idemKey = normalizeProcessIdempotencyKey(clientIdempotencyKey, withdrawalId);
 
   const tx = await walletRepo.getTransactionById(withdrawalId, userId);
@@ -90,6 +91,17 @@ async function processWithdrawal(withdrawalId, userId, clientIdempotencyKey) {
   if (tx.type !== 'withdrawal') {
     const err = new Error('Withdrawal already processed or invalid');
     err.statusCode = 400;
+    throw err;
+  }
+
+  const dest = String(tx.destination || '').trim();
+  const isBep20 = /^0x[a-fA-F0-9]{40}$/.test(dest);
+  if (isBep20 && !allowCryptoRailCompletion) {
+    const err = new Error(
+      'Crypto withdrawals to a wallet address are completed by an administrator after approval. You cannot finalize this request from the app.'
+    );
+    err.statusCode = 400;
+    err.code = 'CRYPTO_WITHDRAWAL_ADMIN_ONLY';
     throw err;
   }
 
@@ -132,52 +144,66 @@ async function processWithdrawal(withdrawalId, userId, clientIdempotencyKey) {
     return withdrawalProcessSuccessBody(priorByKey, true);
   }
 
-  const fraud = await fraudDetection.evaluateWithdrawal(userId, amount, { withdrawalId });
-  const band = fraudDetection.getRiskBand(fraud.riskScore);
-  const fraudMeta = {
-    fraudRiskScore: fraud.riskScore,
-    fraudRiskFlags: fraud.flags,
+  let fraudMeta = {
+    fraudRiskScore: 0,
+    fraudRiskFlags: [],
     fraudCheckedAt: new Date(),
   };
 
-  if (band === 'HIGH') {
-    await walletRepo.updateTransaction(withdrawalId, { ...fraudMeta, status: 'rejected' });
-    console.warn(
-      `[fraud] blocked withdrawalId=${withdrawalId} userId=${userId} score=${fraud.riskScore} flags=${(fraud.flags || []).join(',')}`
-    );
-    alertService
-      .createAlert({
-        type: alertService.ALERT_TYPES.FRAUD_HIGH,
-        referenceId: withdrawalId,
-        userId,
-        message: 'High-risk withdrawal blocked',
-        metadata: { withdrawalId, amount, currency, riskScore: fraud.riskScore, flags: fraud.flags },
-      })
-      .catch((e) => console.warn('[alert] create failed', e?.message));
-    const err = new Error('Suspicious activity detected');
-    err.statusCode = 403;
-    err.code = 'FRAUD_BLOCKED';
-    throw err;
-  }
-
-  if (band === 'MEDIUM') {
-    await walletRepo.updateTransaction(withdrawalId, { ...fraudMeta, status: 'review' });
-    console.log(
-      `[withdrawal] sent to review withdrawalId=${withdrawalId} userId=${userId} score=${fraud.riskScore}`
-    );
-    return {
-      status: 'review',
-      withdrawalId,
-      amount,
-      currency,
-      message: 'Withdrawal requires manual review',
+  if (!bypassFraudChecks) {
+    const fraud = await fraudDetection.evaluateWithdrawal(userId, amount, { withdrawalId });
+    const band = fraudDetection.getRiskBand(fraud.riskScore);
+    fraudMeta = {
       fraudRiskScore: fraud.riskScore,
       fraudRiskFlags: fraud.flags,
+      fraudCheckedAt: new Date(),
+    };
+
+    if (band === 'HIGH') {
+      await walletRepo.updateTransaction(withdrawalId, { ...fraudMeta, status: 'rejected' });
+      console.warn(
+        `[fraud] blocked withdrawalId=${withdrawalId} userId=${userId} score=${fraud.riskScore} flags=${(fraud.flags || []).join(',')}`
+      );
+      alertService
+        .createAlert({
+          type: alertService.ALERT_TYPES.FRAUD_HIGH,
+          referenceId: withdrawalId,
+          userId,
+          message: 'High-risk withdrawal blocked',
+          metadata: { withdrawalId, amount, currency, riskScore: fraud.riskScore, flags: fraud.flags },
+        })
+        .catch((e) => console.warn('[alert] create failed', e?.message));
+      const err = new Error('Suspicious activity detected');
+      err.statusCode = 403;
+      err.code = 'FRAUD_BLOCKED';
+      throw err;
+    }
+
+    if (band === 'MEDIUM') {
+      await walletRepo.updateTransaction(withdrawalId, { ...fraudMeta, status: 'review' });
+      console.log(
+        `[withdrawal] sent to review withdrawalId=${withdrawalId} userId=${userId} score=${fraud.riskScore}`
+      );
+      return {
+        status: 'review',
+        withdrawalId,
+        amount,
+        currency,
+        message: 'Withdrawal requires manual review',
+        fraudRiskScore: fraud.riskScore,
+        fraudRiskFlags: fraud.flags,
+      };
+    }
+  } else {
+    fraudMeta = {
+      fraudRiskScore: 0,
+      fraudRiskFlags: ['admin_nowpayments_payout'],
+      fraudCheckedAt: new Date(),
     };
   }
 
   try {
-    await withTransaction(async (session) => {
+    await financialTransactionService.runPairedWithTransaction(async (session) => {
       const claimed = await walletRepo.claimPendingWithdrawal(
         withdrawalId,
         userId,

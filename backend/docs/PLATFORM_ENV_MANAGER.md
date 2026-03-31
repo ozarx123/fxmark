@@ -14,7 +14,7 @@ Super Admins can store **environment variable overrides** in MongoDB (`settings`
 | Method | Path | Body |
 |--------|------|------|
 | `GET` | `/api/admin/platform-env` | — |
-| `PUT` | `/api/admin/platform-env` | `{ "key": "TWELVE_DATA_API_KEY", "value": "..." }` |
+| `PUT` | `/api/admin/platform-env` | `{ "key": "FINNHUB_API_KEY", "value": "..." }` |
 
 - Empty `value` **removes** the database row for that key and **`delete`s `process.env[key]`**. It does **not** re-read `.env` until the next process restart.
 - Removing an override when none exists returns **400**.

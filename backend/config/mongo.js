@@ -28,7 +28,11 @@ export function getClient() {
       opts.autoSelectFamily = false;
       opts.family = 4; // Force IPv4 - can fix SSL alert 80 on Windows
     }
-    clientPromise = new MongoClient(connectUri, opts).connect();
+    // If connect() rejects once, clear the cache so the next request retries (Atlas wake-up, DNS, etc.).
+    clientPromise = new MongoClient(connectUri, opts).connect().catch((err) => {
+      clientPromise = null;
+      return Promise.reject(err);
+    });
   }
   return clientPromise;
 }
@@ -67,9 +71,13 @@ export async function withTransaction(asyncFn) {
  * Close the MongoDB client (e.g. on graceful shutdown).
  */
 export async function closeMongo() {
-  if (clientPromise) {
+  if (!clientPromise) return;
+  try {
     const c = await clientPromise;
     await c.close();
+  } catch {
+    /* ignore close after failed connect */
+  } finally {
     clientPromise = null;
   }
 }

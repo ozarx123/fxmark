@@ -2,21 +2,18 @@
  * Admin Logs Controller
  *
  * Unified log viewer for all backend log sources:
- *   feed    — Twelve Data API ticks, errors, latency (twelveDataFeedLogger)
+ *   feed    — Provider feed (Finnhub ticks, poller, errors → market-feed.log)
  *   market  — Raw market tick log (marketDataLogger)
  *
  * All endpoints require admin/superadmin role (enforced in admin.routes.js).
  */
 
 import {
+  getRecentLog,
+  readLogFile,
   getRecentFeedLog,
   readFeedLogFile,
   getFeedLogSummary,
-} from '../../src/services/twelveDataFeedLogger.js';
-
-import {
-  getRecentLog,
-  readLogFile,
 } from '../../src/services/marketDataLogger.js';
 
 import fs from 'fs';
@@ -149,7 +146,7 @@ export async function getLogFiles(req, res) {
 }
 
 /**
- * GET /api/admin/logs/download?file=twelvedata-feed.log
+ * GET /api/admin/logs/download?file=market-feed.log
  * Download a raw log file (admin only).
  * Only files inside the logs/ directory are accessible (path traversal guard).
  */

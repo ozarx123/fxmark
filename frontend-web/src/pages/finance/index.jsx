@@ -1,6 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { hasRole, ADMIN_ROLES } from '../../config/roleRoutes.js';
+import { filterInvestorLedgerEntries } from '../../utils/investorPammLedgerView.js';
 import { useAccount } from '../../context/AccountContext';
 import { useFinance } from '../../hooks/useFinance';
 import OrderConfirmModal from '../../components/OrderConfirmModal';
@@ -19,7 +21,8 @@ import { formatCurrency } from '../../constants/finance';
 const formatDate = (d) => (d ? new Date(d).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' }) : '—');
 
 export default function Finance() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
+  const adminLedgerView = hasRole(user?.role, ADMIN_ROLES);
   const { activeAccount, refreshActiveBalance, refreshLiveBalance } = useAccount();
   const { balances, pnl, entries, walletBalance, realizedPnl, loading, error, refresh } = useFinance();
   const [orderError, setOrderError] = useState('');
@@ -46,6 +49,27 @@ export default function Finance() {
 
   const tradeSnapshot = useTradeSnapshot();
   const accountOpts = activeAccount ? { accountId: activeAccount.id, accountNumber: activeAccount.accountNumber } : {};
+
+  const filterReportEntries = useCallback(
+    (list) => {
+      if (adminLedgerView || !Array.isArray(list)) return list || [];
+      return filterInvestorLedgerEntries(list);
+    },
+    [adminLedgerView]
+  );
+
+  const statementRows = useMemo(
+    () => filterReportEntries(statement?.entries),
+    [statement, filterReportEntries]
+  );
+
+  const statementRowDebitCreditTotals = useMemo(
+    () => ({
+      debits: statementRows.reduce((s, e) => s + (Number(e.debit) || 0), 0),
+      credits: statementRows.reduce((s, e) => s + (Number(e.credit) || 0), 0),
+    }),
+    [statementRows]
+  );
   const loadTradingData = useCallback(async () => {
     if (!isAuthenticated) return;
     try {
@@ -511,15 +535,23 @@ export default function Finance() {
                 <div className="cards-row" style={{ marginTop: '0.5rem', flexWrap: 'wrap', gap: '0.5rem' }}>
                   <div className="card">
                     <h3>Entries</h3>
-                    <p className="card-value">{statement.totals?.entryCount ?? statement.entries?.length ?? 0}</p>
+                    <p className="card-value">{adminLedgerView ? (statement.totals?.entryCount ?? statement.entries?.length ?? 0) : statementRows.length}</p>
                   </div>
                   <div className="card">
                     <h3>Total debits</h3>
-                    <p className="card-value">{formatCurrency(statement.totals?.totalDebits ?? 0)}</p>
+                    <p className="card-value">
+                      {formatCurrency(
+                        adminLedgerView ? (statement.totals?.totalDebits ?? 0) : statementRowDebitCreditTotals.debits
+                      )}
+                    </p>
                   </div>
                   <div className="card">
                     <h3>Total credits</h3>
-                    <p className="card-value">{formatCurrency(statement.totals?.totalCredits ?? 0)}</p>
+                    <p className="card-value">
+                      {formatCurrency(
+                        adminLedgerView ? (statement.totals?.totalCredits ?? 0) : statementRowDebitCreditTotals.credits
+                      )}
+                    </p>
                   </div>
                   <div className="card">
                     <h3>Wallet balance</h3>
@@ -530,7 +562,7 @@ export default function Finance() {
                     <p className={`card-value ${(statement.pnl?.realized ?? 0) >= 0 ? 'positive' : 'negative'}`}>{formatCurrency(statement.pnl?.realized ?? 0)}</p>
                   </div>
                 </div>
-                {statement.entries?.length > 0 && (
+                {statementRows.length > 0 && (
                   <div className="table-wrap" style={{ marginTop: '1rem' }}>
                     <table className="table">
                       <thead>
@@ -543,7 +575,7 @@ export default function Finance() {
                         </tr>
                       </thead>
                       <tbody>
-                        {statement.entries.slice(0, 50).map((e) => (
+                        {statementRows.slice(0, 50).map((e) => (
                           <tr key={e.id}>
                             <td>{formatDate(e.createdAt)}</td>
                             <td>{e.accountName || e.accountCode}</td>
@@ -556,8 +588,24 @@ export default function Finance() {
                       <tfoot>
                         <tr className="table-total-row">
                           <td colSpan={2}><strong>Total</strong></td>
-                          <td><strong>{formatCurrency(statement.totals?.totalDebits ?? 0)}</strong></td>
-                          <td><strong>{formatCurrency(statement.totals?.totalCredits ?? 0)}</strong></td>
+                          <td>
+                            <strong>
+                              {formatCurrency(
+                                adminLedgerView
+                                  ? (statement.totals?.totalDebits ?? 0)
+                                  : statementRows.reduce((s, e) => s + (e.debit || 0), 0)
+                              )}
+                            </strong>
+                          </td>
+                          <td>
+                            <strong>
+                              {formatCurrency(
+                                adminLedgerView
+                                  ? (statement.totals?.totalCredits ?? 0)
+                                  : statementRows.reduce((s, e) => s + (e.credit || 0), 0)
+                              )}
+                            </strong>
+                          </td>
                           <td />
                         </tr>
                       </tfoot>

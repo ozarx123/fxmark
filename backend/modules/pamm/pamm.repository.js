@@ -134,8 +134,12 @@ async function createAllocation(followerId, managerId, allocatedBalance = 0) {
 async function getAllocationById(id, followerId) {
   if (!ObjectId.isValid(id)) return null;
   const col = await allocationsCol();
-  const a = await col.findOne({ _id: new ObjectId(id), followerId });
-  return a ? { id: a._id.toString(), ...a, _id: undefined, realizedPnl: a.realizedPnl != null ? Number(a.realizedPnl) : 0 } : null;
+  const a = await col.findOne({ _id: new ObjectId(id) });
+  if (!a) return null;
+  if (followerId != null && followerId !== '' && !followerIdMatches(a.followerId, followerId)) {
+    return null;
+  }
+  return { id: a._id.toString(), ...a, _id: undefined, realizedPnl: a.realizedPnl != null ? Number(a.realizedPnl) : 0 };
 }
 
 /** Admin: load allocation by id only (caller must verify follower). */
@@ -185,6 +189,74 @@ async function getActiveAllocation(followerId, managerId) {
   const col = await allocationsCol();
   const a = await col.findOne({ followerId, managerId, status: 'active' });
   return a ? { id: a._id.toString(), ...a, _id: undefined, realizedPnl: a.realizedPnl != null ? Number(a.realizedPnl) : 0 } : null;
+}
+
+function managerIdMatches(docManagerId, managerId) {
+  const u = String(managerId ?? '');
+  const f = docManagerId;
+  if (f == null) return false;
+  if (String(f) === u) return true;
+  try {
+    if (ObjectId.isValid(u) && u.length === 24 && f?.equals && f.equals(new ObjectId(u))) return true;
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
+function buildFollowerOrConditions(uniqueFollowerIds) {
+  const or = [];
+  for (const id of uniqueFollowerIds) {
+    or.push({ followerId: id });
+    if (ObjectId.isValid(id) && id.length === 24) or.push({ followerId: new ObjectId(id) });
+  }
+  return or;
+}
+
+function buildManagerOrConditions(uniqueManagerIds) {
+  const or = [];
+  for (const id of uniqueManagerIds) {
+    or.push({ managerId: id });
+    if (ObjectId.isValid(id) && id.length === 24) or.push({ managerId: new ObjectId(id) });
+  }
+  return or;
+}
+
+/**
+ * Batch active allocation balances for (followerId, managerId) pairs.
+ * One query with $and of follower OR and manager OR, then pair match in memory (no per-pair round trips).
+ * @returns {Map<string, number|null>} key `${followerId}:${managerId}` -> allocatedBalance or null
+ */
+async function getActiveAllocationBalancesForPairs(pairs) {
+  const map = new Map();
+  if (!pairs?.length) return map;
+  const normalized = pairs.map((p) => ({
+    followerId: String(p.followerId ?? '').trim(),
+    managerId: String(p.managerId ?? '').trim(),
+  }));
+  const uniqueFollowers = [...new Set(normalized.map((p) => p.followerId).filter(Boolean))];
+  const uniqueManagers = [...new Set(normalized.map((p) => p.managerId).filter(Boolean))];
+  if (!uniqueFollowers.length || !uniqueManagers.length) return map;
+
+  const col = await allocationsCol();
+  const followerOr = buildFollowerOrConditions(uniqueFollowers);
+  const managerOr = buildManagerOrConditions(uniqueManagers);
+  const docs = await col
+    .find({
+      status: 'active',
+      $and: [{ $or: followerOr }, { $or: managerOr }],
+    })
+    .toArray();
+
+  for (const p of normalized) {
+    const key = `${p.followerId}:${p.managerId}`;
+    if (map.has(key)) continue;
+    const a = docs.find(
+      (d) => followerIdMatches(d.followerId, p.followerId) && managerIdMatches(d.managerId, p.managerId)
+    );
+    map.set(key, a != null ? Number(a.allocatedBalance) : null);
+  }
+  return map;
 }
 
 async function listAllocationsByFollower(followerId, options = {}) {
@@ -380,6 +452,7 @@ export default {
   followerIdMatches,
   listAllocationsByFollowerFlexible,
   getActiveAllocation,
+  getActiveAllocationBalancesForPairs,
   listAllocationsByFollower,
   listAllocationsByManager,
   updateAllocation,

@@ -140,6 +140,22 @@ function normUserId(userId) {
   return userId == null ? '' : String(userId);
 }
 
+/**
+ * Match wallet_transactions.userId whether stored as string or BSON ObjectId (legacy imports).
+ */
+function userIdMatchFilter(userId) {
+  const uid = normUserId(userId);
+  const variants = [uid];
+  if (uid && ObjectId.isValid(uid) && uid.length === 24) {
+    try {
+      variants.push(new ObjectId(uid));
+    } catch {
+      /* ignore */
+    }
+  }
+  return { $in: variants };
+}
+
 /** Get or create wallet for user/currency. Default balance 0. options.session for transactions. */
 async function getOrCreateWallet(userId, currency = 'USD', options = {}) {
   await ensureWalletsIndex();
@@ -297,12 +313,15 @@ async function listAllWallets() {
   }));
 }
 
-/** Get one transaction by id and userId. */
-async function getTransactionById(id, userId) {
+/** Get one transaction by id and userId. Pass options.session inside Mongo transactions. */
+async function getTransactionById(id, userId, options = {}) {
   if (!ObjectId.isValid(id)) return null;
   const col = await transactionsCol();
-  const t = await col.findOne({ _id: new ObjectId(id), userId: normUserId(userId) });
-  return t ? { ...t, id: t._id.toString() } : null;
+  const findOpts = options.session ? { session: options.session } : {};
+  const t = await col.findOne({ _id: new ObjectId(id) }, findOpts);
+  if (!t) return null;
+  if (normUserId(t.userId) !== normUserId(userId)) return null;
+  return { ...t, id: t._id.toString() };
 }
 
 /**
@@ -415,6 +434,8 @@ async function getWithdrawalByIdForAdmin(id) {
     rejectedBy: t.rejectedBy ?? null,
     rejectedAt: t.rejectedAt ?? null,
     adminNote: t.adminNote ?? null,
+    nowpaymentsPayoutRef: t.nowpaymentsPayoutRef ?? null,
+    nowpaymentsPayoutAt: t.nowpaymentsPayoutAt ?? null,
   };
 }
 
@@ -425,7 +446,7 @@ async function findCompletedWithdrawalByProcessIdempotencyKey(userId, key) {
   const col = await transactionsCol();
   const k = String(key).trim().slice(0, 128);
   const t = await col.findOne({
-    userId: normUserId(userId),
+    userId: userIdMatchFilter(userId),
     type: 'withdrawal',
     status: 'completed',
     processIdempotencyKey: k,
@@ -439,7 +460,7 @@ async function claimPendingWithdrawal(id, userId, update, options = {}) {
   const col = await transactionsCol();
   const filter = {
     _id: new ObjectId(id),
-    userId: normUserId(userId),
+    userId: userIdMatchFilter(userId),
     type: 'withdrawal',
     status: { $in: ['pending', 'approved'] },
   };

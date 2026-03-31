@@ -3,6 +3,7 @@
  */
 import pammService from './pamm.service.js';
 import pammFlagsRepo from './pamm.flags.repository.js';
+import featureFlagsService from '../feature-flags/feature-flags.service.js';
 
 async function listManagers(req, res, next) {
   try {
@@ -55,7 +56,8 @@ async function getFundDetail(req, res, next) {
   try {
     const { fundId } = req.params;
     const userId = req.user?.id || null;
-    const detail = await pammService.getFundDetail(fundId, userId);
+    const viewerRole = req.user?.role || 'user';
+    const detail = await pammService.getFundDetail(fundId, userId, viewerRole);
     if (!detail) {
       return res.status(404).json({ error: 'Fund not found' });
     }
@@ -166,8 +168,11 @@ async function unfollow(req, res, next) {
 async function addFunds(req, res, next) {
   try {
     const userId = req.user?.id;
-    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-    const { allocationId, amount } = req.body;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized', reason: 'user_id_missing_after_auth' });
+    }
+    let { allocationId, amount } = req.body || {};
+    allocationId = allocationId != null ? String(allocationId).trim() : '';
     if (!allocationId) return res.status(400).json({ error: 'allocationId is required' });
     const result = await pammService.addFunds(userId, allocationId, amount);
     res.json(result);
@@ -180,7 +185,8 @@ async function withdraw(req, res, next) {
   try {
     const userId = req.user?.id;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-    const { allocationId, amount } = req.body;
+    let { allocationId, amount } = req.body || {};
+    allocationId = allocationId != null ? String(allocationId).trim() : '';
     if (!allocationId) {
       return res.status(400).json({ error: 'allocationId is required' });
     }
@@ -278,7 +284,12 @@ async function getTrades(req, res, next) {
 
 async function getConfig(req, res, next) {
   try {
-    const killSwitch = await pammFlagsRepo.getFlag('pamm_global_kill_switch', false);
+    const globalKillSwitch = await featureFlagsService.isFeatureEnabled('pamm_global_kill_switch', {
+      defaultValue: false,
+      envVar: 'FEATURE_PAMM_GLOBAL_KILL_SWITCH',
+    });
+    const legacyKillSwitch = await pammFlagsRepo.getFlag('pamm_global_kill_switch', false);
+    const killSwitch = globalKillSwitch || legacyKillSwitch;
     const envEnabled = process.env.PAMM_ENABLED !== 'false';
     const enabledForUsers = envEnabled && !killSwitch;
     res.json({

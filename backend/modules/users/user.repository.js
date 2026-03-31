@@ -159,6 +159,30 @@ async function findById(id) {
   return user ? toUser(user) : null;
 }
 
+/** Bulk load trading account numbers. Returns Map keyed by user id string; accountNo null if unset. */
+async function findManyByIds(ids) {
+  const map = new Map();
+  const idStrings = [
+    ...new Set(
+      (ids || [])
+        .map((id) => String(id ?? '').trim())
+        .filter((id) => ObjectId.isValid(id) && id.length === 24)
+    ),
+  ];
+  const objectIds = idStrings.map((id) => new ObjectId(id));
+  if (!objectIds.length) return map;
+  const col = await collection();
+  const rows = await col.find({ _id: { $in: objectIds } }, { projection: { accountNo: 1 } }).toArray();
+  for (const row of rows) {
+    const id = row._id.toString();
+    const raw = row.accountNo;
+    const accountNo =
+      raw != null && String(raw).trim() !== '' ? String(raw).trim() : null;
+    map.set(id, { id, accountNo });
+  }
+  return map;
+}
+
 /** Get user by id with password hashes (for auth change-password flows). Do not expose to API. */
 async function findByIdWithPasswordHashes(id) {
   if (!id) return null;
@@ -362,6 +386,7 @@ export default {
   findByAccountNoExact,
   findByReferralCode,
   findById,
+  findManyByIds,
   findByIdWithPasswordHashes,
   updateById,
   list,

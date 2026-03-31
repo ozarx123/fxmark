@@ -32,8 +32,8 @@ FXMARK is a forex/CFD broker platform. The active development focus is on the **
 - `CONNECTION_STRING=mongodb://localhost:27017/fxmark` — always local, never production Atlas.
 - `npm run setup-db` seeds test users (alice/bob/admin @test.com, password: `password123`). Their `emailVerified` must be set to `true` in MongoDB to allow login.
 - `npm run check-mongo` verifies MongoDB connectivity.
-- `npm run test:all` runs the API integration test suite (requires backend running + seeded DB).
-- Market data APIs (Twelve Data, Finnhub) are optional — the app runs fine without API keys.
+- `npm run test:nowpayments` and `npm run test:ib-hierarchy` run backend module unit tests (`node --test`).
+- Market data (Finnhub) is optional — the app runs fine without API keys (no live ticks/candles until configured).
 - Redis is optional — falls back to in-memory cache when not configured.
 
 ### Gotchas
@@ -41,4 +41,3 @@ FXMARK is a forex/CFD broker platform. The active development focus is on the **
 - The `mobile-flutter/` directory originally had only `lib/main.dart` with no `pubspec.yaml`. The project scaffolding (pubspec.yaml, web/, android/, ios/, test/) was created during environment setup.
 - `mobile-app/` is a separate JS-based stub (React Native-style), not the Flutter app.
 - `apps/mobile/` is a README-only placeholder for a future planned Flutter app.
-- Backend `npm run test:all` reports 1 expected failure on `POST /wallet/deposits` (503) because no payment gateway is configured locally.

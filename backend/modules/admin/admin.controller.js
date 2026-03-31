@@ -8,6 +8,7 @@ import positionsService from '../trading/positions.service.js';
 import orderService from '../trading/order.service.js';
 import userService from '../users/user.service.js';
 import walletRepo from '../wallet/wallet.repository.js';
+import withdrawalService from '../wallet/withdrawal.service.js';
 import ledgerService from '../finance/ledger.service.js';
 import ibRepo from '../ib/ib.repository.js';
 import ibHierarchy from '../ib/ib-hierarchy.service.js';
@@ -24,6 +25,7 @@ import pammRepo from '../pamm/pamm.repository.js';
 import pammDistRunsRepo from '../pamm/pamm-distribution-runs.repository.js';
 import * as bulkImportService from './bulk-import.service.js';
 import reconciliationDailyService from '../finance/reconciliation-daily.service.js';
+import nowpaymentsReconciliation from '../nowpayments/nowpayments-reconciliation.service.js';
 import alertService from './alert.service.js';
 import * as profitCommissionAdjustment from './profit-commission-adjustment.service.js';
 import * as companyFinancialsService from './company-financials.service.js';
@@ -34,6 +36,7 @@ import { getDb } from '../../config/mongo.js';
 import * as platformEnvService from './platform-env.service.js';
 import * as maintenanceService from './maintenance.service.js';
 import * as adminAuditService from './admin-audit.service.js';
+import * as nowpaymentsService from '../nowpayments/nowpayments.service.js';
 
 async function getLeads(req, res, next) {
   try {
@@ -1183,6 +1186,17 @@ async function getLatestWalletLedgerReconciliation(req, res, next) {
   }
 }
 
+/** Read-only NOWPayments orders vs wallet/ledger (ops review; no balance fixes). */
+async function getNowpaymentsDepositReconciliation(req, res, next) {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 500, 2000);
+    const result = await nowpaymentsReconciliation.runNowpaymentsDepositReconciliation({ limit });
+    res.json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
 async function listRecentActivity(req, res, next) {
   try {
     const limit = Math.min(parseInt(req.query.limit, 10) || 80, 200);
@@ -1299,6 +1313,83 @@ async function updateWithdrawalStatus(req, res, next) {
     }
     res.json(updated);
   } catch (e) {
+    next(e);
+  }
+}
+
+/**
+ * POST /admin/withdrawals/:id/complete
+ * Finalizes an approved withdrawal: same path as user POST /wallet/withdrawals/:id/process
+ * (wallet debit + ledger). Allows crypto/BEP20 rails that users cannot self-process.
+ */
+async function completeWithdrawal(req, res, next) {
+  try {
+    const { id } = req.params;
+    const w = await walletRepo.getWithdrawalByIdForAdmin(id);
+    if (!w) return res.status(404).json({ error: 'Withdrawal not found' });
+    if (w.status === 'completed') {
+      return res.status(400).json({ error: 'Withdrawal already completed' });
+    }
+    if (w.status !== 'approved') {
+      return res.status(400).json({ error: 'Only approved withdrawals can be completed' });
+    }
+    const userId = w.userId != null ? String(w.userId) : '';
+    if (!userId) {
+      return res.status(400).json({ error: 'Withdrawal has no user' });
+    }
+    const adminId = req.user?.id != null ? String(req.user.id) : null;
+    const idemKey = `admin-complete|${id}`;
+    try {
+      await withdrawalService.processWithdrawal(id, userId, idemKey, {
+        bypassFraudChecks: true,
+        allowCryptoRailCompletion: true,
+      });
+    } catch (e) {
+      if (e.statusCode) return res.status(e.statusCode).json({ error: e.message, code: e.code });
+      throw e;
+    }
+    const updated = await walletRepo.getWithdrawalByIdForAdmin(id);
+    console.log(`[admin] withdrawal completed id=${id} by=${adminId || 'unknown'}`);
+    if (audit?.log) {
+      audit.log(
+        adminId,
+        'withdrawal_status_update',
+        'wallet_transaction',
+        {
+          withdrawalId: id,
+          fromStatus: 'approved',
+          toStatus: 'completed',
+        },
+        { clientIp: req.ip || req.socket?.remoteAddress || null }
+      );
+    }
+    res.json({ success: true, withdrawal: updated });
+  } catch (e) {
+    next(e);
+  }
+}
+
+/**
+ * POST /admin/withdrawals/:id/nowpayments-payout
+ * Sends approved withdrawal through NOWPayments Mass Payout and finalizes wallet flow.
+ */
+async function postNowpaymentsWithdrawalPayout(req, res, next) {
+  try {
+    const { id } = req.params;
+    if (!id) return res.status(400).json({ error: 'Withdrawal id is required' });
+    const result = await nowpaymentsService.executeApprovedWithdrawalPayout(id);
+    if (audit?.log) {
+      audit.log(
+        req.user?.id,
+        'withdrawal_nowpayments_payout',
+        'wallet_transaction',
+        { withdrawalId: id },
+        { clientIp: req.ip || req.socket?.remoteAddress || null }
+      );
+    }
+    res.json(result);
+  } catch (e) {
+    if (e.statusCode) return res.status(e.statusCode).json({ error: e.message });
     next(e);
   }
 }
@@ -1493,11 +1584,14 @@ export default {
   bulkImport,
   getBulkImportConfig,
   getLatestWalletLedgerReconciliation,
+  getNowpaymentsDepositReconciliation,
   listRecentActivity,
   listAuditLogs,
   listWithdrawals,
   getWithdrawalDetail,
   updateWithdrawalStatus,
+  completeWithdrawal,
+  postNowpaymentsWithdrawalPayout,
   getFraudDashboardStats,
   getAlerts,
   resolveAlert,

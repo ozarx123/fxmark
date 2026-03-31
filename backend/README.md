@@ -1,6 +1,6 @@
 # FXMARK Backend Market-Data Service
 
-Backend service for FXMARK that provides market data via REST and WebSocket, using the Twelve Data API.
+Backend service for FXMARK that provides market data via REST and WebSocket, using the [Finnhub](https://finnhub.io) API.
 
 ## Setup
 
@@ -19,9 +19,9 @@ Backend service for FXMARK that provides market data via REST and WebSocket, usi
    cp .env.example .env
    ```
 
-   Required:
+   Required for live charts and quotes:
 
-   - `TWELVE_DATA_API_KEY` – Get a free API key at [twelvedata.com](https://twelvedata.com)
+   - `FINNHUB_API_KEY` – Get a key at [finnhub.io](https://finnhub.io)
 
    Optional:
 

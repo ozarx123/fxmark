@@ -5,12 +5,15 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:staging": "vite --mode staging --port 8081 --host 0.0.0.0",
     "build": "vite build",
+    "build:staging": "vite build --mode staging",
     "preview": "vite preview",
+    "preview:staging": "vite preview --host 0.0.0.0 --port 8081",
     "verify:reset-route": "node scripts/verify-password-reset-routing.mjs"
   },
   "dependencies": {
-    "lightweight-charts": "^4.1.0",
+    "lightweight-charts": "^5.1.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.20.0",

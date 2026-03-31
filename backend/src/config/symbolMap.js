@@ -1,6 +1,5 @@
 /**
- * Symbol mapping from internal format (EURUSD, XAUUSD) to Twelve Data provider format (EUR/USD, XAU/USD).
- * Use UTC for all timestamps.
+ * Display / doc mapping: internal symbol → human-readable pair (charts, UI).
  */
 export const SYMBOL_MAP = {
   XAUUSD: 'XAU/USD',
@@ -13,10 +12,10 @@ export const SYMBOL_MAP = {
   NZDUSD: 'NZD/USD',
 };
 
-/** Supported timeframes: 1m, 5m, 15m, 1h, 1d */
+/** Supported candle timeframes (Finnhub forex/candle resolutions). */
 export const VALID_TIMEFRAMES = ['1m', '5m', '15m', '1h', '1d'];
 
-/** Map internal timeframe to Twelve Data interval */
+/** Human-readable interval names (e.g. technical analysis). */
 export const TIMEFRAME_TO_INTERVAL = {
   '1m': '1min',
   '5m': '5min',
@@ -24,13 +23,3 @@ export const TIMEFRAME_TO_INTERVAL = {
   '1h': '1h',
   '1d': '1day',
 };
-
-/**
- * Convert internal symbol to Twelve Data format
- * @param {string} internalSymbol - e.g. EURUSD, XAUUSD
- * @returns {string|null} Twelve Data symbol or null if unknown
- */
-export function toTwelveDataSymbol(internalSymbol) {
-  const key = String(internalSymbol || '').toUpperCase();
-  return SYMBOL_MAP[key] ?? null;
-}

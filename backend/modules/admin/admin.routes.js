@@ -122,6 +122,7 @@ router.put('/withdrawal-approval-settings', controller.updateWithdrawalApprovalS
 
 // ── Wallet vs ledger daily reconciliation (read-only audit) ────────────────────
 router.get('/reconciliation/wallet-ledger/latest', controller.getLatestWalletLedgerReconciliation);
+router.get('/reconciliation/nowpayments-deposits', controller.getNowpaymentsDepositReconciliation);
 
 // Platform-wide company financials (ledger aggregates, not per-user)
 router.get('/finance/company', controller.getCompanyFinancials);
@@ -135,6 +136,8 @@ router.get('/audit-logs', controller.listAuditLogs);
 router.get('/withdrawals', controller.listWithdrawals);
 router.get('/withdrawals/:id', controller.getWithdrawalDetail);
 router.patch('/withdrawals/:id', controller.updateWithdrawalStatus);
+router.post('/withdrawals/:id/complete', controller.completeWithdrawal);
+router.post('/withdrawals/:id/nowpayments-payout', requireSuperAdmin, controller.postNowpaymentsWithdrawalPayout);
 
 // ── Alerts (critical events: fraud, reconciliation, etc.) ─────────────────────
 router.get('/alerts', controller.getAlerts);

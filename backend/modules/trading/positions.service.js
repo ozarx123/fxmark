@@ -17,9 +17,158 @@ import distributionService from '../pamm/distribution.service.js';
 import { getLastPrice } from '../../src/services/lastQuotePrices.js';
 import { getContractSize, normalizeSymbolKey, computeUnrealizedPnl } from './unrealized-pnl.js';
 import { getMarginRiskRuntime } from './margin-risk.runtime.js';
+import { getDb } from '../../config/mongo.js';
+import { ObjectId } from 'mongodb';
 
 /** Throttle margin_call warnings per account (userId:accountId). */
 const lastMarginWarningAt = new Map();
+const POSITIONS_COLLECTION = 'positions';
+const DISTRIBUTION_HEARTBEAT_STALE_MS = Math.max(
+  60_000,
+  Number.parseInt(process.env.PAMM_DISTRIBUTION_STALE_MS || '600000', 10) || 600000
+);
+
+function distributionWorkerId() {
+  return `${process.pid}-${Date.now()}`;
+}
+
+function userIdFilter(userId) {
+  const uid = String(userId || '');
+  if (ObjectId.isValid(uid) && uid.length === 24) {
+    return { $or: [{ userId: uid }, { userId: new ObjectId(uid) }] };
+  }
+  return { userId: uid };
+}
+
+async function tryAcquireDistributionRunLock(positionId, userId) {
+  if (!ObjectId.isValid(positionId)) return { acquired: false, reason: 'invalid_position_id' };
+  const db = await getDb();
+  const positions = db.collection(POSITIONS_COLLECTION);
+  const now = new Date();
+  const staleBefore = new Date(now.getTime() - DISTRIBUTION_HEARTBEAT_STALE_MS);
+  const runId = new ObjectId().toString();
+  const owner = distributionWorkerId();
+
+  const result = await positions.updateOne(
+    {
+      _id: new ObjectId(positionId),
+      ...userIdFilter(userId),
+      $and: [
+        {
+          $or: [
+            { distributionCompletedAt: { $exists: false } },
+            { distributionCompletedAt: null },
+          ],
+        },
+        {
+          $or: [
+            { distributionStatus: { $exists: false } },
+            { distributionStatus: null },
+            { distributionStatus: 'failed' },
+            {
+              $and: [
+                { distributionStatus: 'in_progress' },
+                {
+                  $or: [
+                    { distributionHeartbeatAt: { $exists: false } },
+                    { distributionHeartbeatAt: null },
+                    { distributionHeartbeatAt: { $lt: staleBefore } },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    {
+      $set: {
+        distributionStatus: 'in_progress',
+        distributionLockOwner: owner,
+        distributionLockAt: now,
+        distributionRunId: runId,
+        distributionHeartbeatAt: now,
+        distributionError: null,
+        updatedAt: now,
+      },
+    }
+  );
+
+  if (result.modifiedCount === 1) return { acquired: true, owner, runId };
+
+  const existing = await positions.findOne(
+    { _id: new ObjectId(positionId), ...userIdFilter(userId) },
+    { projection: { distributionStatus: 1, distributionCompletedAt: 1 } }
+  );
+  if (existing?.distributionStatus === 'completed' || existing?.distributionCompletedAt) {
+    return { acquired: false, reason: 'completed' };
+  }
+  if (existing?.distributionStatus === 'in_progress') {
+    return { acquired: false, reason: 'in_progress' };
+  }
+  return { acquired: false, reason: 'not_eligible' };
+}
+
+async function markDistributionRunCompleted(positionId, userId, owner) {
+  if (!ObjectId.isValid(positionId)) return;
+  const db = await getDb();
+  const positions = db.collection(POSITIONS_COLLECTION);
+  const now = new Date();
+  await positions.updateOne(
+    {
+      _id: new ObjectId(positionId),
+      ...userIdFilter(userId),
+      distributionLockOwner: owner,
+      distributionStatus: 'in_progress',
+    },
+    {
+      $set: {
+        distributionStatus: 'completed',
+        distributionCompletedAt: now,
+        distributionHeartbeatAt: now,
+        updatedAt: now,
+      },
+    }
+  );
+}
+
+async function markDistributionRunFailed(positionId, userId, owner, errorMessage) {
+  if (!ObjectId.isValid(positionId)) return;
+  const db = await getDb();
+  const positions = db.collection(POSITIONS_COLLECTION);
+  const now = new Date();
+  await positions.updateOne(
+    {
+      _id: new ObjectId(positionId),
+      ...userIdFilter(userId),
+      distributionLockOwner: owner,
+      distributionStatus: 'in_progress',
+    },
+    {
+      $set: {
+        distributionStatus: 'failed',
+        distributionError: String(errorMessage || 'unknown').slice(0, 500),
+        distributionHeartbeatAt: now,
+        updatedAt: now,
+      },
+    }
+  );
+}
+
+async function pulseDistributionHeartbeat(positionId, userId, owner) {
+  if (!ObjectId.isValid(positionId)) return;
+  const db = await getDb();
+  const positions = db.collection(POSITIONS_COLLECTION);
+  await positions.updateOne(
+    {
+      _id: new ObjectId(positionId),
+      ...userIdFilter(userId),
+      distributionLockOwner: owner,
+      distributionStatus: 'in_progress',
+    },
+    { $set: { distributionHeartbeatAt: new Date(), updatedAt: new Date() } }
+  );
+}
 
 function marginUsedForPositions(openPositions, leverage) {
   const lev = Math.max(1, Number(leverage) || 100);
@@ -228,24 +377,38 @@ async function closePosition(userId, positionId, options = {}) {
             await tradingAccountRepo.updateBalance(targetAccountId, userId, pnl);
           }
         } else if (account?.type === 'pamm') {
+          let distLockOwner = null;
           try {
-            await distributionService.distributePammPnl(
-              userId,
-              positionId,
-              pnl,
-              targetAccountId,
-              {
-                symbol: pos.symbol,
-                side: pos.side,
-                volume: pos.volume,
-                openPrice: pos.openPrice,
-                closedAt: now,
+            const distLock = await tryAcquireDistributionRunLock(positionId, userId);
+            if (!distLock.acquired) {
+              console.log('[positions] PAMM distribution skipped:', distLock.reason, positionId);
+            } else {
+              distLockOwner = distLock.owner;
+              await pulseDistributionHeartbeat(positionId, userId, distLock.owner);
+              await distributionService.distributePammPnl(
+                userId,
+                positionId,
                 pnl,
-                closePrice: resolvedClosePrice ?? pos.closePrice,
-              }
-            );
+                targetAccountId,
+                {
+                  symbol: pos.symbol,
+                  side: pos.side,
+                  volume: pos.volume,
+                  openPrice: pos.openPrice,
+                  closedAt: now,
+                  pnl,
+                  closePrice: resolvedClosePrice ?? pos.closePrice,
+                }
+              );
+              await markDistributionRunCompleted(positionId, userId, distLock.owner);
+            }
           } catch (e) {
             console.error('[positions] PAMM distribution failed:', e?.message || e);
+            try {
+              await markDistributionRunFailed(positionId, userId, distLockOwner, e?.message || String(e));
+            } catch (markErr) {
+              console.warn('[positions] PAMM distribution fail mark error:', markErr?.message || markErr);
+            }
           }
         }
       }

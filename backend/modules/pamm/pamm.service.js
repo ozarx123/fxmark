@@ -2,8 +2,10 @@
  * Trade Manager / PAMM service — managers, follow, unfollow, withdraw, trades
  * Bull Run (fundType 'ai'): withdraw/unfollow blocked when fund has open positions
  */
+import { ObjectId } from 'mongodb';
 import pammRepo from './pamm.repository.js';
 import pammFlagsRepo from './pamm.flags.repository.js';
+import featureFlagsService from '../feature-flags/feature-flags.service.js';
 import tradingAccountRepo from '../trading/trading-account.repository.js';
 import walletRepo from '../wallet/wallet.repository.js';
 import ledgerService from '../finance/ledger.service.js';
@@ -39,7 +41,12 @@ async function ensureClassicPammEnabledForFund(fund) {
   if (!fund) return;
   if (isBullRunFund(fund)) return; // PAMM AI should never be disabled by kill switch
   const envEnabled = process.env.PAMM_ENABLED !== 'false';
-  const kill = await pammFlagsRepo.getFlag('pamm_global_kill_switch', false);
+  const killFromGlobal = await featureFlagsService.isFeatureEnabled('pamm_global_kill_switch', {
+    defaultValue: false,
+    envVar: 'FEATURE_PAMM_GLOBAL_KILL_SWITCH',
+  });
+  const killFromLegacy = await pammFlagsRepo.getFlag('pamm_global_kill_switch', false);
+  const kill = killFromGlobal || killFromLegacy;
   if (!envEnabled || kill) {
     const err = new Error('PAMM is temporarily disabled for users.');
     err.statusCode = 503;
@@ -68,7 +75,7 @@ async function getManager(managerId) {
  * Fund detail for investor: fund info, stats (AUM, followers, growth), recent trades, and current user's allocation if any.
  * Bull Run (fundType 'ai'): extended with total_fund_pool, daily_profit_cap, today_profit, monthly_profit, monthly_performance, transaction_history, hasActiveTrade.
  */
-async function getFundDetail(fundId, followerId = null) {
+async function getFundDetail(fundId, followerId = null, viewerRole = 'user') {
   const fund = await pammRepo.getManagerById(fundId) || await pammRepo.getManagerByUserId(fundId);
   if (!fund) return null;
 
@@ -100,8 +107,9 @@ async function getFundDetail(fundId, followerId = null) {
 
   let myAllocation = null;
   if (followerId) {
-    const myAllocations = await pammRepo.listAllocationsByFollower(followerId, { status: 'active' });
-    const alloc = myAllocations.find((a) => a.managerId === fund.id);
+    const myAllocations = await pammRepo.listAllocationsByFollowerFlexible(followerId, { status: 'active' });
+    const fid = String(fund.id);
+    const alloc = myAllocations.find((a) => String(a.managerId) === fid);
     if (alloc) {
       const realizedPnl = Number(alloc.realizedPnl);
       myAllocation = {
@@ -134,6 +142,10 @@ async function getFundDetail(fundId, followerId = null) {
   };
 
   if (isBullRunFund(fund)) {
+    const isManagerViewer = followerId != null && String(followerId) === String(fund.userId);
+    const isAdminViewer = String(viewerRole || '').toLowerCase() === 'admin'
+      || String(viewerRole || '').toLowerCase() === 'superadmin';
+    const investorMinimalView = !!followerId && !isManagerViewer && !isAdminViewer;
     const hasActiveTrade = await hasOpenPositionsForFund(fund.id);
     const { todayProfit, monthlyPerformance } = await pammRepo.getFundTradesPnLByPeriod(fund.id);
     const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
@@ -148,17 +160,32 @@ async function getFundDetail(fundId, followerId = null) {
     }
     let transactionHistory = [];
     if (followerId) {
-      const txns = await walletRepo.getTransactions(followerId, { type: ['pamm_alloc', 'pamm_unalloc'], limit: 50 });
+      const txns = await walletRepo.getTransactions(followerId, {
+        type: ['pamm_alloc', 'pamm_unalloc', 'pamm_dist'],
+        limit: 100,
+      });
       transactionHistory = txns
-        .filter((t) => t.reference === fund.id || t.destination === `pamm:${fund.id}` || t.reference === (myAllocation?.id))
+        .filter((t) => {
+          const ref = String(t.reference || '');
+          return (
+            t.reference === fund.id
+            || t.destination === `pamm:${fund.id}`
+            || t.reference === (myAllocation?.id)
+            || ref.startsWith(`pammdist|fund:${fund.id}|`)
+          );
+        })
         .map((t) => ({
-          type: t.type === 'pamm_alloc' ? 'Add funds' : 'Withdrawal',
+          type: t.type === 'pamm_alloc'
+            ? 'Add funds'
+            : t.type === 'pamm_unalloc'
+              ? 'Withdrawal'
+              : 'Profit',
           amount: Math.abs(t.amount),
-          date: t.createdAt || t.created_at,
+          date: t.completedAt || t.createdAt || t.created_at,
           liveAccount: 'Live',
         }))
         .sort((a, b) => new Date(b.date) - new Date(a.date))
-        .slice(0, 30);
+        .slice(0, 50);
     }
     const fundGrowthData = monthlyPerformance.map((m, i) => ({
       month: m.month,
@@ -166,23 +193,41 @@ async function getFundDetail(fundId, followerId = null) {
         ? (monthlyPerformance.slice(0, i + 1).reduce((s, x) => s + (x.profit || 0), 0) / aum) * 100
         : 0,
     }));
-    result.bullRun = {
-      total_fund_pool: aum,
-      total_investors: allocations.length,
-      strategy_type: 'AI Bull Run',
-      daily_profit_cap: 1,
-      today_profit: todayProfitPercent,
-      monthly_profit: monthlyProfitPercent,
-      today_earnings: todayProfitPercent,
-      monthly_earnings: monthlyProfitPercent,
-      fund_growth_data: fundGrowthData.length ? fundGrowthData : [{ month: 'Inception', value: 0 }],
-      monthly_performance: monthlyPerformance.map((m) => ({ month: m.month, profitPercent: m.profitPercent })),
-      investor_balance: myAllocation ? Number(myAllocation.allocatedBalance) || 0 : null,
-      investor_balance_logic: 'Compound trading enabled. Investor daily profit capped at 1%. Extra profit stored in Bull Run Reserve Account.',
-      transaction_history: transactionHistory,
-      hasActiveTrade,
-      reserve_balance: reserveBalance,
-    };
+    if (investorMinimalView) {
+      const myAllocationPercent = Number(myAllocation?.allocationPercent) || 0;
+      const investorTodayProfitAmount = Number.isFinite(todayProfit)
+        ? (todayProfit * myAllocationPercent) / 100
+        : 0;
+      return {
+        todayProfit: Number(investorTodayProfitAmount) || 0,
+        balance: myAllocation ? Number(myAllocation.allocatedBalance) || 0 : 0,
+        totalProfit: myAllocation ? Number(myAllocation.realizedPnl) || 0 : 0,
+        history: transactionHistory.map((t) => ({
+          type: t.type,
+          amount: Number(t.amount) || 0,
+          date: t.date,
+        })),
+        hasActiveTrade: hasActiveTrade === true,
+      };
+    } else {
+      result.bullRun = {
+        total_fund_pool: aum,
+        total_investors: allocations.length,
+        strategy_type: 'AI Bull Run',
+        daily_profit_cap: 1,
+        today_profit: todayProfitPercent,
+        monthly_profit: monthlyProfitPercent,
+        today_earnings: todayProfitPercent,
+        monthly_earnings: monthlyProfitPercent,
+        fund_growth_data: fundGrowthData.length ? fundGrowthData : [{ month: 'Inception', value: 0 }],
+        monthly_performance: monthlyPerformance.map((m) => ({ month: m.month, profitPercent: m.profitPercent })),
+        investor_balance: myAllocation ? Number(myAllocation.allocatedBalance) || 0 : null,
+        investor_balance_logic: 'Compound trading enabled. Investor daily profit capped at 1%. Extra profit stored in Bull Run Reserve Account.',
+        transaction_history: transactionHistory,
+        hasActiveTrade,
+        reserve_balance: reserveBalance,
+      };
+    }
   }
 
   return result;
@@ -513,9 +558,10 @@ async function unfollow(followerId, allocationId) {
     if (manager?.tradingAccountId) {
       const managerUserId = manager.userId;
       const fid = String(followerId || '');
+      const ledgerUnallocRef = new ObjectId().toString();
       await financialTransactionService.runPairedWithTransaction(async (session) => {
         await financialTransactionService.syncWalletToLedgerAfterMutation(session, fid, 'USD', async (s) => {
-          await ledgerService.postPammUnallocation(followerId, amount, 'USD', allocationId, allocation.managerId, {
+          await ledgerService.postPammUnallocation(followerId, amount, 'USD', ledgerUnallocRef, allocation.managerId, {
             session: s,
           });
         });
@@ -574,9 +620,11 @@ async function addFunds(followerId, allocationId, amount) {
     err.statusCode = 400;
     throw err;
   }
+  // Ledger unique key is (WALLET, user, pamm_alloc, referenceId) — must differ per top-up, not reuse allocationId.
+  const ledgerReferenceId = new ObjectId().toString();
   await financialTransactionService.runPairedWithTransaction(async (session) => {
     await financialTransactionService.syncWalletToLedgerAfterMutation(session, uid, 'USD', async (s) => {
-      await ledgerService.postPammAllocation(followerId, addAmount, 'USD', allocationId, allocation.managerId, {
+      await ledgerService.postPammAllocation(followerId, addAmount, 'USD', ledgerReferenceId, allocation.managerId, {
         session: s,
       });
     });
@@ -634,9 +682,11 @@ async function requestWithdraw(followerId, allocationId, amount) {
     throw err;
   }
   const uid = String(followerId || '');
+  /** Unique per withdrawal (ledger idempotency). Reusing allocationId breaks on 2nd partial withdraw: WALLET unique index is (entityId, referenceType, referenceId) so a second pamm_unalloc with same ref hits E11000. */
+  const ledgerUnallocRef = new ObjectId().toString();
   await financialTransactionService.runPairedWithTransaction(async (session) => {
     await financialTransactionService.syncWalletToLedgerAfterMutation(session, uid, 'USD', async (s) => {
-      await ledgerService.postPammUnallocation(followerId, withdrawAmount, 'USD', allocationId, allocation.managerId, {
+      await ledgerService.postPammUnallocation(followerId, withdrawAmount, 'USD', ledgerUnallocRef, allocation.managerId, {
         session: s,
       });
     });
@@ -668,7 +718,7 @@ async function requestWithdraw(followerId, allocationId, amount) {
 }
 
 async function getMyAllocations(followerId, options = {}) {
-  const list = await pammRepo.listAllocationsByFollower(followerId, options);
+  const list = await pammRepo.listAllocationsByFollowerFlexible(followerId, options);
   for (const a of list) {
     const m = await pammRepo.getManagerById(a.managerId) || await pammRepo.getManagerByUserId(a.managerId);
     a.managerName = m?.name || 'Unknown';
@@ -693,7 +743,7 @@ async function getMyAllocations(followerId, options = {}) {
 }
 
 async function getMyFollowerTrades(followerId, options = {}) {
-  const allocations = await pammRepo.listAllocationsByFollower(followerId, { status: 'active' });
+  const allocations = await pammRepo.listAllocationsByFollowerFlexible(followerId, { status: 'active' });
   const fundIds = [...new Set(allocations.map((a) => a.managerId))];
   const allTrades = [];
   for (const fundId of fundIds) {

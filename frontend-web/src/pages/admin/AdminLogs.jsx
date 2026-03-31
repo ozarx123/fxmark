@@ -5,7 +5,7 @@ import { getApiBase } from '../../config/apiBase.js';
 const API_BASE = getApiBase();
 
 const SOURCES = [
-  { value: 'feed',   label: 'Twelve Data Feed' },
+  { value: 'feed',   label: 'Provider feed' },
   { value: 'market', label: 'Market Ticks' },
 ];
 
@@ -142,7 +142,7 @@ export default function AdminLogs() {
     <div className="page admin-page">
       <header className="page-header">
         <h1>Feed Logs</h1>
-        <p className="page-subtitle">Twelve Data API ticks, latency, errors and credit usage in real time.</p>
+        <p className="page-subtitle">Finnhub ticks, poller events, latency, and errors (in-memory + market-feed.log).</p>
       </header>
 
       {/* ── Summary cards ── */}
@@ -152,8 +152,7 @@ export default function AdminLogs() {
             <SummaryCard label="Recent ticks"    value={feed.recentTicks}    color="#22c55e" />
             <SummaryCard label="Recent errors"   value={feed.recentErrors}   color={feed.recentErrors > 0 ? '#ef4444' : '#22c55e'} />
             <SummaryCard label="Avg latency"     value={feed.avgLatencyMs != null ? `${feed.avgLatencyMs}ms` : '—'} color={feed.avgLatencyMs > 600 ? '#f59e0b' : '#60a5fa'} />
-            <SummaryCard label="Credits / min"   value={feed.creditsThisMin} sub="limit 55" color={feed.creditsThisMin > 45 ? '#f59e0b' : '#c084fc'} />
-            <SummaryCard label="In memory"       value={feed.totalInMemory}  color="#94a3b8" />
+            <SummaryCard label="In memory"       value={feed.totalInMemory} sub="feed ring buffer" color="#94a3b8" />
             {feed.lastTick && (
               <SummaryCard label="Last tick"
                 value={Number(feed.lastTick.price).toFixed(feed.lastTick.symbol === 'XAUUSD' ? 2 : 4)}

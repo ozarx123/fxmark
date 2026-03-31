@@ -92,6 +92,7 @@ export default function TradeControlPanel({
   }), [marginEst, maxLossSl, maxProfitTp, riskReward, notional, pipDistSl, pipDistTp, suggestedLotFromRisk]);
 
   const handlePlaceOrder = async (sideFromTicket) => {
+    if (loading) return;
     const side = selected.side || sideFromTicket || 'buy';
     const vol = parseFloat(volume);
     if (!symbol || !Number.isFinite(vol) || vol <= 0) {

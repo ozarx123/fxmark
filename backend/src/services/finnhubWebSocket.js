@@ -1,25 +1,5 @@
 import WebSocket from 'ws';
-
-/**
- * Internal symbol → Finnhub OANDA symbol mapping.
- * Finnhub forex/metals stream uses OANDA: prefix by default.
- * Free plan supports forex symbols; metals (XAU/USD) may require a paid plan.
- */
-const TO_FINNHUB = {
-  XAUUSD: 'OANDA:XAU_USD',
-  EURUSD: 'OANDA:EUR_USD',
-  GBPUSD: 'OANDA:GBP_USD',
-  USDJPY: 'OANDA:USD_JPY',
-  USDCHF: 'OANDA:USD_CHF',
-  USDCAD: 'OANDA:USD_CAD',
-  AUDUSD: 'OANDA:AUD_USD',
-  NZDUSD: 'OANDA:NZD_USD',
-};
-
-/** Reverse map: Finnhub symbol → internal symbol (for fast lookup on incoming ticks) */
-const FROM_FINNHUB = Object.fromEntries(
-  Object.entries(TO_FINNHUB).map(([internal, fh]) => [fh, internal])
-);
+import { TO_FINNHUB, FROM_FINNHUB } from '../config/finnhubSymbols.js';
 
 const RECONNECT_BASE_MS = 2000;
 const RECONNECT_MAX_MS  = 30000;

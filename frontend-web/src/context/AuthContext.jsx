@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { ensureUserRole } from '../utils/authHelpers';
 import { reconnectWithAuth } from '../lib/datafeedSocket.js';
+import { setAuthAccessToken } from '../lib/authAccessToken.js';
 
 const AuthContext = createContext(null);
 /** Bearer token in localStorage: any XSS in this origin can exfiltrate it. Mitigate with strict CSP on the SPA host; for stronger session isolation use an httpOnly cookie + BFF or token binding. */
@@ -17,27 +18,48 @@ export function AuthProvider({ children }) {
     }
   });
 
-  const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY));
+  const [token, setToken] = useState(() => {
+    try {
+      const raw = localStorage.getItem(TOKEN_KEY);
+      const t = raw && String(raw).trim();
+      return t || null;
+    } catch {
+      return null;
+    }
+  });
 
   const login = useCallback((userData, accessToken = null) => {
     const u = typeof userData === 'object' ? userData : { email: userData, role: 'user' };
     const safeUser = ensureUserRole(u);
     setUser(safeUser);
-    if (accessToken) {
-      setToken(accessToken);
+    const trimmed =
+      accessToken != null && String(accessToken).trim() ? String(accessToken).trim() : '';
+    if (trimmed) {
+      setToken(trimmed);
       try {
-        localStorage.setItem(TOKEN_KEY, accessToken);
+        localStorage.setItem(TOKEN_KEY, trimmed);
       } catch (e) {
         console.warn('localStorage setItem failed', e);
       }
-      reconnectWithAuth();
+    } else {
+      setToken(null);
+      try {
+        localStorage.removeItem(TOKEN_KEY);
+      } catch (e) {
+        console.warn('localStorage removeItem failed', e);
+      }
     }
     try {
       localStorage.setItem('fxmark_user', JSON.stringify(safeUser));
     } catch (e) {
       console.warn('localStorage setItem failed', e);
     }
+    reconnectWithAuth();
   }, []);
+
+  useEffect(() => {
+    setAuthAccessToken(token);
+  }, [token]);
 
   const logout = useCallback(() => {
     setUser(null);
@@ -51,7 +73,8 @@ export function AuthProvider({ children }) {
     reconnectWithAuth();
   }, []);
 
-  const value = { user, token, login, logout, isAuthenticated: !!user };
+  /** Require a stored access token — avoids "logged in" UI with no Bearer on API calls (401 on PAMM, wallet, etc.). */
+  const value = { user, token, login, logout, isAuthenticated: !!(user && token) };
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

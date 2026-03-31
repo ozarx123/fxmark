@@ -133,12 +133,18 @@ async function placeOrder(userId, body, accountId = null) {
 
   await validateTradingPermission(userId, accountId, { symbol, volume });
 
-  if (type === MARKET && hasValidExecPrice && accountId) {
-    const marginCheck = await marginService.checkMarginForNewPosition(userId, accountId, symbol, volume, execPrice);
-    if (!marginCheck.allowed) {
-      const err = new Error(marginCheck.reason || 'Insufficient margin');
-      err.statusCode = 400;
-      throw err;
+  if (accountId) {
+    let marginPrice = null;
+    if (type === MARKET && hasValidExecPrice) marginPrice = execPrice;
+    else if (isPendingType || type === LIMIT) marginPrice = price != null ? Number(price) : null;
+    if (Number.isFinite(marginPrice) && marginPrice > 0) {
+      const marginCheck = await marginService.checkMarginForNewPosition(userId, accountId, symbol, volume, marginPrice);
+      if (!marginCheck.allowed) {
+        const err = new Error(marginCheck.reason || 'Insufficient margin');
+        err.statusCode = 400;
+        err.code = 'INSUFFICIENT_MARGIN';
+        throw err;
+      }
     }
   }
 
@@ -176,9 +182,15 @@ async function placeOrder(userId, body, accountId = null) {
     const order = await orderRepo.findById(orderId, userId, accountId);
     const result = await executionRouter.route(order, execPrice);
     console.log('[orders] execution route result', { orderId, path: result.path, success: result.success, positionId: result.positionId, reason: result.reason });
-    if (result.success) {
+    if (result.success && result.positionId) {
       const updatedOrder = await orderRepo.findById(orderId, userId, accountId);
       return { orderId, status: 'filled', order: updatedOrder, positionId: result.positionId };
+    }
+    if (result.success && !result.positionId) {
+      const rejectReason = String(result.reason || 'Execution succeeded without position').slice(0, 500);
+      await orderRepo.updateStatus(orderId, userId, 'rejected', { rejectReason }, accountId);
+      const updatedOrder = await orderRepo.findById(orderId, userId, accountId);
+      return { orderId, status: 'rejected', order: updatedOrder, rejectReason };
     }
     const rejectReason = String(result.reason || 'Execution failed').slice(0, 500);
     await orderRepo.updateStatus(orderId, userId, 'rejected', { rejectReason }, accountId);

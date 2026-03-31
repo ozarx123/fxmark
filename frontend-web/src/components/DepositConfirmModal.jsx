@@ -14,6 +14,7 @@ import {
 const METHOD_ICON = {
   bank_transfer: 'Bank',
   crypto: 'Wallet',
+  nowpayments: 'Wallet',
   card: 'CreditCard',
   neteller: 'Wallet',
   skrill: 'Wallet',
@@ -29,11 +30,13 @@ export default function DepositConfirmModal({ isOpen, onConfirm, onClose }) {
   const [agreeTerms, setAgreeTerms] = useState(false);
   const [error, setError] = useState('');
   const [pendingConfirm, setPendingConfirm] = useState(null);
+  const [methodsLoadError, setMethodsLoadError] = useState('');
 
   useEffect(() => {
     if (!isOpen) return;
     setLoadingMethods(true);
     setError('');
+    setMethodsLoadError('');
     walletApi.getPaymentMethods()
       .then((data) => {
         setPaymentMethodsData(data);
@@ -41,7 +44,15 @@ export default function DepositConfirmModal({ isOpen, onConfirm, onClose }) {
           setGateway(data.methods[0].id);
         }
       })
-      .catch(() => setPaymentMethodsData({ pspEnabled: false, methods: [] }))
+      .catch((e) => {
+        setPaymentMethodsData(null);
+        const msg = e?.message || 'Could not load payment options.';
+        setMethodsLoadError(
+          /unauthorized|401/i.test(msg)
+            ? 'Please sign in again to make a deposit.'
+            : msg
+        );
+      })
       .finally(() => setLoadingMethods(false));
   }, [isOpen]);
 
@@ -93,7 +104,10 @@ export default function DepositConfirmModal({ isOpen, onConfirm, onClose }) {
   const amountNum = parseFloat(amount);
   const isValidAmount = !isNaN(amountNum) && amountNum >= minDeposit && amountNum <= maxDeposit;
   const gatewayLabel = gateways.find((g) => g.value === gateway)?.label ?? gateway;
-  const pspActive = paymentMethodsData?.pspEnabled && gateways.length > 0;
+  const pspActive =
+    paymentMethodsData &&
+    paymentMethodsData.pspEnabled &&
+    gateways.length > 0;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -104,8 +118,13 @@ export default function DepositConfirmModal({ isOpen, onConfirm, onClose }) {
         </div>
         {loadingMethods ? (
           <p className="form-hint">Loading payment options…</p>
+        ) : methodsLoadError ? (
+          <p className="form-error">{methodsLoadError}</p>
         ) : !pspActive ? (
-          <p className="form-error">Deposits are temporarily unavailable. Please try again later.</p>
+          <p className="form-error">
+            Deposits are turned off. An administrator needs to enable the payment provider and at least one payment
+            method in the admin panel (or enable PAYMENT_PSP_ENABLED for local development — see backend .env.example).
+          </p>
         ) : (
         <form onSubmit={handleSubmit} className="deposit-withdraw-form finance-form-optimized">
           <div className="form-row">

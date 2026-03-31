@@ -11,6 +11,10 @@ export default defineConfig({
         target: 'http://localhost:3000',
         changeOrigin: true,
         configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq, req) => {
+            const auth = req.headers.authorization;
+            if (auth) proxyReq.setHeader('Authorization', auth);
+          });
           proxy.on('error', (err, req, res) => {
             if (req.url?.startsWith('/api')) console.warn('[vite] API proxy target not reachable (is backend running on port 3000?)');
           });

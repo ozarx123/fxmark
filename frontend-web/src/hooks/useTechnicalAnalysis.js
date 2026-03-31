@@ -8,7 +8,7 @@ const API_BASE = (() => {
 })();
 
 /**
- * Fetches technical analysis (RSI, MACD, trend, levels) from Twelve Data via backend.
+ * Fetches technical analysis (RSI, MACD, trend, levels) from the backend (Finnhub candles + server-side TA).
  * @param {string} symbol - Display symbol e.g. "XAU/USD", "EUR/USD"
  * @param {string} [interval] - Optional interval: 1m, 5m, 15m, 1h, 1day (default 1day)
  * @returns {{ data: object|null, loading: boolean, error: string|null }}

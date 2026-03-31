@@ -3,6 +3,7 @@
  */
 import depositService from './deposit.service.js';
 import withdrawalService from './withdrawal.service.js';
+import * as nowpaymentsService from '../nowpayments/nowpayments.service.js';
 import walletRepo from './wallet.repository.js';
 import transferService from './transfer.service.js';
 import { ENTITY_COMPANY } from '../finance/chart-of-accounts.js';
@@ -101,6 +102,19 @@ async function createDeposit(req, res, next) {
   }
 }
 
+async function createNowpaymentsDeposit(req, res, next) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    const amount = req.body?.amount;
+    const result = await nowpaymentsService.createNowpaymentsDeposit(userId, amount);
+    res.status(201).json(result);
+  } catch (e) {
+    if (e.statusCode) return res.status(e.statusCode).json({ error: e.message });
+    next(e);
+  }
+}
+
 async function confirmDeposit(req, res, next) {
   try {
     const userId = req.user?.id;
@@ -184,6 +198,7 @@ export default {
   listTrades,
   listTransfers,
   createDeposit,
+  createNowpaymentsDeposit,
   confirmDeposit,
   requestWithdrawal,
   processWithdrawal,

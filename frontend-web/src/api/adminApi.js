@@ -570,6 +570,14 @@ export async function updateWithdrawalStatus(id, status, adminNote) {
   return data;
 }
 
+/** Admin: mark approved withdrawal completed (funds sent). */
+export async function completeWithdrawal(id) {
+  const res = await fetchWithAuth(`/admin/withdrawals/${id}/complete`, { method: 'POST' });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Failed to complete withdrawal');
+  return data;
+}
+
 // ---------- Alerts ----------
 export async function getAlerts(params = {}) {
   const q = new URLSearchParams(params).toString();

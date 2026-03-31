@@ -96,6 +96,7 @@ export async function listPammCommissions(params = {}) {
   if (params.from) q.set('from', params.from);
   if (params.to) q.set('to', params.to);
   if (params.limit) q.set('limit', params.limit);
+  if (params.startDate) q.set('startDate', params.startDate);
   const url = `/ib/pamm-commissions${q.toString() ? `?${q}` : ''}`;
   const res = await fetchWithAuth(url);
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to load PAMM commissions');

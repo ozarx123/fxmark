@@ -15,21 +15,24 @@ class FXMarkApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const String appEnv = String.fromEnvironment('APP_ENV', defaultValue: 'dev');
+    final bool isStaging = appEnv.toLowerCase() == 'staging';
     return MaterialApp(
-      title: 'FXMARK',
+      title: isStaging ? 'FXMARK STAGING' : 'FXMARK',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
         useMaterial3: true,
       ),
-      home: ChartPage(repository: repository),
+      home: ChartPage(repository: repository, isStaging: isStaging),
     );
   }
 }
 
 class ChartPage extends StatefulWidget {
-  const ChartPage({super.key, this.repository});
+  const ChartPage({super.key, this.repository, this.isStaging = false});
 
   final MarketDataRepository? repository;
+  final bool isStaging;
 
   @override
   State<ChartPage> createState() => _ChartPageState();
@@ -101,7 +104,9 @@ class _ChartPageState extends State<ChartPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('FXMARK Chart')),
+      appBar: AppBar(
+        title: Text(widget.isStaging ? 'FXMARK Chart (STAGING)' : 'FXMARK Chart'),
+      ),
       floatingActionButton: FloatingActionButton.extended(
         key: const Key('refreshChartButton'),
         onPressed: _loadChartData,

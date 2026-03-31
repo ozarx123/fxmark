@@ -35,7 +35,7 @@ export default function AdminMarket() {
           </p>
         </div>
         <div className="section-block">
-          <h2>Provider (Twelve Data)</h2>
+          <h2>Provider (Finnhub)</h2>
           <p className="muted">API key configured on backend. Quote poller: XAUUSD every 15s.</p>
         </div>
       </section>

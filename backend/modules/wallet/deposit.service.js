@@ -73,11 +73,61 @@ async function createDeposit(userId, currency, amount, reference, paymentMethod 
   };
 }
 
+/**
+ * Called only from NOWPayments IPN inside runPairedWithTransaction (payment_status === finished).
+ * Performs wallet + ledger credit with the same Mongo session as the NP order claim.
+ */
+async function applyNowpaymentsDepositCredit(depositId, userId, options = {}) {
+  const { session, npPaymentId } = options;
+  if (!session) {
+    const err = new Error('applyNowpaymentsDepositCredit requires Mongo session');
+    err.statusCode = 500;
+    throw err;
+  }
+  const tx = await walletRepo.getTransactionById(depositId, userId, { session });
+  if (!tx) {
+    const err = new Error('Deposit not found');
+    err.statusCode = 404;
+    throw err;
+  }
+  if (tx.type !== 'deposit' || tx.status !== 'pending') {
+    const err = new Error('Deposit already processed or invalid');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (tx.payment_method !== 'nowpayments') {
+    const err = new Error('Invalid deposit method');
+    err.statusCode = 400;
+    throw err;
+  }
+  const extra = {};
+  if (npPaymentId != null) extra.npPaymentId = npPaymentId;
+  await walletRepo.updateBalance(userId, tx.currency || 'USD', tx.amount, { session });
+  await walletRepo.updateTransaction(
+    depositId,
+    {
+      status: 'completed',
+      completedAt: new Date(),
+      reference: depositId,
+      ...extra,
+    },
+    { session }
+  );
+  await ledgerService.postDeposit(userId, tx.amount, tx.currency || 'USD', depositId, { session });
+}
+
 async function confirmDeposit(depositId, userId) {
   const tx = await walletRepo.getTransactionById(depositId, userId);
   if (!tx) {
     const err = new Error('Deposit not found');
     err.statusCode = 404;
+    throw err;
+  }
+  if (tx.payment_method === 'nowpayments') {
+    const err = new Error(
+      'This deposit completes automatically when the on-chain payment is confirmed. Manual confirmation is not available.'
+    );
+    err.statusCode = 400;
     throw err;
   }
   if (tx.type !== 'deposit' || tx.status !== 'pending') {
@@ -139,4 +189,10 @@ async function getAvailablePaymentMethods() {
   };
 }
 
-export default { createDeposit, confirmDeposit, listDeposits, getAvailablePaymentMethods };
+export default {
+  createDeposit,
+  confirmDeposit,
+  applyNowpaymentsDepositCredit,
+  listDeposits,
+  getAvailablePaymentMethods,
+};

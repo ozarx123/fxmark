@@ -40,8 +40,13 @@ export async function route(order, executionPrice) {
     if (result.success && result.positionId) {
       return { success: true, positionId: result.positionId, executionPrice: result.executionPrice, path: 'A_BOOK' };
     }
-    if (result.success) {
-      return { success: true, executionPrice: result.executionPrice, path: 'A_BOOK' };
+    // Market execution must produce a position id; success without it is ambiguous — treat as failure (no orphan pending fills).
+    if (result.success && !result.positionId) {
+      return {
+        success: false,
+        reason: result.reason || 'LP reported success without position id',
+        path: 'A_BOOK',
+      };
     }
     return { success: false, reason: result.reason || 'LP execution failed', path: 'A_BOOK' };
   }

@@ -10,6 +10,14 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { ProfileAvatar } from '../../components/ui';
+import { useAuth } from '../../context/AuthContext';
+import { useFinance } from '../../hooks/useFinance';
+import { hasRole, ADMIN_ROLES } from '../../config/roleRoutes.js';
+import {
+  computePammAiInvestorReviewUsd,
+  filterPammAiInvestorReviewFundProfitRows,
+  rawWalletLedgerRowsForPammFund,
+} from '../../utils/investorPammLedgerView.js';
 import * as pammApi from '../../api/pammApi';
 import PammTermsModal from './PammTermsModal';
 import PammFollowModal from './PammFollowModal';
@@ -61,6 +69,31 @@ export default function BullRunFundDetailView({
   isManager = false,
 }) {
   const hasActiveTrade = bullRun?.hasActiveTrade === true;
+  const { user } = useAuth();
+  const { entriesRaw } = useFinance();
+  const adminLedgerView = hasRole(user?.role, ADMIN_ROLES);
+
+  const pammAiReview = React.useMemo(() => {
+    if (!fundId) return null;
+    return computePammAiInvestorReviewUsd(entriesRaw, fundId);
+  }, [entriesRaw, fundId]);
+
+  const pammLedgerTableRows = React.useMemo(() => {
+    if (!fundId) return [];
+    const rawSrc = Array.isArray(entriesRaw) ? entriesRaw : [];
+    if (adminLedgerView || isManager) {
+      return rawWalletLedgerRowsForPammFund(rawSrc, fundId).sort(
+        (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+      );
+    }
+    if (!myAllocation) return [];
+    return filterPammAiInvestorReviewFundProfitRows(rawSrc, fundId).sort(
+      (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+    );
+  }, [fundId, adminLedgerView, isManager, myAllocation, entriesRaw]);
+
+  const showPammLedgerSection = adminLedgerView || isManager;
+
   const [termsModal, setTermsModal] = React.useState(false);
   const [followModal, setFollowModal] = React.useState(false);
   const [addFundsModal, setAddFundsModal] = React.useState(null);
@@ -126,11 +159,15 @@ export default function BullRunFundDetailView({
   const pool = bullRun?.total_fund_pool ?? stats?.aum ?? 0;
   const investors = bullRun?.total_investors ?? stats?.investors ?? 0;
   const strategyType = bullRun?.strategy_type ?? 'AI Bull Run';
+  const investorMinimalView = !isManager && !adminLedgerView;
   const todayProfit = bullRun?.today_profit ?? bullRun?.today_earnings ?? 0;
   const monthlyProfit = bullRun?.monthly_profit ?? bullRun?.monthly_earnings ?? 0;
+  const todayProfitAmount = bullRun?.todayProfit ?? 0;
+  const balanceAmount = bullRun?.balance ?? myAllocation?.allocatedBalance ?? 0;
+  const totalProfitAmount = bullRun?.totalProfit ?? 0;
   const fundGrowthData = bullRun?.fund_growth_data ?? [];
   const monthlyPerformance = bullRun?.monthly_performance ?? [];
-  const transactionHistory = bullRun?.transaction_history ?? [];
+  const transactionHistory = bullRun?.history ?? bullRun?.transaction_history ?? [];
   const reserveBalance = bullRun?.reserve_balance ?? 0;
   const fundGrowthRate = stats?.fundGrowthRate ?? 0;
   const cumulativePnl = stats?.cumulativePnl ?? 0;
@@ -148,24 +185,19 @@ export default function BullRunFundDetailView({
   const investorOverviewCards = myAllocation ? (
     <>
       <div className="pamm-card pamm-card--neutral">
-        <h3>My investment</h3>
-        <p className="pamm-value pamm-value--amount">{formatCurrency(myAllocation.allocatedBalance)}</p>
-      </div>
-      <div className="pamm-card pamm-card--neutral">
-        <h3>Current balance</h3>
-        <p className="pamm-value pamm-value--amount">{formatCurrency(myAllocation.allocatedBalance, 2)}</p>
-      </div>
-      {/* Investor UI intentionally hides share-of-fund and realized P&L cards. */}
-      <div className="pamm-card pamm-card--neutral">
-        <h3>Today&apos;s earnings</h3>
-        <p className={`pamm-value ${(todayProfit ?? 0) >= 0 ? 'positive' : 'negative'}`}>
-          {formatPercent(todayProfit)}
+        <h3>Today Profit</h3>
+        <p className={`pamm-value pamm-value--amount ${(todayProfitAmount ?? 0) >= 0 ? 'positive' : 'negative'}`}>
+          {formatCurrency(todayProfitAmount, 2)}
         </p>
       </div>
       <div className="pamm-card pamm-card--neutral">
-        <h3>Monthly earnings</h3>
-        <p className={`pamm-value ${(investorMonthlyEarnings ?? 0) >= 0 ? 'positive' : 'negative'}`}>
-          {formatPercent(investorMonthlyEarnings)}
+        <h3>Balance</h3>
+        <p className="pamm-value pamm-value--amount">{formatCurrency(balanceAmount, 2)}</p>
+      </div>
+      <div className="pamm-card pamm-card--neutral">
+        <h3>Total Profit</h3>
+        <p className={`pamm-value pamm-value--amount ${(totalProfitAmount ?? 0) >= 0 ? 'positive' : 'negative'}`}>
+          {formatCurrency(totalProfitAmount, 2)}
         </p>
       </div>
     </>
@@ -531,6 +563,7 @@ export default function BullRunFundDetailView({
       )}
 
       {/* Fund growth chart */}
+      {!investorMinimalView && (
       <section className="pamm-section">
         <h2 className="pamm-section-title">Fund growth chart</h2>
         {fundGrowthData.length > 0 ? (
@@ -552,8 +585,10 @@ export default function BullRunFundDetailView({
           <p className="muted">No growth data yet. Performance will appear after the fund has trading history.</p>
         )}
       </section>
+      )}
 
       {/* Monthly performance table */}
+      {!investorMinimalView && (
       <section className="pamm-section">
         <h2 className="pamm-section-title">Monthly performance</h2>
         {monthlyPerformance.length > 0 ? (
@@ -581,11 +616,81 @@ export default function BullRunFundDetailView({
           <p className="muted">No monthly data yet.</p>
         )}
       </section>
+      )}
+
+      {/* Ledger-based PAMM wallet lines: admin/manager only */}
+      {showPammLedgerSection && (
+        <section className="pamm-section">
+          <h2 className="pamm-section-title">
+            {adminLedgerView || isManager ? 'PAMM wallet ledger (this fund)' : 'PAMM profit (March 30 — local date)'}
+          </h2>
+          {adminLedgerView || isManager ? (
+            <p className="muted">All wallet ledger rows linked to this fund (including internal and reversal entries).</p>
+          ) : (
+            <p className="muted">
+              Only wallet <code>pamm_dist</code> credits dated <strong>March 30, 2026</strong> in your local timezone for this fund.
+              Rollbacks, losses, and other dates are hidden.
+            </p>
+          )}
+          <div className="table-wrap">
+            <table className="table pamm-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  {(adminLedgerView || isManager) ? (
+                    <>
+                      <th>Reference type</th>
+                      <th>Reference ID</th>
+                    </>
+                  ) : (
+                    <th>Reference</th>
+                  )}
+                  <th>Credit</th>
+                  {(adminLedgerView || isManager) && <th>Debit</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {pammLedgerTableRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={adminLedgerView || isManager ? 5 : 3} className="empty-cell">
+                      No rows yet
+                    </td>
+                  </tr>
+                ) : (
+                  pammLedgerTableRows.map((row) => (
+                    <tr key={row.id}>
+                      <td>{row.createdAt ? new Date(row.createdAt).toLocaleString() : '—'}</td>
+                      {(adminLedgerView || isManager) ? (
+                        <>
+                          <td><code>{String(row.referenceType || '—')}</code></td>
+                          <td className="investor-ref-cell">{row.referenceId != null ? String(row.referenceId) : '—'}</td>
+                        </>
+                      ) : (
+                        <td>{[row.referenceType, row.referenceId].filter(Boolean).join(' · ') || '—'}</td>
+                      )}
+                      <td className={(row.credit || 0) > 0 ? 'positive' : ''}>
+                        {(row.credit || 0) > 0 ? formatCurrency(row.credit, 2) : '—'}
+                      </td>
+                      {(adminLedgerView || isManager) && (
+                        <td className={(row.debit || 0) > 0 ? 'negative' : ''}>
+                          {(row.debit || 0) > 0 ? formatCurrency(row.debit, 2) : '—'}
+                        </td>
+                      )}
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       {/* Transaction history */}
       <section className="pamm-section">
         <h2 className="pamm-section-title">Transaction history</h2>
-        <p className="muted">Withdrawals are sent to your Live Trading Account.</p>
+        {!investorMinimalView && (
+          <p className="muted">Withdrawals are sent to your Live Trading Account.</p>
+        )}
         <div className="table-wrap">
           <table className="table pamm-table">
             <thead>
@@ -593,13 +698,13 @@ export default function BullRunFundDetailView({
                 <th>Type</th>
                 <th>Amount</th>
                 <th>Date</th>
-                <th>Account</th>
+                {!investorMinimalView && <th>Account</th>}
               </tr>
             </thead>
             <tbody>
               {!transactionHistory?.length ? (
                 <tr>
-                  <td colSpan={4} className="empty-cell">No transactions yet</td>
+                  <td colSpan={investorMinimalView ? 3 : 4} className="empty-cell">No transactions yet</td>
                 </tr>
               ) : (
                 transactionHistory.map((t, i) => (
@@ -607,7 +712,9 @@ export default function BullRunFundDetailView({
                     <td>{t.type || '—'}</td>
                     <td>{formatCurrency(t.amount, 2)}</td>
                     <td>{t.date ? new Date(t.date).toLocaleString() : '—'}</td>
-                    <td>{t.liveAccount === 'Live' ? 'Live Trading Account' : (t.liveAccount || 'Live Trading Account')}</td>
+                    {!investorMinimalView && (
+                      <td>{t.liveAccount === 'Live' ? 'Live Trading Account' : (t.liveAccount || 'Live Trading Account')}</td>
+                    )}
                   </tr>
                 ))
               )}
