@@ -39,17 +39,17 @@ export function initWebSocket(server, options = {}) {
 
   io = new SocketIOServer(server, {
     path: '/socket.io',
+    // Match /socket.io and /socket.io/ so path checks succeed behind varied proxies.
+    addTrailingSlash: false,
     cors: socketCors,
-    // Start with polling for reliable session handshake.
-    // Upgrade to WebSocket is attempted automatically by the client; the server
-    // allows it but does not force it — prevents upgrade failures from spamming
-    // the console when the raw WS handshake is blocked by a proxy.
+    // Polling first matches client: avoids Engine.IO 400 when websocket transport hits HTTP GET without Upgrade.
     transports: ['polling', 'websocket'],
     allowUpgrades: true,
     allowEIO3: true,
     pingTimeout: 20000,
     pingInterval: 25000,
     upgradeTimeout: 10000,
+    perMessageDeflate: false,
   });
 
   // Auth: verify JWT, join user to room for trade updates

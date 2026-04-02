@@ -63,6 +63,7 @@ $deployArgs = @(
     "--port=8080",
     "--timeout=3600",
     "--no-use-http2",
+    "--session-affinity",
     "--cpu-boost",
     "--memory=512Mi"
 )

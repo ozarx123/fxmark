@@ -75,10 +75,10 @@ export function getDatafeedSocket() {
     return socket;
   }
   const url = getDatafeedSocketUrl();
-  // Production: WebSocket first (low latency). Dev: polling-only — many local setups fail
-  // ws://localhost:3000 (browser extensions, proxy, or Socket.IO/engine mismatch), which
-  // spams connect_error and delays fallback; long-polling to the same origin works reliably.
-  const transports = import.meta.env.DEV ? ['polling'] : ['websocket', 'polling'];
+  // Dev: polling-only — many local setups fail ws://localhost:3000 upgrades.
+  // Prod (Cloud Run / reverse proxies): polling first — Engine.IO rejects transport=websocket
+  // on plain HTTP GET (upgrade=false) with 400; polling handshake is HTTP, then upgrade works.
+  const transports = import.meta.env.DEV ? ['polling'] : ['polling', 'websocket'];
   socket = io(url, {
     path: '/socket.io',
     transports,
