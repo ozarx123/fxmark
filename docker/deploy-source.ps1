@@ -5,7 +5,13 @@
 param(
     [string]$ProjectId = "",
     [string]$Region = "us-central1",
-    [string]$ServiceName = "fxmark-backend"
+    [string]$ServiceName = "fxmark-backend",
+    # Order latency: avoid cold starts + give Node headroom (cost: min-instances bills 24/7)
+    [int]$MinInstances = 1,
+    [ValidateSet("1", "2", "4", "6", "8")]
+    [string]$Cpu = "2",
+    [string]$Memory = "1Gi",
+    [int]$Concurrency = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -65,8 +71,14 @@ $deployArgs = @(
     "--no-use-http2",
     "--session-affinity",
     "--cpu-boost",
-    "--memory=512Mi"
+    "--cpu=$Cpu",
+    "--memory=$Memory",
+    "--min-instances=$MinInstances",
+    "--no-cpu-throttling"
 )
+if ($Concurrency -gt 0) {
+    $deployArgs += "--concurrency=$Concurrency"
+}
 
 # Use --update-env-vars (not --set-env-vars) so we do not wipe REDIS_* and other console-set vars
 $envPairs = @("NODE_ENV=production", "TWELVE_DATA_WS=false")

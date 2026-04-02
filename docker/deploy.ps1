@@ -6,7 +6,12 @@ param(
     [string]$Region = "us-central1",
     [string]$ServiceName = "fxmark-backend",
     [switch]$BuildOnly,
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [int]$MinInstances = 1,
+    [ValidateSet("1", "2", "4", "6", "8")]
+    [string]$Cpu = "2",
+    [string]$Memory = "1Gi",
+    [int]$Concurrency = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -79,8 +84,14 @@ $deployArgs = @(
     "--no-use-http2",
     "--session-affinity",
     "--cpu-boost",
-    "--memory=512Mi"
+    "--cpu=$Cpu",
+    "--memory=$Memory",
+    "--min-instances=$MinInstances",
+    "--no-cpu-throttling"
 )
+if ($Concurrency -gt 0) {
+    $deployArgs += "--concurrency=$Concurrency"
+}
 
 $envPairs = @("NODE_ENV=production", "TWELVE_DATA_WS=false")
 $ErrorActionPreference = "SilentlyContinue"
