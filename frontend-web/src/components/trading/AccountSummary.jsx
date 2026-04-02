@@ -6,7 +6,7 @@ import { useAccount } from '../../context/AccountContext';
 const formatMoney = (n) =>
   new Intl.NumberFormat('en-US', { style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n ?? 0);
 
-export default function AccountSummary({ accountId, accountNumber, className = '' }) {
+export default function AccountSummary({ accountId, accountNumber, openPnlTotal, className = '' }) {
   const { balance: contextBalance } = useAccount();
   const { balanceUpdate, connected } = useTradingSocket();
   const [summary, setSummary] = useState(null);
@@ -47,10 +47,17 @@ export default function AccountSummary({ accountId, accountNumber, className = '
   }, [balanceUpdate, accountId]);
 
   const balance = summary?.balance ?? balanceUpdate?.balance ?? contextBalance ?? 0;
-  const equity = summary?.equity ?? balanceUpdate?.equity ?? balance;
   const marginUsed = summary?.marginUsed ?? balanceUpdate?.marginUsed ?? 0;
-  const freeMargin = summary?.freeMargin ?? balanceUpdate?.freeMargin ?? equity - marginUsed;
-  const marginLevel = summary?.marginLevel ?? balanceUpdate?.marginLevel ?? (marginUsed > 0 ? (equity / marginUsed) * 100 : null);
+  const useLiveEquity = openPnlTotal != null && Number.isFinite(Number(openPnlTotal));
+  const equity = useLiveEquity
+    ? balance + Number(openPnlTotal)
+    : (summary?.equity ?? balanceUpdate?.equity ?? balance);
+  const freeMargin = useLiveEquity
+    ? equity - marginUsed
+    : (summary?.freeMargin ?? balanceUpdate?.freeMargin ?? equity - marginUsed);
+  const marginLevel = useLiveEquity
+    ? (marginUsed > 0 ? (equity / marginUsed) * 100 : null)
+    : (summary?.marginLevel ?? balanceUpdate?.marginLevel ?? (marginUsed > 0 ? (equity / marginUsed) * 100 : null));
 
   return (
     <div className={`terminal-account-summary ${className}`}>

@@ -142,7 +142,15 @@ export function useMarketData(symbol, timeframe = '1m') {
                       open: last.open,
                       high: last.high,
                       low: last.low,
-                      datetime: last.time || new Date().toISOString(),
+                      datetime: (() => {
+                        const t = last.time;
+                        if (t == null) return new Date().toISOString();
+                        if (typeof t === 'number' && Number.isFinite(t)) {
+                          const ms = t < 1e12 ? t * 1000 : t;
+                          return new Date(ms).toISOString();
+                        }
+                        return String(t);
+                      })(),
                     };
               });
             }

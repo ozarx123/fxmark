@@ -75,10 +75,10 @@ export function getDatafeedSocket() {
     return socket;
   }
   const url = getDatafeedSocketUrl();
-  // Polling-first handshake, then upgrade to WebSocket in production.
-  // In dev, some environments log failed WS upgrade attempts to the console even
-  // when long-polling works; polling-only keeps the console clean locally.
-  const transports = import.meta.env.DEV ? ['polling'] : ['polling', 'websocket'];
+  // Production: WebSocket first (low latency). Dev: polling-only — many local setups fail
+  // ws://localhost:3000 (browser extensions, proxy, or Socket.IO/engine mismatch), which
+  // spams connect_error and delays fallback; long-polling to the same origin works reliably.
+  const transports = import.meta.env.DEV ? ['polling'] : ['websocket', 'polling'];
   socket = io(url, {
     path: '/socket.io',
     transports,
@@ -88,10 +88,11 @@ export function getDatafeedSocket() {
     reconnectionDelay: 1000,
     reconnectionDelayMax: 10000,
     timeout: 20000,
+    rememberUpgrade: !import.meta.env.DEV,
     auth: buildSocketAuth(),
   });
   if (import.meta.env.DEV) {
-    socket.on('connect', () => console.log('[datafeed] Socket.IO connected'));
+    socket.on('connect', () => console.log('[datafeed] Socket.IO connected (polling)'));
     socket.on('disconnect', (reason) => console.log('[datafeed] Socket.IO disconnected:', reason));
     socket.on('connect_error', (err) => console.error('[datafeed] Socket.IO connect_error:', err.message));
   }

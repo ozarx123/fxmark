@@ -83,9 +83,10 @@ import { checkAndTriggerPendingOrders } from '../modules/trading/pendingOrders.e
 import pendingOrdersEngine from '../modules/trading/pendingOrders.engine.js';
 import marketRoutes from './routes/market.js';
 import { isRedisAvailable } from './services/cache.js';
-import { setLastPrice } from './services/lastQuotePrices.js';
+import { setLastPrice, getLastPrice } from './services/lastQuotePrices.js';
 import { fetchQuotesBatch } from './services/finnhubRest.js';
 import { createFinnhubWebSocket } from './services/finnhubWebSocket.js';
+import { createTwelveDataWebSocket } from './services/twelveDataWebSocket.js';
 import { getDb } from '../config/mongo.js';
 import { applyPlatformEnvOverridesFromDatabase } from '../modules/admin/platform-env.service.js';
 import apiRoutes from '../core/routes.js';
@@ -95,7 +96,18 @@ import maintenanceService from '../modules/admin/maintenance.service.js';
 import { startDailyWalletLedgerReconciliation } from '../modules/finance/reconciliation-daily.cron.js';
 import financialTransactionService from '../modules/finance/financial-transaction.service.js';
 
-const PORT = parseInt(process.env.PORT || '3000', 10);
+const PORT = (() => {
+  const p = parseInt(process.env.PORT || '3000', 10);
+  if (!Number.isFinite(p) || p < 1 || p > 65535) {
+    console.warn('[server] Invalid PORT; using 3000');
+    return 3000;
+  }
+  return p;
+})();
+
+if (!process.env.FINNHUB_API_KEY) {
+  console.warn('[env] Missing FINNHUB_API_KEY — Finnhub live stream disabled');
+}
 
 /**
  * /api/auth rate limit (per IP, rolling window). Default 10/15min in production.
@@ -336,6 +348,15 @@ app.use('/api', apiRoutes);
 app.use(middleware.errorHandler);
 
 const server = createServer(app);
+server.on('error', (err) => {
+  if (err?.code === 'EADDRINUSE') {
+    console.error(
+      `[server] Port ${PORT} is already in use (EADDRINUSE). Stop the other process using this port or set PORT in backend/.env to a free port (e.g. PORT=3001).`
+    );
+    process.exit(1);
+  }
+  throw err;
+});
 initWebSocket(server, { corsOrigins: allowedOrigins });
 
 /**
@@ -352,15 +373,13 @@ const MAX_CONSECUTIVE_FAILURES = 5;
 
 // ── Live tick source priority ─────────────────────────────────────────────────
 //
-//   Priority 1 — Finnhub WebSocket (real-time trades)
-//   Priority 2 — Finnhub REST poll (TP/SL + fallback broadcast when WS offline)
+//   Priority 1 — Twelve Data WebSocket (when TWELVE_DATA_API_KEY + TWELVE_DATA_WS)
+//   Priority 2 — Finnhub WebSocket (real-time trades)
+//   Priority 3 — Finnhub REST poll (TP/SL + fallback broadcast when both WS quiet)
 //
 let finnhubActive = false;
-
-// ── REST deduplication ────────────────────────────────────────────────────────
-// Avoid spamming unchanged cached prices to the frontend when the market is
-// flat or outside trading hours.
-const lastRestPrice = new Map(); // symbol → last broadcast price
+/** When true, Twelve Data is the broadcast source; Finnhub ticks are not emitted (no duplicates). */
+let twelveDataActive = false;
 
 // ── Unified emit with source tagging ─────────────────────────────────────────
 let lastEmitTs = 0;
@@ -398,11 +417,7 @@ async function pollSymbols(apiKey, symbols) {
         checkAndTriggerPendingOrders(tick.symbol, price).catch((e) => console.warn('[pendingOrders]', e.message));
       }
       if (!finnhubActive) {
-        const prev = lastRestPrice.get(tick.symbol);
-        if (prev !== price) {
-          lastRestPrice.set(tick.symbol, price);
-          emitWithLog(tick, 'REST');
-        }
+        emitWithLog(tick, 'REST');
       }
     }
     return ticks.length === 0;
@@ -460,8 +475,73 @@ async function runQuotePoller() {
   }
 }
 
+let feedBannerLogged = null;
+function logFeedActive(name) {
+  if (feedBannerLogged === name) return;
+  feedBannerLogged = name;
+  console.log(`[FEED] Active feed: ${name}`);
+}
+
 /**
- * Finnhub WebSocket — primary live ticks; REST poller fills when WS offline.
+ * Twelve Data WebSocket — preferred live ticks when configured.
+ */
+function runTwelveDataWebSocket() {
+  const apiKey = (process.env.TWELVEDATA_API_KEY || process.env.TWELVE_DATA_API_KEY || '').trim();
+  if (!apiKey) {
+    return null;
+  }
+  const wsOff = ['0', 'false', 'no', 'off'].includes(String(process.env.TWELVE_DATA_WS || '').trim().toLowerCase());
+  if (wsOff) {
+    console.warn('[TwelveData] TWELVE_DATA_WS is off — skipping Twelve Data WebSocket');
+    return null;
+  }
+
+  const client = createTwelveDataWebSocket({
+    apiKey,
+    symbols: SUBSCRIBED_SYMBOLS,
+    onConnect: () => {
+      console.log('[FEED] Twelve connected');
+    },
+    onTick: (tick) => {
+      twelveDataActive = true;
+      finnhubActive = false;
+      logFeedActive('twelvedata');
+
+      logMarketTick(tick, 'twelvedata_ws');
+      logFeedTick({
+        symbol: tick.symbol,
+        price: tick.close ?? tick.price,
+        providerTs: tick.datetime,
+        latencyMs: tick.serverReceivedAt ? Date.now() - tick.serverReceivedAt : null,
+        status: 200,
+      });
+      const price = tick.close ?? tick.price;
+      if (tick.symbol && price != null) {
+        setLastPrice(tick.symbol, price);
+        positionsService
+          .checkAndExecuteTPLS(tick.symbol, price)
+          .catch((e) => console.warn('[TP/SL]', e.message));
+        checkAndTriggerPendingOrders(tick.symbol, price).catch((e) => console.warn('[pendingOrders]', e.message));
+      }
+
+      emitWithLog(tick, 'TWELVEDATA');
+    },
+    onDisconnect: () => {
+      twelveDataActive = false;
+      feedBannerLogged = 'finnhub';
+      console.log('[FEED] Twelve disconnected');
+      console.log('[FEED] Active feed: finnhub');
+    },
+    onError: () => {
+      twelveDataActive = false;
+    },
+  });
+
+  return client;
+}
+
+/**
+ * Finnhub WebSocket — live ticks when Twelve Data is not primary; REST poller fills when both WS quiet.
  */
 function runFinnhubWebSocket() {
   const apiKey = (process.env.FINNHUB_API_KEY || '').trim();
@@ -481,8 +561,13 @@ function runFinnhubWebSocket() {
     },
 
     onTick: (tick) => {
-      // Mark Finnhub as active — suppresses TD_WS and REST broadcasting
+      if (twelveDataActive) {
+        return;
+      }
+
+      // Mark Finnhub as active — suppresses REST-only broadcasting
       finnhubActive = true;
+      logFeedActive('finnhub');
 
       // TP/SL and feed logging always run regardless of source
       logMarketTick(tick, 'finnhub_ws');
@@ -525,6 +610,30 @@ function runFinnhubWebSocket() {
   }
 }
 
+const TICK_HEARTBEAT_MS = 1000;
+
+/** Re-broadcast last known price every 1s so charts keep updating when the market is flat or WS reconnects. */
+function startMarketTickHeartbeat() {
+  setInterval(() => {
+    for (const sym of SUBSCRIBED_SYMBOLS) {
+      const p = getLastPrice(sym);
+      if (p == null || !Number.isFinite(p)) continue;
+      broadcastTick({
+        symbol: sym,
+        price: p,
+        close: p,
+        open: p,
+        high: p,
+        low: p,
+        volume: 0,
+        datetime: new Date().toISOString(),
+        source: 'heartbeat',
+        heartbeat: true,
+      });
+    }
+  }, TICK_HEARTBEAT_MS);
+}
+
 server.listen(PORT, async () => {
   console.log(`[server] Listening on port ${PORT}`);
   console.log(`[server] WebSocket: ws://localhost:${PORT}/ws`);
@@ -559,8 +668,10 @@ server.listen(PORT, async () => {
   });
   maintenanceService.startMaintenanceScheduler();
 
+  runTwelveDataWebSocket();
   runFinnhubWebSocket();
   runQuotePoller();
+  startMarketTickHeartbeat();
 
   startDailyWalletLedgerReconciliation();
 });

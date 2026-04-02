@@ -19,7 +19,8 @@ const envPath = requestedEnvFile
     ? path.resolve(__dirname, '../../.env.staging')
     : path.resolve(__dirname, '../../.env');
 const envExists = fs.existsSync(envPath);
-const result = dotenv.config({ path: envPath, override: true });
+// Do not override existing process.env (e.g. PORT from shell); matches config/load-env.js
+const result = dotenv.config({ path: envPath, override: false });
 if (!envExists) {
   console.warn('[cache] env file not found at', envPath, '- Redis will be disabled unless REDIS_URL/REDIS_HOST is set in environment');
 } else if (result.error) {

@@ -13,6 +13,8 @@ router.get('/me', authenticate, controller.me);
 router.post('/change-password', authenticate, controller.changePassword);
 router.post('/change-investor-password', authenticate, controller.changeInvestorPassword);
 // Email verification (GET for link in email, POST for API call with token)
+// Path token first — matches links like /api/auth/verify-email/<token> (avoids broken ?token= stripping)
+router.get('/verify-email/:token', controller.verifyEmail);
 router.get('/verify-email', controller.verifyEmail);
 router.post('/verify-email', controller.verifyEmail);
 router.post('/resend-verification', controller.resendVerification);

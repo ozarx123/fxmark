@@ -9,9 +9,8 @@ const POLL_MS = 45_000;
 function pathBypassesMaintenance(pathname) {
   if (pathname.startsWith('/auth') || pathname.startsWith('/admin')) return true;
   if (pathname === '/maintenance') return true;
-  if (pathname === '/forgot-password' || pathname === '/reset-password' || pathname === '/verify-email') {
-    return true;
-  }
+  if (pathname === '/forgot-password' || pathname === '/reset-password') return true;
+  if (pathname === '/verify-email' || pathname.startsWith('/verify-email/')) return true;
   return false;
 }
 

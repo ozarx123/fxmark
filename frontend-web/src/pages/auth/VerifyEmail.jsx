@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Link, useSearchParams, useLocation } from 'react-router-dom';
+import { Link, useSearchParams, useLocation, useParams } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { ensureUserRole } from '../../utils/authHelpers';
 import FxmarkLogo from '../../components/FxmarkLogo';
@@ -7,17 +7,35 @@ import { getApiBase } from '../../config/apiBase.js';
 
 const API_BASE = getApiBase();
 
-function readTokenFromUrl() {
+function readTokenFromSearch() {
   if (typeof window === 'undefined') return null;
   const q = new URLSearchParams(window.location.search).get('token');
   return q && q.trim() ? q.trim() : null;
 }
 
+/** Rare: malformed templates use #token=… (hash is not sent to the server). */
+function readTokenFromHash() {
+  if (typeof window === 'undefined') return null;
+  const h = window.location.hash.replace(/^#/, '');
+  if (!h) return null;
+  if (h.startsWith('token=') || h.includes('token=')) {
+    const qs = h.includes('?') ? h.slice(h.indexOf('?')) : h;
+    const v = new URLSearchParams(qs.startsWith('?') ? qs.slice(1) : qs).get('token');
+    return v && v.trim() ? v.trim() : null;
+  }
+  return null;
+}
+
 export default function VerifyEmail() {
+  const { token: pathToken } = useParams();
   const [searchParams] = useSearchParams();
   const location = useLocation();
   const { user, token: authToken, login } = useAuth();
-  const token = searchParams.get('token')?.trim() || readTokenFromUrl();
+  const token =
+    (pathToken && pathToken.trim()) ||
+    searchParams.get('token')?.trim() ||
+    readTokenFromSearch() ||
+    readTokenFromHash();
 
   // no_token = opened app route without ?token= (e.g. after login or protected-route redirect); not an error
   const [status, setStatus] = useState(() => (token ? 'verifying' : 'no_token')); // 'no_token' | 'verifying' | 'success' | 'error'

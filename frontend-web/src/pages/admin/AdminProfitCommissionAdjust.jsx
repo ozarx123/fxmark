@@ -160,16 +160,15 @@ function ProfitCommissionAdjustModal({ ctx, userId, onClose, onApplied }) {
             <div className="admin-profit-modal-section">
               <h4 className="admin-profit-modal-section-title">Wallet</h4>
               <div className="filter-group">
-                <label htmlFor="pca-wallet">Profit credit (USD)</label>
+                <label htmlFor="pca-wallet">Profit adjustment (USD, + or −)</label>
                 <input
                   id="pca-wallet"
                   type="number"
                   step="0.01"
-                  min="0"
                   className="filter-input"
                   value={walletProfitCreditUsd}
                   onChange={(e) => setWalletProfitCreditUsd(e.target.value)}
-                  placeholder="Positive only — ledger + balance"
+                  placeholder="Positive credits wallet; negative debits (requires balance)"
                 />
               </div>
             </div>
@@ -260,7 +259,8 @@ export default function AdminProfitCommissionAdjust() {
         <h1>Profit &amp; commission adjustment</h1>
         <p className="muted admin-profit-page-desc">
           Atomic updates: <code>pamm_allocations</code> realized P&amp;L, wallet + ledger (
-          <code>admin_profit_adjustment</code>), and/or <code>ib_commissions</code> + ledger. Load a user,
+          <code>admin_profit_adjustment</code>; negative amounts debit wallet), and/or{' '}
+          <code>ib_commissions</code> + ledger. Load a user,
           review context, then open the form.
         </p>
       </div>

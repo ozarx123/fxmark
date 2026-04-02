@@ -138,25 +138,30 @@ function normalizeTick(tick) {
   };
 }
 
-// ── Tick rate limiter & deduplication ─────────────────────────────────────────
-//
-// Goals:
-//   1. Skip identical prices — no chart update needed, no wasted serialization.
-//   2. Rate-limit bursts — Finnhub can fire multiple ticks within 1–5 ms.
-//      Buffer them for MIN_EMIT_INTERVAL_MS and emit only the LATEST price.
-//      This is "latest-wins" — correct for price feeds (we want current, not queued).
-//
-// Architecture:
-//   broadcastTick(tick)
-//     → normalizeTick()          [validate + round]
-//     → same-price check         [TICK_SKIPPED_SAME_PRICE]
-//     → schedule / update buffer [TICK_BUFFERED | immediate flush]
-//     → flushTick()              [actual wss + io.emit]
-//
-// Per-symbol state is kept in `tickState` Map — never grows beyond the number
-// of subscribed symbols (typically 1–8), so memory impact is negligible.
+// ── Live tick sanity filter (per symbol) — drop spikes / out-of-order before broadcast ──
+const lastPrices = new Map();
+const lastTsMap = new Map();
 
-const MIN_EMIT_INTERVAL_MS = 20; // max 50 ticks/sec per symbol
+/** Provider time in ms (Finnhub WS uses `timestamp`; REST uses `providerTs`). */
+function getTickTimestampMs(tick) {
+  if (tick.providerTs != null && Number.isFinite(Number(tick.providerTs))) {
+    const t = Number(tick.providerTs);
+    return t < 1e12 ? t * 1000 : t;
+  }
+  if (tick.timestamp != null && Number.isFinite(Number(tick.timestamp))) {
+    const t = Number(tick.timestamp);
+    return t < 1e12 ? t * 1000 : t;
+  }
+  return Date.now();
+}
+
+// ── Tick rate limiter ─────────────────────────────────────────────────────────
+//
+// Bursts: buffer and emit at most ~50/sec per symbol (latest wins in buffer).
+// Same-price ticks are still emitted (chart/UI need continuous updates).
+// Heartbeat ticks bypass the throttle (see tick.heartbeat in broadcastTick).
+
+const MIN_EMIT_INTERVAL_MS = 20; // max ~50 emits/sec per symbol (non-heartbeat)
 
 /** @type {Map<string, { lastPrice: number|null, lastEmitAt: number, bufferedTick: object|null, flushTimer: NodeJS.Timeout|null }>} */
 const tickState = new Map();
@@ -170,6 +175,16 @@ function getTickState(symbol) {
   return s;
 }
 
+function emitRawTick(data) {
+  if (wss) {
+    const payload = JSON.stringify({ type: 'tick', data });
+    wss.clients.forEach((client) => {
+      if (client.readyState === 1) client.send(payload);
+    });
+  }
+  if (io) io.emit('tick', data);
+}
+
 /** Send the latest buffered tick to all connected clients */
 function flushTick(symbol, state) {
   state.flushTimer = null;
@@ -180,58 +195,75 @@ function flushTick(symbol, state) {
   state.lastPrice     = data.price;
   state.lastEmitAt    = Date.now();
 
-  if (wss) {
-    const payload = JSON.stringify({ type: 'tick', data });
-    wss.clients.forEach((client) => {
-      if (client.readyState === 1) client.send(payload);
-    });
-  }
-  if (io) io.emit('tick', data);
+  emitRawTick(data);
 }
 
 /**
  * Broadcast tick (quote) update to all connected clients.
  *
- * Applies in order:
- *   1. normalizeTick  — validate, round prices
- *   2. same-price dedup  — drop if price unchanged
- *   3. rate limiter   — hold-and-replace buffer, emit at ≤50 ticks/sec
+ * Optional tick.heartbeat: emit immediately (1 Hz keepalive for charts when price is flat).
+ * Otherwise: normalize → rate-limited buffer (≤~50/sec per symbol, latest wins).
  *
- * @param {Object} tick - { symbol, price, open, high, low, close, volume, datetime, source, … }
+ * @param {Object} tick - { symbol, price, open, high, low, close, volume, datetime, source, heartbeat?, … }
  */
 export function broadcastTick(tick) {
+  const isHeartbeat = tick && tick.heartbeat === true;
   const data = normalizeTick(tick);
   if (!data) return;
 
-  const state = getTickState(data.symbol);
+  const symbol = data.symbol;
+  const price = Number(data.price ?? data.close);
 
-  // ── 1. Same-price deduplication ──────────────────────────────────────────
-  if (state.lastPrice === data.price) {
-    console.log(`TICK_SKIPPED_SAME_PRICE ${data.symbol} ${data.price}`);
+  if (!isHeartbeat) {
+    const lastPrice = lastPrices.get(symbol);
+    if (lastPrice != null && Number.isFinite(lastPrice)) {
+      const diff = Math.abs(price - lastPrice);
+      const upperSym = String(symbol).toUpperCase();
+      const isGold = upperSym.includes('XAU') || upperSym.includes('GOLD');
+      const MAX_MOVE = 10;
+      if (isGold && diff > MAX_MOVE) {
+        console.warn('[TICK FILTERED - SPIKE]', { symbol, price, lastPrice, diff });
+        return;
+      }
+    }
+
+    const ts = getTickTimestampMs(tick);
+    const lastTs = lastTsMap.get(symbol);
+    if (lastTs != null && ts < lastTs) {
+      console.warn('[TICK FILTERED - OLD]', { symbol, ts, lastTs });
+      return;
+    }
+
+    lastPrices.set(symbol, price);
+    lastTsMap.set(symbol, ts);
+  } else {
+    const ts = Date.now();
+    lastPrices.set(symbol, price);
+    lastTsMap.set(symbol, ts);
+  }
+
+  if (isHeartbeat) {
+    emitRawTick(data);
+    const state = getTickState(data.symbol);
+    state.lastPrice = data.price;
+    state.lastEmitAt = Date.now();
     return;
   }
 
-  // ── 2. Update the buffer with the latest tick ─────────────────────────────
+  const state = getTickState(data.symbol);
+
   state.bufferedTick = data;
 
-  // ── 3. Rate limiter ───────────────────────────────────────────────────────
-  // If a flush is already pending, the new price is stored in the buffer and
-  // will be picked up when the timer fires — no extra timer needed.
   if (state.flushTimer !== null) {
-    console.log(`TICK_BUFFERED ${data.symbol} ${data.price}`);
     return;
   }
 
   const sinceLastEmit = Date.now() - state.lastEmitAt;
 
   if (sinceLastEmit >= MIN_EMIT_INTERVAL_MS) {
-    // Last emit was long enough ago — flush immediately (zero-delay setTimeout
-    // keeps us non-blocking and consistent with the buffered path)
     state.flushTimer = setTimeout(() => flushTick(data.symbol, state), 0);
   } else {
-    // Within the rate-limit window — wait out the remaining interval
     const delay = MIN_EMIT_INTERVAL_MS - sinceLastEmit;
-    console.log(`TICK_BUFFERED ${data.symbol} ${data.price}`);
     state.flushTimer = setTimeout(() => flushTick(data.symbol, state), delay);
   }
 }

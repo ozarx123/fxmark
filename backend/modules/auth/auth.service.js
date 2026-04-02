@@ -17,17 +17,27 @@ function getVerificationExpiryMs() {
   return 60 * 60 * 1000; // 1 hour default
 }
 
-function getWebAppBaseUrlForEmail() {
-  const base = (config.frontendBaseUrl || '').trim().replace(/\/$/, '');
-  if (!base) {
-    throw new Error('FRONTEND_URL must be set for email verification links');
-  }
-  return base;
-}
-
+/**
+ * Verification link in email: prefer SPA URL so the React app POSTs the token.
+ * If FRONTEND_URL is unset (common on API-only or misconfigured prod), fall back to
+ * GET /api/auth/verify-email/:token on the public API — the controller verifies in-browser without redirect.
+ *
+ * Links use a path segment (not ?token=) so corporate scanners and broken proxies are less likely to strip the token.
+ * GET /api/auth/verify-email?token=… still works for older emails.
+ */
 function buildVerificationEmailLink(token) {
-  const base = getWebAppBaseUrlForEmail().replace(/\/$/, '');
-  return `${base}/verify-email?token=${encodeURIComponent(token)}`;
+  const fe = (config.frontendBaseUrl || '').trim().replace(/\/$/, '');
+  if (fe) {
+    return `${fe}/verify-email/${encodeURIComponent(token)}`;
+  }
+  const api = (config.apiUrl || '').trim().replace(/\/$/, '');
+  if (api) {
+    console.warn(
+      '[auth] FRONTEND_URL/WEB_APP_URL unset — verification emails use API_URL link. Set FRONTEND_URL so links open the SPA.'
+    );
+    return `${api}/api/auth/verify-email/${encodeURIComponent(token)}`;
+  }
+  throw new Error('FRONTEND_URL or API_URL must be set for email verification links');
 }
 
 async function verificationCollection() {
@@ -204,9 +214,9 @@ async function register(payload) {
     console.warn('[auth] Verification email send failed:', e.message);
     verificationEmailSent = false;
     const msg = e?.message || '';
-    if (msg.includes('FRONTEND_URL must be set')) {
+    if (msg.includes('FRONTEND_URL or API_URL must be set')) {
       verificationMessage =
-        'Email verification link is not configured. Set FRONTEND_URL or WEB_APP_URL on the server.';
+        'Email verification link is not configured. Set API_URL (public) and ideally FRONTEND_URL / WEB_APP_URL on the server.';
     } else {
       verificationMessage = msg || 'Verification email could not be sent.';
     }

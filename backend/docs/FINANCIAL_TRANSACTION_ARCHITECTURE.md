@@ -24,3 +24,7 @@ Today the UI still reads **wallet API** for spendable balance. A later migration
 ## MongoDB transactions
 
 Local **standalone** MongoDB does not support multi-document transactions. Use **Atlas** or a replica set for development if you exercise transfer / import / live close paths.
+
+## Related
+
+- **`docs/WALLET_LEDGER_WORKFLOW_REPORT.md`** (repo root) — workflow diagrams and flow-by-flow mapping to modules; PDF via `npm run report:wallet-ledger` in `docs/architecture`.

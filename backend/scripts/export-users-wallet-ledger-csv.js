@@ -11,6 +11,11 @@
  * in Excel. If you pass `--out=` to a locked file, the script writes `*-run-<timestamp>.csv` instead.
  *
  * PAMM columns (USD): active allocation balances (investor), realized PnL sum on those rows, manager currentDeposit sum.
+ *
+ * Reconciliation (Bull Run / fundType ai): optional CSV at repo root `recon_010426` or `recon_010426.csv`
+ * (override with RECON_CSV_PATH). Columns: user_id, pamm_actual (target on-book stake after recon).
+ * pamm_adjust = bull_run_stake − pamm_actual (reduction from current DB stake); if pamm_actual is blank,
+ * pamm_adjust defaults to full bull_run_stake. Non–Bull Run PAMM is unchanged in these two columns (left blank).
  */
 import 'dotenv/config';
 import fs from 'fs';
@@ -20,6 +25,7 @@ import { getDb, closeMongo } from '../config/mongo.js';
 import { ENTITY_COMPANY } from '../modules/finance/chart-of-accounts.js';
 import ledgerRepo from '../modules/finance/ledger.repository.js';
 import walletRepo from '../modules/wallet/wallet.repository.js';
+import { loadReconMap as loadReconMapFromFile } from './lib/pamm-recon-csv.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -75,6 +81,32 @@ function round2(n) {
   const x = Number(n);
   if (!Number.isFinite(x)) return '';
   return (Math.round(x * 100) / 100).toFixed(2);
+}
+
+function loadReconMap() {
+  return loadReconMapFromFile({ warnNoFile: true, logPrefix: '[export]' });
+}
+
+/**
+ * @param {string} uid
+ * @param {number} bullRunStake
+ * @param {Map<string, { pamm_actual: number|null }>} reconMap
+ */
+function pammReconColumns(uid, bullRunStake, reconMap) {
+  const br = Number(bullRunStake) || 0;
+  if (br <= 0) return { pamm_actual: '', pamm_adjust: '' };
+  const rec = reconMap.get(uid);
+  const target = rec && rec.pamm_actual != null && Number.isFinite(rec.pamm_actual) ? rec.pamm_actual : null;
+  if (target != null) {
+    return {
+      pamm_actual: round2(target),
+      pamm_adjust: round2(br - target),
+    };
+  }
+  return {
+    pamm_actual: '',
+    pamm_adjust: round2(br),
+  };
 }
 
 async function main() {
@@ -173,6 +205,44 @@ async function main() {
     ])
     .toArray();
 
+  const bullRunManagers = await db
+    .collection('pamm_managers')
+    .find({ $or: [{ fundType: 'ai' }, { name: /^bull\s*run$/i }] })
+    .project({ _id: 1 })
+    .toArray();
+  const bullRunManagerIdSet = new Set(bullRunManagers.map((m) => m._id.toString()));
+
+  const bullRunAllocAgg =
+    bullRunManagerIdSet.size === 0
+      ? []
+      : await db
+          .collection('pamm_allocations')
+          .aggregate([
+            { $match: { status: 'active' } },
+            {
+              $addFields: {
+                followerNorm: { $toString: '$followerId' },
+                midStr: { $toString: '$managerId' },
+              },
+            },
+            { $match: { midStr: { $in: [...bullRunManagerIdSet] } } },
+            {
+              $group: {
+                _id: '$followerNorm',
+                pamm_bullrun_stake_usd: { $sum: { $toDouble: { $ifNull: ['$allocatedBalance', 0] } } },
+              },
+            },
+          ])
+          .toArray();
+
+  /** @type {Map<string, number>} */
+  const bullRunStakeByUser = new Map();
+  for (const r of bullRunAllocAgg) {
+    bullRunStakeByUser.set(String(r._id), Number(r.pamm_bullrun_stake_usd) || 0);
+  }
+
+  const reconMap = loadReconMap();
+
   /** @type {Map<string, { stake: number, realized: number, allocCount: number }>} */
   const pammInvestorByUser = new Map();
   for (const r of allocAgg) {
@@ -224,6 +294,8 @@ async function main() {
     'initial_deposit',
     'admin_credit',
     'pamm_investor_stake_usd',
+    'pamm_actual',
+    'pamm_adjust',
     'pamm_investor_realized_pnl_usd',
     'pamm_active_allocations_count',
     'pamm_manager_capital_usd',
@@ -244,6 +316,8 @@ async function main() {
     const inv = pammInvestorByUser.get(uid);
     const mgr = pammManagerByUser.get(uid);
     const pStake = inv ? round2(inv.stake) : '0.00';
+    const brStake = bullRunStakeByUser.get(uid) || 0;
+    const reconCols = pammReconColumns(uid, brStake, reconMap);
     const pReal = inv ? round2(inv.realized) : '0.00';
     const pAcnt = inv ? String(inv.allocCount) : '0';
     const pCap = mgr ? round2(mgr.capital) : '0.00';
@@ -267,6 +341,8 @@ async function main() {
         round2(credits.initial),
         round2(credits.admin),
         pStake,
+        reconCols.pamm_actual,
+        reconCols.pamm_adjust,
         pReal,
         pAcnt,
         pCap,
@@ -288,6 +364,8 @@ async function main() {
     const inv = pammInvestorByUser.get(uid);
     const mgr = pammManagerByUser.get(uid);
     const pStake = inv ? round2(inv.stake) : '0.00';
+    const brStake = bullRunStakeByUser.get(uid) || 0;
+    const reconCols = pammReconColumns(uid, brStake, reconMap);
     const pReal = inv ? round2(inv.realized) : '0.00';
     const pAcnt = inv ? String(inv.allocCount) : '0';
     const pCap = mgr ? round2(mgr.capital) : '0.00';
@@ -307,6 +385,8 @@ async function main() {
         round2(credits.initial),
         round2(credits.admin),
         pStake,
+        reconCols.pamm_actual,
+        reconCols.pamm_adjust,
         pReal,
         pAcnt,
         pCap,
@@ -327,6 +407,8 @@ async function main() {
     const inv = pammInvestorByUser.get(uid);
     const mgr = pammManagerByUser.get(uid);
     const pStake = inv ? round2(inv.stake) : '0.00';
+    const brStake = bullRunStakeByUser.get(uid) || 0;
+    const reconCols = pammReconColumns(uid, brStake, reconMap);
     const pReal = inv ? round2(inv.realized) : '0.00';
     const pAcnt = inv ? String(inv.allocCount) : '0';
     const pCap = mgr ? round2(mgr.capital) : '0.00';
@@ -346,6 +428,8 @@ async function main() {
         round2(credits.initial),
         round2(credits.admin),
         pStake,
+        reconCols.pamm_actual,
+        reconCols.pamm_adjust,
         pReal,
         pAcnt,
         pCap,

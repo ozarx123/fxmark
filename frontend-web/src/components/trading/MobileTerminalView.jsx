@@ -1,17 +1,22 @@
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import ChartWorkspace from './ChartWorkspace';
 import OrderBottomSheet from './OrderBottomSheet';
 import RiskSectionMobile from './RiskSectionMobile';
 import PositionsPanel from './PositionsPanel';
 import OrdersPanel from './OrdersPanel';
-import AnalyticsPanel from './AnalyticsPanel';
-import JournalPanel from './JournalPanel';
+import {
+  ChartLineUpIcon,
+  LayersIcon,
+  ListChecksIcon,
+  ClockCounterClockwiseIcon,
+} from '../Icons.jsx';
 
-const MOBILE_TABS = [
-  { id: 'positions', label: 'Positions' },
-  { id: 'orders', label: 'Orders' },
-  { id: 'history', label: 'History' },
-  { id: 'tools', label: 'Tools' },
+/** Bottom nav sections (icons + labels for a11y). */
+const MOBILE_SECTIONS = [
+  { id: 'chart', label: 'Chart', Icon: ChartLineUpIcon },
+  { id: 'positions', label: 'Positions', Icon: LayersIcon },
+  { id: 'orders', label: 'Orders', Icon: ListChecksIcon },
+  { id: 'history', label: 'History', Icon: ClockCounterClockwiseIcon },
 ];
 
 const TIMEFRAMES = [
@@ -21,6 +26,25 @@ const TIMEFRAMES = [
   { value: '1h', label: '1h' },
   { value: '1d', label: '1d' },
 ];
+
+const LOT_MIN = 0.01;
+const LOT_MAX = 100;
+
+function sanitizeLotInput(raw) {
+  const s0 = String(raw ?? '').replace(/[^0-9.]/g, '');
+  const firstDot = s0.indexOf('.');
+  if (firstDot === -1) return s0;
+  const intPart = s0.slice(0, firstDot).replace(/\./g, '');
+  const fracPart = s0.slice(firstDot + 1).replace(/\./g, '').slice(0, 2);
+  return `${intPart}.${fracPart}`;
+}
+
+function normalizeLotString(s) {
+  let n = parseFloat(s);
+  if (!Number.isFinite(n) || s === '' || s === '.') n = LOT_MIN;
+  n = Math.min(LOT_MAX, Math.max(LOT_MIN, n));
+  return String(Math.round(n * 100) / 100);
+}
 
 export default function MobileTerminalView({
   symbol,
@@ -38,9 +62,12 @@ export default function MobileTerminalView({
   orders,
   history,
   pendingOrders,
+  accounts = [],
+  onSelectAccount,
   accountId,
   accountNumber,
   summary,
+  openPnlTotal,
   onClosePosition,
   onPartialClose,
   onModifySLTP,
@@ -57,20 +84,11 @@ export default function MobileTerminalView({
   onRemoveAlert,
   quickOrderLoading,
 }) {
-  const [activeTab, setActiveTab] = useState('positions');
+  const [activeSection, setActiveSection] = useState('chart');
   const [orderSheetOpen, setOrderSheetOpen] = useState(false);
   const [orderSheetSide, setOrderSheetSide] = useState('buy');
   const [chartFullscreen, setChartFullscreen] = useState(false);
   const [showSymbolPicker, setShowSymbolPicker] = useState(false);
-  const [chartHeight, setChartHeight] = useState(() =>
-    typeof window !== 'undefined' ? Math.max(280, Math.round(window.innerHeight * 0.65)) : 400
-  );
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const onResize = () => setChartHeight(Math.max(280, Math.round(window.innerHeight * 0.65)));
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
 
   const formatPrice = (p) =>
     p != null && Number.isFinite(Number(p))
@@ -94,10 +112,14 @@ export default function MobileTerminalView({
     [onPlaceOrder, addToast],
   );
 
-  const equity = summary?.equity ?? summary?.balance ?? 0;
-  const freeMargin = summary?.freeMargin ?? equity - (summary?.marginUsed ?? 0);
+  const balance = summary?.balance ?? 0;
   const marginUsed = summary?.marginUsed ?? 0;
-  const marginLevel = summary?.marginLevel ?? (marginUsed > 0 ? (equity / marginUsed) * 100 : null);
+  const useLive = openPnlTotal != null && Number.isFinite(Number(openPnlTotal));
+  const equity = useLive ? balance + Number(openPnlTotal) : (summary?.equity ?? summary?.balance ?? 0);
+  const freeMargin = useLive ? equity - marginUsed : (summary?.freeMargin ?? equity - marginUsed);
+  const marginLevel = useLive
+    ? (marginUsed > 0 ? (equity / marginUsed) * 100 : null)
+    : (summary?.marginLevel ?? (marginUsed > 0 ? (equity / marginUsed) * 100 : null));
   const hasPositions = positionsWithPnl?.length > 0;
 
   const filteredHistory = useMemo(() => {
@@ -141,86 +163,106 @@ export default function MobileTerminalView({
           </div>
         )}
         <span className="mobile-terminal__price">{formatPrice(marketPrice)}</span>
-        <span className="mobile-terminal__spread">—</span>
-        {marketConnected && <span className="mobile-terminal__live">Live</span>}
+        {tradingConnected && (
+          <span className="mobile-terminal__trade-live" title="Trading socket">Tx</span>
+        )}
+        {marketConnected && <span className="mobile-terminal__live">Mkt</span>}
       </header>
       </div>
 
-      {/* Chart: 60–70% height, fullscreen toggle */}
-      <section className="mobile-terminal__chart-section">
-        <div className="mobile-terminal__chart-header">
-          <select
-            value={chartSlot?.timeframe ?? '1m'}
-            onChange={(e) => setChartSlot({ timeframe: e.target.value })}
-            className="mobile-terminal__tf-select"
-            aria-label="Timeframe"
-          >
-            {TIMEFRAMES.map((t) => (
-              <option key={t.value} value={t.value}>{t.label}</option>
-            ))}
-          </select>
-          <button
-            type="button"
-            className="mobile-terminal__fullscreen-btn"
-            onClick={() => setChartFullscreen((v) => !v)}
-            aria-label={chartFullscreen ? 'Exit fullscreen' : 'Fullscreen chart'}
-          >
-            {chartFullscreen ? '✕' : '⛶'}
-          </button>
-        </div>
-        <div className="mobile-terminal__chart-wrap">
-          <div className="chart-container">
-          <ChartWorkspace
-            symbol={chartSlot?.symbol ?? symbol}
-            onSymbolChange={(s) => { setSymbol(s); setChartSlot({ symbol: s }); }}
-            symbols={symbols}
-            timeframe={chartSlot?.timeframe ?? '1m'}
-            onTimeframeChange={(tf) => setChartSlot({ timeframe: tf })}
-            chartType={chartType}
-            onChartTypeChange={setChartType}
-            height={chartHeight}
-            positions={positionsWithPnl}
-            pendingOrders={pendingOrders}
-            onClosePosition={onClosePosition}
-            onModifySLTP={onModifySLTP}
-            onBreakEven={onBreakEven}
-            indicators={chartSlot?.indicators}
-            onIndicatorsChange={(next) => setChartSlot({ indicators: next })}
-            drawings={chartSlot?.drawings ?? []}
-            onDrawingsChange={(next) => setChartSlot({ drawings: next })}
-            onAddPriceAlert={addPriceAlert}
-            onBreakout={() => addToast?.('Breakout', 'info')}
-            compactMobile
-            className="mobile-terminal__chart-workspace"
-          />
-          </div>
-        </div>
-        <RiskSectionMobile
-          equity={equity}
-          freeMargin={freeMargin}
-          marginUsed={marginUsed}
-          marginLevel={marginLevel}
-          hasPositions={hasPositions}
-          className="mobile-terminal__risk"
-        />
-      </section>
+      <main className="mobile-terminal__main">
+        {activeSection === 'chart' && (
+          <section className="mobile-terminal__chart-section">
+            {accounts.length > 0 && (
+              <div className="mobile-terminal__account-select-row">
+                <label className="mobile-terminal__account-select-label" htmlFor="mobile-terminal-account">
+                  Account
+                </label>
+                <select
+                  id="mobile-terminal-account"
+                  className="mobile-terminal__account-select"
+                  value={accountId ?? ''}
+                  onChange={(e) => onSelectAccount?.(e.target.value || null)}
+                  aria-label="Trading account"
+                >
+                  {accounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.accountNumber || a.id} — {a.type === 'pamm' ? (a.name || 'Fund') : (a.type === 'live' ? 'Live' : 'Demo')}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div className="mobile-terminal__chart-header">
+              <div className="mobile-terminal__chart-header-left">
+                <select
+                  value={chartSlot?.timeframe ?? '1m'}
+                  onChange={(e) => setChartSlot({ timeframe: e.target.value })}
+                  className="mobile-terminal__tf-select"
+                  aria-label="Timeframe"
+                >
+                  {TIMEFRAMES.map((t) => (
+                    <option key={t.value} value={t.value}>{t.label}</option>
+                  ))}
+                </select>
+                <select
+                  value={chartType}
+                  onChange={(e) => setChartType(e.target.value)}
+                  className="mobile-terminal__tf-select mobile-terminal__chart-type-select"
+                  aria-label="Chart type"
+                >
+                  <option value="candles">Candles</option>
+                  <option value="line">Line</option>
+                </select>
+              </div>
+              <button
+                type="button"
+                className="mobile-terminal__fullscreen-btn"
+                onClick={() => setChartFullscreen((v) => !v)}
+                aria-label={chartFullscreen ? 'Exit fullscreen' : 'Fullscreen chart'}
+              >
+                {chartFullscreen ? '✕' : '⛶'}
+              </button>
+            </div>
+            <div className="mobile-terminal__chart-wrap">
+              <div className="chart-container">
+                <ChartWorkspace
+                  symbol={chartSlot?.symbol ?? symbol}
+                  onSymbolChange={(s) => { setSymbol(s); setChartSlot({ symbol: s }); }}
+                  symbols={symbols}
+                  timeframe={chartSlot?.timeframe ?? '1m'}
+                  onTimeframeChange={(tf) => setChartSlot({ timeframe: tf })}
+                  chartType={chartType}
+                  onChartTypeChange={setChartType}
+                  positions={positionsWithPnl}
+                  pendingOrders={pendingOrders}
+                  onClosePosition={onClosePosition}
+                  onModifySLTP={onModifySLTP}
+                  onBreakEven={onBreakEven}
+                  indicators={chartSlot?.indicators}
+                  onIndicatorsChange={(next) => setChartSlot({ indicators: next })}
+                  drawings={chartSlot?.drawings ?? []}
+                  onDrawingsChange={(next) => setChartSlot({ drawings: next })}
+                  onAddPriceAlert={addPriceAlert}
+                  onBreakout={() => addToast?.('Breakout', 'info')}
+                  compactMobile
+                  className="mobile-terminal__chart-workspace"
+                />
+              </div>
+            </div>
+            <RiskSectionMobile
+              equity={equity}
+              freeMargin={freeMargin}
+              marginUsed={marginUsed}
+              marginLevel={marginLevel}
+              hasPositions={hasPositions}
+              className="mobile-terminal__risk"
+            />
+          </section>
+        )}
 
-      {/* Tabs: Positions | Orders | History | Tools */}
-      <div className="mobile-terminal__tabs-head">
-        {MOBILE_TABS.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            className={`mobile-terminal__tab ${activeTab === t.id ? 'mobile-terminal__tab--active' : ''}`}
-            onClick={() => setActiveTab(t.id)}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-      <div className="mobile-terminal__tabs-body">
-        {activeTab === 'positions' && (
-          <div className="mobile-terminal__positions">
+        {activeSection === 'positions' && (
+          <div className="mobile-terminal__panel-scroll">
             <PositionsPanel
               accountId={accountId}
               accountNumber={accountNumber}
@@ -234,8 +276,9 @@ export default function MobileTerminalView({
             />
           </div>
         )}
-        {activeTab === 'orders' && (
-          <div className="mobile-terminal__orders">
+
+        {activeSection === 'orders' && (
+          <div className="mobile-terminal__panel-scroll">
             <OrdersPanel
               accountId={accountId}
               accountNumber={accountNumber}
@@ -244,16 +287,15 @@ export default function MobileTerminalView({
             />
           </div>
         )}
-        {activeTab === 'history' && (
-          <div className="mobile-terminal__history">
+
+        {activeSection === 'history' && (
+          <div className="mobile-terminal__panel-scroll mobile-terminal__history">
             {filteredHistory.length === 0 ? (
               <p className="mobile-terminal__empty">No history</p>
             ) : (
               <ul className="mobile-terminal__history-list">
                 {filteredHistory.slice(0, 50).map((h) => {
                   const pnl = h.realizedPnl ?? h.pnl;
-                  const isGold = (h.symbol || '').includes('XAU');
-                  const fmt = (v) => (v != null && Number.isFinite(v) ? Number(v).toFixed(isGold ? 2 : 4) : '—');
                   return (
                     <li key={h.id || h.closedAt || h.time} className="mobile-terminal__history-item">
                       <span className="mobile-terminal__history-symbol">{h.symbol}</span>
@@ -270,14 +312,9 @@ export default function MobileTerminalView({
             )}
           </div>
         )}
-        {activeTab === 'tools' && (
-          <div className="mobile-terminal__tools">
-            <p className="mobile-terminal__tools-note">Chart tools (MA, BB, RSI, drawings) are in the chart header on mobile. Use the timeframe selector and fullscreen for a cleaner view.</p>
-          </div>
-        )}
-      </div>
+      </main>
 
-      {/* Fixed action bar: SELL | Lot | BUY */}
+      {/* Fixed action bar above section nav: SELL | Lot | BUY */}
       <div className="mobile-terminal__action-bar">
         <button
           type="button"
@@ -288,9 +325,30 @@ export default function MobileTerminalView({
           {quickOrderLoading ? '…' : 'SELL'}
         </button>
         <div className="mobile-terminal__lot">
-          <button type="button" className="mobile-terminal__lot-btn" onClick={() => setVolume(String(Math.max(0.01, (parseFloat(volume) || 0.01) - 0.01)))}>−</button>
-          <span className="mobile-terminal__lot-value">{Number(parseFloat(volume) || 0.01).toFixed(2)}</span>
-          <button type="button" className="mobile-terminal__lot-btn" onClick={() => setVolume(String(Math.min(100, (parseFloat(volume) || 0) + 0.01)))}>+</button>
+          <button
+            type="button"
+            className="mobile-terminal__lot-btn"
+            onClick={() => setVolume(normalizeLotString(String((parseFloat(volume) || LOT_MIN) - 0.01)))}
+          >
+            −
+          </button>
+          <input
+            type="text"
+            inputMode="decimal"
+            enterKeyHint="done"
+            className="mobile-terminal__lot-input"
+            aria-label="Lot size"
+            value={volume}
+            onChange={(e) => setVolume(sanitizeLotInput(e.target.value))}
+            onBlur={() => setVolume(normalizeLotString(volume))}
+          />
+          <button
+            type="button"
+            className="mobile-terminal__lot-btn"
+            onClick={() => setVolume(normalizeLotString(String((parseFloat(volume) || 0) + 0.01)))}
+          >
+            +
+          </button>
         </div>
         <button
           type="button"
@@ -301,6 +359,25 @@ export default function MobileTerminalView({
           {quickOrderLoading ? '…' : 'BUY'}
         </button>
       </div>
+
+      <nav className="mobile-terminal__bottom-nav" aria-label="Trading sections">
+        {MOBILE_SECTIONS.map((s) => {
+          const NavIcon = s.Icon;
+          return (
+            <button
+              key={s.id}
+              type="button"
+              className={`mobile-terminal__nav-item ${activeSection === s.id ? 'mobile-terminal__nav-item--active' : ''}`}
+              onClick={() => setActiveSection(s.id)}
+              aria-label={s.label}
+              aria-current={activeSection === s.id ? 'page' : undefined}
+              title={s.label}
+            >
+              <NavIcon size={22} className="mobile-terminal__nav-icon" aria-hidden />
+            </button>
+          );
+        })}
+      </nav>
 
       <OrderBottomSheet
         open={orderSheetOpen}

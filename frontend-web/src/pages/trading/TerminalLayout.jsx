@@ -68,11 +68,37 @@ export default function TerminalLayout() {
 
   const symbol = chartSlots[0]?.symbol ?? 'XAU/USD';
   const timeframe = chartSlots[0]?.timeframe ?? '1m';
-  const { tick } = useMarketData(symbol, '1m');
+  const { tick } = useMarketData(symbol, timeframe);
   const { ticks, connected: marketConnected } = useMarketDataContext();
   const { connected: tradingConnected, balanceUpdate } = useTradingSocket();
   const notification = useTradeNotifications();
   const marketPrice = tick?.close ?? tick?.price ?? null;
+
+  const positionsWithPnl = useMemo(() => {
+    if (!Array.isArray(positions)) return [];
+    const toKey = (s) => String(s || '').replace(/\//g, '').toUpperCase();
+    return positions.map((p) => {
+      const key = toKey(p.symbol);
+      const t = ticks?.[key];
+      const currentPrice = t?.close ?? t?.price ?? p.openPrice ?? p.open_price;
+      const openPrice = p.openPrice ?? p.open_price ?? 0;
+      const volume = p.volume ?? p.lots ?? 0;
+      const side = p.side || p.type || 'BUY';
+      const floatingPnL = currentPrice != null && openPrice
+        ? computeFloatingPnL({ ...p, openPrice, volume, side }, currentPrice)
+        : p.floatingPnL ?? p.floating_pnl ?? p.pnl ?? 0;
+      const priceDiff = getPriceDifference({ ...p, openPrice, side }, currentPrice);
+      return {
+        ...p,
+        openPrice,
+        currentPrice,
+        floatingPnL,
+        priceDiff,
+        volume,
+        side,
+      };
+    });
+  }, [positions, ticks]);
 
   const addToast = useCallback((message, kind = 'info') => {
     const id = ++toastIdRef.current;
@@ -97,16 +123,6 @@ export default function TerminalLayout() {
     }
     if (!orderError) orderErrorPrevRef.current = null;
   }, [orderError, addToast]);
-
-  useEffect(() => {
-    const level = accountSummary?.marginLevel ?? (accountSummary?.marginUsed > 0 && accountSummary?.equity
-      ? (accountSummary.equity / accountSummary.marginUsed) * 100 : null);
-    if (level != null && level < 150 && level >= 0 && !marginWarnShownRef.current) {
-      marginWarnShownRef.current = true;
-      addToast(`Margin level low: ${Number(level).toFixed(1)}%`, 'warning');
-    }
-    if (level != null && level >= 200) marginWarnShownRef.current = false;
-  }, [accountSummary?.marginLevel, accountSummary?.marginUsed, accountSummary?.equity, addToast]);
 
   // Price alerts: check ticks vs alert price, fire toast once per cross (no duplicate)
   const toTickKey = (s) => String(s || '').replace(/\//g, '').toUpperCase();
@@ -220,6 +236,10 @@ export default function TerminalLayout() {
   const accountNumber = effectiveAccount?.accountNumber;
 
   useEffect(() => {
+    accountIdRef.current = accountId ?? null;
+  }, [accountId]);
+
+  useEffect(() => {
     if (!balanceUpdate || !accountId) return;
     if (balanceUpdate.accountId && balanceUpdate.accountId !== accountId) return;
     setAccountSummary((prev) => ({
@@ -232,31 +252,22 @@ export default function TerminalLayout() {
     }));
   }, [balanceUpdate, accountId]);
 
-  const positionsWithPnl = useMemo(() => {
-    if (!Array.isArray(positions)) return [];
-    const toKey = (s) => String(s || '').replace(/\//g, '').toUpperCase();
-    return positions.map((p) => {
-      const key = toKey(p.symbol);
-      const t = ticks?.[key];
-      const currentPrice = t?.close ?? t?.price ?? p.openPrice ?? p.open_price;
-      const openPrice = p.openPrice ?? p.open_price ?? 0;
-      const volume = p.volume ?? p.lots ?? 0;
-      const side = p.side || p.type || 'BUY';
-      const floatingPnL = currentPrice != null && openPrice
-        ? computeFloatingPnL({ ...p, openPrice, volume, side }, currentPrice)
-        : p.floatingPnL ?? p.floating_pnl ?? p.pnl ?? 0;
-      const priceDiff = getPriceDifference({ ...p, openPrice, side }, currentPrice);
-      return {
-        ...p,
-        openPrice,
-        currentPrice,
-        floatingPnL,
-        priceDiff,
-        volume,
-        side,
-      };
-    });
-  }, [positions, ticks]);
+  const liveMarginLevelForToast = useMemo(() => {
+    const mu = accountSummary?.marginUsed ?? 0;
+    if (!(mu > 0)) return null;
+    const b = accountSummary?.balance ?? balance ?? 0;
+    const pnl = positionsWithPnl.reduce((acc, p) => acc + (p.floatingPnL ?? p.floating_pnl ?? p.pnl ?? 0), 0);
+    return ((b + pnl) / mu) * 100;
+  }, [accountSummary?.marginUsed, accountSummary?.balance, balance, positionsWithPnl]);
+
+  useEffect(() => {
+    const level = liveMarginLevelForToast;
+    if (level != null && level < 150 && level >= 0 && !marginWarnShownRef.current) {
+      marginWarnShownRef.current = true;
+      addToast(`Margin level low: ${Number(level).toFixed(1)}%`, 'warning');
+    }
+    if (level != null && level >= 200) marginWarnShownRef.current = false;
+  }, [liveMarginLevelForToast, addToast]);
 
   useEffect(() => {
     if (selectedAccountId) return;
@@ -336,7 +347,7 @@ export default function TerminalLayout() {
         tradeRefreshTimerRef.current = null;
         loadTradingData();
         refreshLiveBalance?.();
-      }, 280);
+      }, 150);
     };
     const onTradeUpdate = (payload) => {
       const active = accountIdRef.current;
@@ -354,12 +365,15 @@ export default function TerminalLayout() {
     };
   }, [loadTradingData, refreshLiveBalance]);
 
-  // Prefer account summary from API (DB: trading_accounts for demo, wallet for live)
+  // Prefer account summary from API (DB: trading_accounts for demo, wallet for live).
+  // Equity / free margin / margin level follow ticks: equity = balance + live floating P&L on open positions.
   const summary = accountSummary ?? {};
   const balanceVal = summary.balance ?? balance ?? 0;
-  const equityVal = summary.equity ?? summary.balance ?? balanceVal;
   const marginUsedVal = summary.marginUsed ?? 0;
   const openPnlVal = positionsWithPnl.reduce((acc, p) => acc + (p.floatingPnL ?? p.floating_pnl ?? p.pnl ?? 0), 0);
+  const equityVal = balanceVal + openPnlVal;
+  const freeMarginVal = equityVal - marginUsedVal;
+  const marginLevelVal = marginUsedVal > 0 ? (equityVal / marginUsedVal) * 100 : null;
 
   const handleClosePositionFromChart = useCallback(
     async (positionId, closePrice) => {
@@ -569,6 +583,8 @@ export default function TerminalLayout() {
           setChartSlot={(updates) => setChartSlot(0, updates)}
           chartType={chartType}
           setChartType={setChartType}
+          accounts={accounts}
+          onSelectAccount={setSelectedAccountId}
           positions={positions}
           positionsWithPnl={positionsWithPnl}
           orders={orders}
@@ -577,6 +593,7 @@ export default function TerminalLayout() {
           accountId={accountId}
           accountNumber={accountNumber}
           summary={summary}
+          openPnlTotal={openPnlVal}
           onClosePosition={handleClosePositionFromChart}
           onPartialClose={async (positionId, vol) => {
             const pos = positions.find((p) => p.id === positionId);
@@ -615,6 +632,10 @@ export default function TerminalLayout() {
         <h1 className="terminal-layout__title">Trading</h1>
         <div className="terminal-layout__header-actions">
           <div className="terminal-layout__header-metrics">
+            <span className="terminal-layout__metric">
+              <span className="terminal-layout__metric-label">Balance</span>
+              <span className="terminal-layout__metric-value">${balanceVal.toFixed(2)}</span>
+            </span>
             <span className="terminal-layout__metric">
               <span className="terminal-layout__metric-label">Equity</span>
               <span className="terminal-layout__metric-value">${equityVal.toFixed(2)}</span>
@@ -675,6 +696,7 @@ export default function TerminalLayout() {
         <AccountSummary
           accountId={accountId}
           accountNumber={accountNumber}
+          openPnlTotal={openPnlVal}
           className="terminal-layout__account-summary terminal-layout__account-summary--compact"
         />
       </div>
@@ -734,6 +756,7 @@ export default function TerminalLayout() {
           <AccountSummary
             accountId={accountId}
             accountNumber={accountNumber}
+            openPnlTotal={openPnlVal}
             className="terminal-layout__account-summary terminal-layout__account-summary--desktop"
           />
           <TradeControlPanel
@@ -775,11 +798,11 @@ export default function TerminalLayout() {
 
         <div className="terminal-layout__widgets">
           <RiskRadar
-            balance={summary.balance}
-            equity={summary.equity}
-            marginUsed={summary.marginUsed}
-            freeMargin={summary.freeMargin}
-            marginLevel={summary.marginLevel}
+            balance={balanceVal}
+            equity={equityVal}
+            marginUsed={marginUsedVal}
+            freeMargin={freeMarginVal}
+            marginLevel={marginLevelVal}
             positionsWithPnl={positionsWithPnl}
             className="terminal-layout__risk-radar"
           />

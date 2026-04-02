@@ -16,7 +16,8 @@ Set these in **`backend/.env`**. The API loads only `backend/.env`.
 | `ZOHO_MAIL_PASSWORD` | Yes | Zoho account password, or an **App Password** if you use 2FA (spaces in `.env` are stripped) |
 | `ZOHO_SMTP_HOST` | No | Default `smtp.zoho.com`. Use `smtp.zoho.eu` (EU) or `smtp.zoho.in` (India) if your account is in that region |
 | `ZOHO_SMTP_PORT` | No | Default `465` (SSL). Use `587` with TLS if your firewall requires it |
-| `FRONTEND_URL` | Yes in production | Public site origin for verification links |
+| `FRONTEND_URL` | Strongly recommended in production | SPA origin for verification links (`/verify-email?token=…`). If unset while `API_URL` is public, links use `GET /api/auth/verify-email` on the API instead (see Verification flow). |
+| `API_URL` | Yes (public base) | Used as fallback verification link host when `FRONTEND_URL` is empty; must be the URL clients can open in a browser. |
 | `FROM_EMAIL` | No | From address (defaults to `ZOHO_MAIL_USER`) |
 | `FROM_NAME` | No | Display name (default: `FXMARK`) |
 
@@ -46,9 +47,15 @@ See repo `scripts/resend-verification-local.ps1` or `Invoke-RestMethod` to `POST
 
 ## Verification flow
 
-- **Register** → email contains `{FRONTEND_URL}/verify-email?token=…`
-- **SPA** → `POST /api/auth/verify-email` with `{ "token": "…" }`
-- **Old API links** → `GET /api/auth/verify-email?token=…` redirects to the SPA
+- **Register / resend** → email contains a link built in `auth.service.js`:
+  - **Preferred:** `{FRONTEND_URL}/verify-email?token=…` — user opens the SPA, which `POST`s `/api/auth/verify-email`.
+  - **Fallback (no `FRONTEND_URL`):** `{API_URL}/api/auth/verify-email?token=…` — user’s browser hits the API; the server verifies and returns a simple HTML success/error page (no redirect to SPA).
+- **`GET /api/auth/verify-email?token=…` when `FRONTEND_URL` is set:** `302` redirect to the SPA with the same token.
+
+### Why verification mail can “fail” while welcome mail works
+
+- **Before:** `sendVerificationEmail` called `buildVerificationEmailLink`, which **threw** if `FRONTEND_URL`/`WEB_APP_URL` was empty. In `NODE_ENV=production` with a non-local `API_URL` and no frontend env, `frontendBaseUrl` was empty → **no verification email was sent** (caught in `register`). Welcome and other emails **do not** require `FRONTEND_URL`, so they still sent.
+- **Fix:** use **`API_URL`** as fallback for the link, and **complete verification on `GET`** when there is no SPA URL to redirect to. **Still set `FRONTEND_URL` in production** so users get the normal in-app experience.
 
 If `ZOHO_MAIL_USER` or `ZOHO_MAIL_PASSWORD` is missing, outbound mail is disabled (registration may still succeed; check logs).
 

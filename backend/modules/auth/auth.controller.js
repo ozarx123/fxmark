@@ -1,6 +1,63 @@
 import authService from './auth.service.js';
 import config from '../../config/env.config.js';
 
+function escapeHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/"/g, '&quot;');
+}
+
+/** Plain HTML when user opens verification link on API (no FRONTEND_URL redirect). */
+function buildEmailVerifiedHtml(result) {
+  const fe = (config.frontendBaseUrl || '').trim().replace(/\/$/, '');
+  const signInHref = fe ? `${fe}/auth` : '';
+  const title = result?.alreadyVerified ? 'Already verified' : 'Email verified';
+  const body = result?.alreadyVerified
+    ? escapeHtml(result.message || 'Your email is already verified.')
+    : 'Your email has been verified. You can sign in.';
+  const signIn = signInHref
+    ? `<p><a href="${escapeHtml(signInHref)}">Sign in</a></p>`
+    : '<p>You can close this window and sign in using your app or website.</p>';
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>${escapeHtml(title)}</title></head><body style="font-family:system-ui,sans-serif;max-width:32rem;margin:2rem auto;padding:0 1rem"><h1 style="font-size:1.25rem">${escapeHtml(title)}</h1><p>${body}</p>${signIn}</body></html>`;
+}
+
+function buildEmailVerificationErrorHtml(err) {
+  const code = err?.code ? `<p style="color:#64748b;font-size:0.9rem">${escapeHtml(err.code)}</p>` : '';
+  const hint = err?.hint ? `<p>${escapeHtml(err.hint)}</p>` : '';
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Verification failed</title></head><body style="font-family:system-ui,sans-serif;max-width:32rem;margin:2rem auto;padding:0 1rem"><h1 style="font-size:1.25rem">Verification failed</h1><p>${escapeHtml(err?.message || 'Something went wrong.')}</p>${hint}${code}</body></html>`;
+}
+
+/** Query ?token=, path :token, JSON body, or duplicate keys / odd casing (Token=). */
+function pickVerificationToken(req) {
+  const fromParam = req.params?.token;
+  if (fromParam != null && typeof fromParam === 'string' && fromParam.trim()) {
+    return fromParam.trim();
+  }
+  const fromBody = req.body?.token;
+  if (fromBody != null && typeof fromBody === 'string' && fromBody.trim()) {
+    return fromBody.trim();
+  }
+  const q = req.query;
+  if (q && typeof q === 'object') {
+    const direct = q.token;
+    if (typeof direct === 'string' && direct.trim()) return direct.trim();
+    if (Array.isArray(direct) && direct[0] && typeof direct[0] === 'string') return direct[0].trim();
+    for (const [k, v] of Object.entries(q)) {
+      if (String(k).toLowerCase() !== 'token') continue;
+      if (typeof v === 'string' && v.trim()) return v.trim();
+      if (Array.isArray(v) && v[0] && typeof v[0] === 'string') return v[0].trim();
+    }
+  }
+  return null;
+}
+
+const TOKEN_REQUIRED_JSON = {
+  error: 'Verification token is required',
+  code: 'TOKEN_REQUIRED',
+  hint: 'Open the full link from your email, or open the app and use “Resend verification email”.',
+};
+
 async function register(req, res, next) {
   try {
     const result = await authService.register(req.body);
@@ -59,26 +116,29 @@ async function me(req, res, next) {
 
 async function verifyEmail(req, res, next) {
   try {
-    const token = req.query.token || req.body?.token;
+    const token = pickVerificationToken(req);
 
-    // Old emails linked to the API URL — send users to the SPA with the same token
+    // GET: redirect to SPA when FRONTEND_URL is set; otherwise verify on the API and return HTML
     if (req.method === 'GET') {
-      if (!token || typeof token !== 'string' || !token.trim()) {
-        return res.status(400).json({
-          error: 'Verification token is required',
-          code: 'TOKEN_REQUIRED',
-          hint: 'Open the full link from your email, or open the app and use “Resend verification email”.',
-        });
+      if (!token) {
+        return res.status(400).json(TOKEN_REQUIRED_JSON);
       }
-      const base = (config.frontendBaseUrl || '').replace(/\/$/, '');
-      if (!base) {
-        return res.status(503).json({
-          error: 'Email verification redirect is not configured. Set FRONTEND_URL (or WEB_APP_URL) on the server.',
-          code: 'FRONTEND_URL_MISSING',
-        });
+      const base = (config.frontendBaseUrl || '').trim().replace(/\/$/, '');
+      if (base) {
+        const dest = `${base}/verify-email/${encodeURIComponent(token)}`;
+        return res.redirect(302, dest);
       }
-      const dest = `${base}/verify-email?token=${encodeURIComponent(token.trim())}`;
-      return res.redirect(302, dest);
+      try {
+        const result = await authService.verifyEmail(token);
+        return res.status(200).type('html').send(buildEmailVerifiedHtml(result));
+      } catch (e) {
+        const status = Number(e?.statusCode) && e.statusCode >= 400 && e.statusCode < 600 ? e.statusCode : 400;
+        return res.status(status).type('html').send(buildEmailVerificationErrorHtml(e));
+      }
+    }
+
+    if (!token) {
+      return res.status(400).json(TOKEN_REQUIRED_JSON);
     }
 
     const result = await authService.verifyEmail(token);

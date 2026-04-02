@@ -80,6 +80,20 @@ async function existsWalletEntryForEvent(entityId, referenceType, referenceId, c
   return !!doc;
 }
 
+/** Idempotency for non-wallet journals (e.g. pamm_recon_write) — any row with this referenceType + referenceId. */
+async function existsByReferenceType(referenceType, referenceId, options = {}) {
+  const c = await col();
+  const filter = {
+    referenceType: String(referenceType || ''),
+    referenceId: referenceId != null ? String(referenceId) : null,
+  };
+  const doc = await c.findOne(
+    filter,
+    options.session ? { session: options.session, projection: { _id: 1 } } : { projection: { _id: 1 } }
+  );
+  return !!doc;
+}
+
 /** List entries for entity, optional filters. For ENTITY_COMPANY includes legacy SYSTEM_ACCOUNT. */
 async function listByEntity(entityId, options = {}) {
   const c = await col();
@@ -300,6 +314,7 @@ export default {
   insertMany,
   ensureLedgerReferenceIdIndex,
   existsWalletEntryForEvent,
+  existsByReferenceType,
   listByEntity,
   getBalance,
   getBalancesByEntity,

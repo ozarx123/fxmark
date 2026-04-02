@@ -33,11 +33,31 @@ function seqFromFindOneAndUpdateResult(result) {
   return seq == null ? null : Number(seq);
 }
 
+/**
+ * Highest numeric accountNo in users (only all-digit strings, e.g. "10077").
+ * Non-numeric values (FX…) are ignored so imports do not break max math.
+ */
+async function getMaxNumericAccountNoFromUsers(session) {
+  const col = await collection();
+  const pipeline = [
+    { $match: { accountNo: { $regex: /^\d+$/ } } },
+    { $addFields: { n: { $toInt: '$accountNo' } } },
+    { $group: { _id: null, max: { $max: '$n' } } },
+  ];
+  const opts = session ? { session } : {};
+  const rows = await col.aggregate(pipeline, opts).toArray();
+  const m = rows[0]?.max;
+  if (m == null || !Number.isFinite(Number(m))) return null;
+  return Number(m);
+}
+
 /** Next sequential numeric accountNo string: "10001", "10002", … Only for users without accountNo. */
 async function getNextNumericAccountNo(options = {}) {
+  await ensureIndex();
   const db = await getDb();
   const ctr = db.collection(COUNTERS);
   const session = options.session || undefined;
+  const sessionOpt = session ? { session } : {};
   const result = await ctr.findOneAndUpdate(
     { _id: NUMERIC_ACCOUNT_NO_COUNTER_ID },
     [
@@ -49,11 +69,21 @@ async function getNextNumericAccountNo(options = {}) {
         },
       },
     ],
-    { upsert: true, returnDocument: 'after', ...(session ? { session } : {}) }
+    { upsert: true, returnDocument: 'after', ...sessionOpt }
   );
-  const seq = seqFromFindOneAndUpdateResult(result);
+  let seq = seqFromFindOneAndUpdateResult(result);
   if (seq == null || !Number.isFinite(seq)) {
     throw new Error('Failed to allocate accountNo');
+  }
+  // Counter can lag behind max(users.accountNo) after imports, backfills, or manual edits.
+  const maxUser = await getMaxNumericAccountNoFromUsers(session);
+  if (maxUser != null && seq <= maxUser) {
+    seq = maxUser + 1;
+    await ctr.updateOne(
+      { _id: NUMERIC_ACCOUNT_NO_COUNTER_ID },
+      { $max: { seq } },
+      { upsert: true, ...sessionOpt }
+    );
   }
   return String(seq);
 }
@@ -73,29 +103,57 @@ function accountNoEqualityFilter(raw) {
   return { accountNo: { $regex: new RegExp(`^${escapeRegex(t)}$`, 'i') } };
 }
 
+const ACCOUNT_NO_ALLOC_RETRY = 8;
+
+function isDuplicateAccountNoError(err) {
+  return err?.code === 11000 && err?.keyPattern && Object.prototype.hasOwnProperty.call(err.keyPattern, 'accountNo');
+}
+
 async function createOne(doc, options = {}) {
   await ensureIndex();
   const col = await collection();
-  let accountNo;
-  if (doc.accountNo !== undefined && doc.accountNo !== null && String(doc.accountNo).trim() !== '') {
-    accountNo = normalizeAccountNoForStorage(doc.accountNo);
-  } else {
-    accountNo = await getNextNumericAccountNo(options);
-  }
+  const insertOpts = options.session ? { session: options.session } : {};
   const createdAt = doc.createdAt instanceof Date ? doc.createdAt : new Date();
   const updatedAt = doc.updatedAt instanceof Date ? doc.updatedAt : new Date();
   const { createdAt: _c, updatedAt: _u, accountNo: _an, ...rest } = doc;
-  const insertOpts = options.session ? { session: options.session } : {};
-  const { insertedId } = await col.insertOne(
-    {
-      ...rest,
-      accountNo,
-      createdAt,
-      updatedAt,
-    },
-    insertOpts
-  );
-  return insertedId.toString();
+  const explicitAccountNo =
+    doc.accountNo !== undefined && doc.accountNo !== null && String(doc.accountNo).trim() !== '';
+
+  if (explicitAccountNo) {
+    const accountNo = normalizeAccountNoForStorage(doc.accountNo);
+    const { insertedId } = await col.insertOne(
+      {
+        ...rest,
+        accountNo,
+        createdAt,
+        updatedAt,
+      },
+      insertOpts
+    );
+    return insertedId.toString();
+  }
+
+  for (let attempt = 0; attempt < ACCOUNT_NO_ALLOC_RETRY; attempt++) {
+    const accountNo = await getNextNumericAccountNo(options);
+    try {
+      const { insertedId } = await col.insertOne(
+        {
+          ...rest,
+          accountNo,
+          createdAt,
+          updatedAt,
+        },
+        insertOpts
+      );
+      return insertedId.toString();
+    } catch (err) {
+      if (isDuplicateAccountNoError(err)) {
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error('Failed to allocate unique accountNo after retries');
 }
 
 async function findByEmail(email) {
@@ -137,12 +195,28 @@ async function ensureAccountNo(userId, options = {}) {
   if (user.accountNo != null && String(user.accountNo).trim() !== '') return user;
   const col = await collection();
   if (!ObjectId.isValid(userId)) return user;
-  const accountNo = await getNextNumericAccountNo(options);
-  await col.updateOne(
-    { _id: new ObjectId(userId) },
-    { $set: { accountNo, updatedAt: new Date() } }
-  );
-  return { ...user, accountNo };
+  const oid = new ObjectId(userId);
+
+  for (let attempt = 0; attempt < ACCOUNT_NO_ALLOC_RETRY; attempt++) {
+    const accountNo = await getNextNumericAccountNo(options);
+    try {
+      const r = await col.updateOne(
+        { _id: oid },
+        { $set: { accountNo, updatedAt: new Date() } }
+      );
+      if (r.matchedCount) {
+        return { ...user, accountNo };
+      }
+      const again = await findById(userId);
+      if (again?.accountNo) return again;
+    } catch (err) {
+      if (isDuplicateAccountNoError(err)) {
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error('Failed to assign unique accountNo');
 }
 
 async function findById(id) {

@@ -168,7 +168,9 @@ export default function BullRunFundDetailView({
   const fundGrowthData = bullRun?.fund_growth_data ?? [];
   const monthlyPerformance = bullRun?.monthly_performance ?? [];
   const transactionHistory = bullRun?.history ?? bullRun?.transaction_history ?? [];
+  const reserveTransactions = bullRun?.reserve_transactions ?? [];
   const reserveBalance = bullRun?.reserve_balance ?? 0;
+  const reserveWalletTotal = bullRun?.reserve_wallet_total ?? 0;
   const fundGrowthRate = stats?.fundGrowthRate ?? 0;
   const cumulativePnl = stats?.cumulativePnl ?? 0;
   const allocationPercent = myAllocation?.allocationPercent ?? 0;
@@ -277,6 +279,10 @@ export default function BullRunFundDetailView({
               <p className={`pamm-value ${(monthlyProfit ?? 0) >= 0 ? 'positive' : 'negative'}`}>
                 {formatPercent(monthlyProfit)}
               </p>
+            </div>
+            <div className="pamm-card pamm-card--neutral">
+              <h3>Reserve wallet total</h3>
+              <p className="pamm-value pamm-value--amount">{formatCurrency(reserveWalletTotal, 2)}</p>
             </div>
           </div>
         )}
@@ -676,6 +682,44 @@ export default function BullRunFundDetailView({
                           {(row.debit || 0) > 0 ? formatCurrency(row.debit, 2) : '—'}
                         </td>
                       )}
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {/* Manager only: reserve wallet transactions */}
+      {isManager && (
+        <section className="pamm-section">
+          <h2 className="pamm-section-title">Reserve transactions</h2>
+          <p className="muted">Source: <code>pamm_reserve_transactions</code> (latest first).</p>
+          <div className="table-wrap">
+            <table className="table pamm-table">
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th>Amount</th>
+                  <th>Investor ID</th>
+                  <th>Position ID</th>
+                  <th>Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!reserveTransactions.length ? (
+                  <tr>
+                    <td colSpan={5} className="empty-cell">No reserve transactions yet</td>
+                  </tr>
+                ) : (
+                  reserveTransactions.map((t, i) => (
+                    <tr key={`${t.reference || 'reserve'}-${i}`}>
+                      <td>{t.type || '—'}</td>
+                      <td>{formatCurrency(t.amount, 2)}</td>
+                      <td>{t.investorId || '—'}</td>
+                      <td>{t.positionId || '—'}</td>
+                      <td>{t.date ? new Date(t.date).toLocaleString() : '—'}</td>
                     </tr>
                   ))
                 )}

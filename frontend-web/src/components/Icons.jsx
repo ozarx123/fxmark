@@ -146,6 +146,15 @@ export function ChartBarIcon({ size, className }) {
   );
 }
 
+/** Stacked layers — open positions / portfolio stack */
+export function LayersIcon({ size, className }) {
+  return (
+    <Icon size={size} className={className}>
+      <path d="M12 3.5L3.5 8 12 12.5 20.5 8 12 3.5zM3.5 12.25L12 16.75l8.5-4.5v2.5L12 19.25 3.5 14.75v-2.5z" />
+    </Icon>
+  );
+}
+
 export function FileTextIcon({ size, className }) {
   return (
     <Icon size={size} className={className}>

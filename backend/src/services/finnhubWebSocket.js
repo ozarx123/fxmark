@@ -2,7 +2,10 @@ import WebSocket from 'ws';
 import { TO_FINNHUB, FROM_FINNHUB } from '../config/finnhubSymbols.js';
 
 const RECONNECT_BASE_MS = 2000;
-const RECONNECT_MAX_MS  = 30000;
+/** Cap for normal disconnects; 429 / rate-limit uses longer waits below */
+const RECONNECT_MAX_MS = 120_000;
+/** Finnhub returns 429 on WS upgrade when reconnecting too fast — wait at least this long */
+const RATE_LIMIT_MIN_DELAY_MS = 60_000;
 
 /**
  * How long to wait with no incoming trade messages before the stream is
@@ -68,6 +71,25 @@ export function createFinnhubWebSocket({ apiKey, symbols, onTick, onConnect, onD
   // ── Connection ────────────────────────────────────────────────────────────
   function connect() {
     if (destroyed) return;
+
+    clearStaleTimer();
+
+    // Only one live socket: tear down any previous instance before opening a new one
+    if (ws) {
+      try {
+        ws.removeAllListeners();
+      } catch (_) {
+        /* ignore */
+      }
+      try {
+        if (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN) {
+          ws.terminate();
+        }
+      } catch (_) {
+        /* ignore */
+      }
+      ws = null;
+    }
 
     const url = `wss://ws.finnhub.io?token=${apiKey}`;
     console.log(`[FINNHUB] Connecting to wss://ws.finnhub.io?token=***`);
@@ -143,8 +165,16 @@ export function createFinnhubWebSocket({ apiKey, symbols, onTick, onConnect, onD
     });
 
     ws.on('error', (err) => {
-      console.error(`FINNHUB_ERROR: ${err.message}`);
+      const msg = String(err?.message || err);
+      console.error(`FINNHUB_ERROR: ${msg}`);
       onError?.(err);
+      // Rate-limit on handshake (429) — avoid tight reconnect loops that keep failing
+      if (/\b429\b|rate\s*limit/i.test(msg)) {
+        reconnectDelay = Math.max(reconnectDelay, RATE_LIMIT_MIN_DELAY_MS);
+        console.warn(
+          `[FINNHUB] WebSocket handshake rate-limited — next reconnect in ≥${RATE_LIMIT_MIN_DELAY_MS / 1000}s (with jitter)`
+        );
+      }
       // 'close' event always fires after 'error', so reconnect is handled there
     });
 
@@ -163,11 +193,13 @@ export function createFinnhubWebSocket({ apiKey, symbols, onTick, onConnect, onD
   // ── Auto-reconnect with exponential back-off ──────────────────────────────
   function scheduleReconnect() {
     if (destroyed) return;
-    console.log(`FINNHUB_RECONNECTING in ${reconnectDelay}ms…`);
+    const jitter = Math.floor(Math.random() * 2500);
+    const waitMs = reconnectDelay + jitter;
+    console.log(`FINNHUB_RECONNECTING in ${waitMs}ms…`);
     reconnectTimer = setTimeout(() => {
       reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
       connect();
-    }, reconnectDelay);
+    }, waitMs);
   }
 
   connect();

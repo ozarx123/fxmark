@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { fetchCandles, fetchQuotesBatch } from '../services/finnhubRest.js';
+import { fetchCandlesTwelve, twelveDataApiKey } from '../services/twelveDataRest.js';
 import { rsiLast, macdTripleLast } from '../lib/taFromBars.js';
 import {
   getRecentLog,
@@ -15,6 +16,29 @@ import { getCurrentBarStart } from '../config/candleTime.js';
 const router = Router();
 
 const FINNHUB_KEY = () => (process.env.FINNHUB_API_KEY || '').trim();
+
+/** Finnhub first; on failure use Twelve Data when TWELVEDATA_API_KEY is set. Twelve-only works without Finnhub. */
+async function fetchCandlesWithFallback({ symbol, tf, from, to }) {
+  const finnhubKey = FINNHUB_KEY();
+  const twelveKey = twelveDataApiKey();
+  if (finnhubKey) {
+    try {
+      return await fetchCandles({ symbol, tf, from, to, apiKey: finnhubKey });
+    } catch (e) {
+      console.warn('[market/candles] Finnhub failed, trying Twelve Data:', e.message);
+      if (twelveKey) {
+        return await fetchCandlesTwelve({ symbol, tf, from, to, apiKey: twelveKey });
+      }
+      throw e;
+    }
+  }
+  if (twelveKey) {
+    return await fetchCandlesTwelve({ symbol, tf, from, to, apiKey: twelveKey });
+  }
+  const err = new Error('No market data API key: set FINNHUB_API_KEY or TWELVEDATA_API_KEY');
+  err.statusCode = 500;
+  throw err;
+}
 
 /** Map /technical interval query to internal tf */
 const INTERVAL_TO_TF = {
@@ -37,7 +61,7 @@ function intervalToTf(interval) {
 
 /** Cache TTL by timeframe (seconds) — longer for higher TFs since bars change less often */
 const CANDLES_TTL_BY_TF = {
-  '1m': 30,
+  '1m': 10,
   '5m': 60,
   '15m': 120,
   '1h': 300,
@@ -45,6 +69,17 @@ const CANDLES_TTL_BY_TF = {
 };
 const CANDLES_TTL_HISTORICAL = 86400;
 const CANDLES_STALE_TTL = 300;
+
+/** Max bars returned for GET /candles (chart + mobile); keeps payloads small and avoids 5k+ setData in the SPA. */
+const MAX_CHART_CANDLES = Math.min(
+  5000,
+  Math.max(200, parseInt(process.env.MAX_CHART_CANDLES || '1500', 10) || 1500)
+);
+
+function capCandlesForChart(candles) {
+  if (!Array.isArray(candles) || candles.length <= MAX_CHART_CANDLES) return candles;
+  return candles.slice(-MAX_CHART_CANDLES);
+}
 
 const TF_ALIASES = {
   '1min': '1m',
@@ -84,15 +119,14 @@ function getCandleCacheTTL(normalizedTf, from, to) {
 router.get('/candles', async (req, res) => {
   try {
     const { symbol, tf, from, to } = req.query;
-    const apiKey = FINNHUB_KEY();
 
     if (!symbol || !tf) {
       return res.status(400).json({ error: 'symbol and tf are required' });
     }
-    if (!apiKey) {
+    if (!FINNHUB_KEY() && !twelveDataApiKey()) {
       return res.status(500).json({
-        error: 'FINNHUB_API_KEY not configured',
-        hint: 'Set FINNHUB_API_KEY in backend/.env (https://finnhub.io)',
+        error: 'Market data not configured',
+        hint: 'Set FINNHUB_API_KEY and/or TWELVEDATA_API_KEY in backend/.env',
       });
     }
     const normalizedTf = normalizeTf(tf);
@@ -119,35 +153,35 @@ router.get('/candles', async (req, res) => {
     }
 
     if (cached) {
-      return res.json(cached);
+      return res.json(capCandlesForChart(cached));
     }
     if (staleCached) {
       setImmediate(() => {
-        fetchCandles({
+        fetchCandlesWithFallback({
           symbol: internalSymbol,
           tf: normalizedTf,
           from: from || undefined,
           to: to || undefined,
-          apiKey,
         })
-          .then((fresh) =>
-            Promise.all([
-              cache.set(cacheKey, fresh, ttl),
-              cache.set(`${cacheKey}:swr`, fresh, CANDLES_STALE_TTL),
-            ])
-          )
+          .then((fresh) => {
+            const capped = capCandlesForChart(fresh);
+            return Promise.all([
+              cache.set(cacheKey, capped, ttl),
+              cache.set(`${cacheKey}:swr`, capped, CANDLES_STALE_TTL),
+            ]);
+          })
           .catch(() => {});
       });
-      return res.json(staleCached);
+      return res.json(capCandlesForChart(staleCached));
     }
 
-    const candles = await fetchCandles({
+    const rawCandles = await fetchCandlesWithFallback({
       symbol: internalSymbol,
       tf: normalizedTf,
       from: from || undefined,
       to: to || undefined,
-      apiKey,
     });
+    const candles = capCandlesForChart(rawCandles);
 
     if (useStaleKey) {
       await Promise.all([
@@ -202,12 +236,15 @@ router.get('/quote', async (req, res) => {
 router.get('/technical', async (req, res) => {
   try {
     const { symbol, interval } = req.query;
-    const apiKey = FINNHUB_KEY();
+    const finnhubKey = FINNHUB_KEY();
     if (!symbol) {
       return res.status(400).json({ error: 'symbol is required' });
     }
-    if (!apiKey) {
-      return res.status(500).json({ error: 'FINNHUB_API_KEY not configured' });
+    if (!finnhubKey && !twelveDataApiKey()) {
+      return res.status(500).json({
+        error: 'Market data not configured',
+        hint: 'Set FINNHUB_API_KEY and/or TWELVEDATA_API_KEY in backend/.env',
+      });
     }
     const internalSymbol = String(symbol || '').replace(/\//g, '').toUpperCase();
     const intervalNorm = (interval || '1day').toLowerCase().replace(/^1d$/i, '1day');
@@ -223,17 +260,18 @@ router.get('/technical', async (req, res) => {
     const now = new Date();
     const fromIso = new Date(now.getTime() - 86400000 * 150).toISOString();
 
-    const candles = await fetchCandles({
+    const candles = await fetchCandlesWithFallback({
       symbol: internalSymbol,
       tf,
       from: fromIso,
       to: undefined,
-      apiKey,
     });
 
     const rsi = rsiLast(candles);
     const macdResult = macdTripleLast(candles);
-    const quotes = await fetchQuotesBatch([internalSymbol], apiKey).catch(() => []);
+    const quotes = finnhubKey
+      ? await fetchQuotesBatch([internalSymbol], finnhubKey).catch(() => [])
+      : [];
     const quote = quotes[0] || null;
     const price = quote?.close ?? quote?.price ?? null;
 
@@ -273,7 +311,7 @@ router.get('/technical', async (req, res) => {
       resistance[0] = Math.round(quote.high * 100) / 100;
     }
 
-    let summary = 'Technical data from Finnhub candles (RSI/MACD computed server-side).';
+    let summary = 'Technical data from market candles (RSI/MACD computed server-side).';
     if (trend !== 'Neutral' && rsi != null) {
       summary = `${trend} momentum. RSI(14) at ${rsi.toFixed(1)} (${rsiSignal}).`;
     } else if (rsi != null) {

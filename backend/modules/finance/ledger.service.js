@@ -188,6 +188,24 @@ async function postAdminCredit(userId, amount, currency, referenceId, options = 
 }
 
 /**
+ * Post admin debit: Wallet (debit) -> Cash/Bank (credit). Mirror of postAdminCredit for clawbacks.
+ * Idempotent by referenceId on wallet leg (debit amt).
+ */
+async function postAdminDebit(userId, amount, currency, referenceId, options = {}) {
+  const amt = Math.abs(Number(amount)) || 0;
+  if (amt < 0.001) return { ids: [], entries: [] };
+  const exists = await ledgerRepo.existsWalletEntryForEvent(userId, 'admin_debit', referenceId, 0, amt, options);
+  if (exists) {
+    logLedgerIdempotencySkip('admin_debit', referenceId, userId, 0, amt);
+    return { ids: [], entries: [] };
+  }
+  return post([
+    { accountCode: ACCOUNTS.WALLET, entityId: String(userId), debit: amt, credit: 0, currency, referenceType: 'admin_debit', referenceId },
+    { accountCode: ACCOUNTS.CASH_BANK, entityId: SYSTEM_ACCOUNT_ID, debit: 0, credit: amt, currency, referenceType: 'admin_debit', referenceId },
+  ], options);
+}
+
+/**
  * Post bulk import opening balance: Cash/Bank (debit) -> Wallet (credit).
  * referenceType: import_opening_balance. Idempotent per (userId, referenceId, amount).
  */
@@ -415,6 +433,48 @@ async function postPammAllocation(followerId, amount, currency, referenceId, fun
   ], options);
 }
 
+/**
+ * Bull Run / PAMM reconciliation write-down: reduce overstated CLIENT_FUNDS (fund pool) without crediting
+ * investor wallet. CLIENT_FUNDS debit -> TRADING_PNL credit. Idempotent by referenceId.
+ */
+async function postPammReconciliationWriteDown(followerId, amount, currency, referenceId, fundId, options = {}) {
+  const amt = Math.abs(Number(amount)) || 0;
+  if (amt < 0.001) return { ids: [], entries: [] };
+  const ref = String(referenceId);
+  const fid = String(fundId);
+  const exists = await ledgerRepo.existsByReferenceType('pamm_recon_write', ref, options);
+  if (exists) {
+    logLedgerIdempotencySkip('pamm_recon_write', ref, String(followerId), 0, 0);
+    return { ids: [], entries: [] };
+  }
+  return post(
+    [
+      {
+        accountCode: ACCOUNTS.CLIENT_FUNDS,
+        entityId: fid,
+        debit: amt,
+        credit: 0,
+        currency,
+        referenceType: 'pamm_recon_write',
+        referenceId: ref,
+        description: 'PAMM reconciliation write-down (Bull Run stake restatement)',
+        pammFundId: fid,
+      },
+      {
+        accountCode: ACCOUNTS.TRADING_PNL,
+        entityId: SYSTEM_ACCOUNT_ID,
+        debit: 0,
+        credit: amt,
+        currency,
+        referenceType: 'pamm_recon_write',
+        referenceId: ref,
+        pammFundId: fid,
+      },
+    ],
+    options
+  );
+}
+
 /** Investor unallocates (withdraw/unfollow): CLIENT_FUNDS (debit) -> Wallet (credit). Idempotent by referenceId. */
 async function postPammUnallocation(followerId, amount, currency, referenceId, fundId, options = {}) {
   const amt = Math.abs(Number(amount)) || 0;
@@ -564,6 +624,7 @@ export default {
   postWithdrawal,
   postTransfer,
   postAdminCredit,
+  postAdminDebit,
   postImportOpeningBalance,
   postTradingPnl,
   postCommissionEarned,
@@ -575,6 +636,7 @@ export default {
   postPammManagerCapitalWithdraw,
   postPammAllocation,
   postPammUnallocation,
+  postPammReconciliationWriteDown,
   postPammDistributionProfitRollback,
   postPammDistributionLossRollback,
   postPammIbCommissionRollback,

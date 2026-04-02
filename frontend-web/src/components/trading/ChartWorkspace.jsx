@@ -135,7 +135,8 @@ export default function ChartWorkspace({
   };
 
   return (
-    <div className={`terminal-chart-workspace ${className}`}>
+    <div className={`terminal-chart-workspace ${compactMobile ? 'terminal-chart-workspace--compact-mobile' : ''} ${className}`.trim()}>
+      {!compactMobile && (
       <div className="terminal-chart-workspace__toolbar">
         <div className="terminal-chart-workspace__symbol-info">
           <span className="terminal-chart-workspace__symbol">{symbol}</span>
@@ -176,6 +177,7 @@ export default function ChartWorkspace({
           )}
         </div>
       </div>
+      )}
       {!compactMobile && onIndicatorsChange && (
         <div className="terminal-chart-workspace__indicators">
           <label className="terminal-chart-workspace__indicator">
@@ -277,6 +279,7 @@ export default function ChartWorkspace({
           )}
         </div>
       )}
+      {!compactMobile && (
       <div className="terminal-chart-workspace__utils">
         <button type="button" className="terminal-chart-workspace__util-btn" title="Liquidity heatmap" onClick={() => setShowHeatmap((v) => !v)} aria-pressed={showHeatmap}>
           Heatmap
@@ -310,6 +313,7 @@ export default function ChartWorkspace({
         <button type="button" className="terminal-chart-workspace__util-btn" title="Zoom out" onClick={zoomOut}>−</button>
         <button type="button" className="terminal-chart-workspace__util-btn" title="Reset chart" onClick={resetChart}>Reset</button>
       </div>
+      )}
       {!compactMobile && symbolPositions.length > 0 && (
         <div className="chart-position-chips">
           {symbolPositions.map((p) => {
@@ -375,8 +379,8 @@ export default function ChartWorkspace({
         onModifySLTP={onModifySLTP}
         indicators={indicators}
         drawings={drawings}
-        showHeatmap={showHeatmap}
-        showBreakoutDetection={showBreakoutDetection}
+        showHeatmap={compactMobile ? false : showHeatmap}
+        showBreakoutDetection={compactMobile ? false : showBreakoutDetection}
         onBreakout={onBreakout}
         isReplayMode={replayActive}
         crosshairPanel={crosshairPanel}

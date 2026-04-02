@@ -147,6 +147,8 @@ async function getFundDetail(fundId, followerId = null, viewerRole = 'user') {
       || String(viewerRole || '').toLowerCase() === 'superadmin';
     const investorMinimalView = !!followerId && !isManagerViewer && !isAdminViewer;
     const hasActiveTrade = await hasOpenPositionsForFund(fund.id);
+    const reserveWallet = await pammRepo.getReserveWalletByFund(fund.id);
+    const reserveWalletTotal = Number(reserveWallet?.balance) || 0;
     const { todayProfit, monthlyPerformance } = await pammRepo.getFundTradesPnLByPeriod(fund.id);
     const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
     const monthlyTrades = await pammRepo.listTradesByManager(fund.id, { limit: 500 });
@@ -210,6 +212,18 @@ async function getFundDetail(fundId, followerId = null, viewerRole = 'user') {
         hasActiveTrade: hasActiveTrade === true,
       };
     } else {
+      let reserveTransactions = [];
+      if (isManagerViewer || isAdminViewer) {
+        const tx = await pammRepo.listReserveTransactionsByFund(fund.id, { limit: 100 });
+        reserveTransactions = tx.map((r) => ({
+          type: r.transactionType || '',
+          amount: Number(r.amount) || 0,
+          investorId: r.investorId ? String(r.investorId) : null,
+          positionId: r.positionId ? String(r.positionId) : null,
+          reference: r.reference ? String(r.reference) : null,
+          date: r.createdAt || null,
+        }));
+      }
       result.bullRun = {
         total_fund_pool: aum,
         total_investors: allocations.length,
@@ -224,8 +238,10 @@ async function getFundDetail(fundId, followerId = null, viewerRole = 'user') {
         investor_balance: myAllocation ? Number(myAllocation.allocatedBalance) || 0 : null,
         investor_balance_logic: 'Compound trading enabled. Investor daily profit capped at 1%. Extra profit stored in Bull Run Reserve Account.',
         transaction_history: transactionHistory,
+        reserve_transactions: reserveTransactions,
         hasActiveTrade,
         reserve_balance: reserveBalance,
+        reserve_wallet_total: reserveWalletTotal,
       };
     }
   }

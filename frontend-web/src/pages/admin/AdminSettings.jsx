@@ -21,6 +21,7 @@ export default function AdminSettings() {
   const [maintenanceSaving, setMaintenanceSaving] = useState(false);
   const [maintenanceLoadError, setMaintenanceLoadError] = useState(null);
   const [maintenanceWarn, setMaintenanceWarn] = useState(null);
+  const [maintenanceSaveOk, setMaintenanceSaveOk] = useState(null);
   const [maintenanceEffective, setMaintenanceEffective] = useState({ active: false, source: 'off' });
   const [emailNotifications, setEmailNotifications] = useState(true);
   const [companyName, setCompanyName] = useState('FXMARK');
@@ -222,6 +223,14 @@ export default function AdminSettings() {
       } else {
         setMaintenanceWarn(null);
       }
+      const on = !!m.effectiveActive;
+      const src = m.effectiveSource || 'off';
+      const srcLabel = src === 'off' ? '' : ` (${src})`;
+      setMaintenanceSaveOk(
+        on
+          ? `Maintenance settings saved. The platform is in maintenance mode${srcLabel}.`
+          : `Maintenance settings saved. The platform is not in maintenance mode.`
+      );
     } catch (e) {
       setMaintenanceLoadError(e.message);
     } finally {
@@ -313,6 +322,16 @@ export default function AdminSettings() {
         <h2 className="section-title">Platform maintenance</h2>
         <div className="settings-card">
           {maintenanceLoadError && <p className="muted" style={{ color: 'var(--danger, #f85149)' }}>{maintenanceLoadError}</p>}
+          {maintenanceSaveOk && (
+            <p
+              className="muted"
+              style={{ color: 'var(--success-text, #059669)', marginBottom: '0.75rem' }}
+              role="status"
+              aria-live="polite"
+            >
+              {maintenanceSaveOk}
+            </p>
+          )}
           {maintenanceWarn && (
             <p className="muted" style={{ color: 'var(--fxmark-warning, #d4a72c)', marginBottom: '0.75rem' }}>
               {maintenanceWarn}

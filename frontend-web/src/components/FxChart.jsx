@@ -28,7 +28,9 @@ function isGoldSymbol(symbol) {
 /** Lightweight Charts requires Unix seconds. */
 function toBarTime(t) {
   if (t == null) return 0;
-  if (typeof t === 'number' && Number.isFinite(t)) return t;
+  if (typeof t === 'number' && Number.isFinite(t)) {
+    return t > 1e12 ? Math.floor(t / 1000) : t;
+  }
   if (typeof t === 'string') {
     const ms = Date.parse(t);
     return Number.isFinite(ms) ? Math.floor(ms / 1000) : 0;
@@ -39,15 +41,183 @@ function toBarTime(t) {
   return 0;
 }
 
+function normalizeTime(t) {
+  return t > 1e12 ? Math.floor(t / 1000) : t;
+}
+
+/** Bar start (Unix seconds) for tick wall time and chart timeframe. */
+function getCandleTime(rawTime, tf) {
+  let ms;
+  if (rawTime == null || rawTime === '') {
+    ms = Date.now();
+  } else if (typeof rawTime === 'number') {
+    ms = rawTime < 1e12 ? rawTime * 1000 : rawTime;
+  } else {
+    const parsed = Date.parse(String(rawTime));
+    ms = Number.isFinite(parsed) ? parsed : Date.now();
+  }
+  return getCurrentBarStart(tf, new Date(Number.isFinite(ms) ? ms : Date.now()));
+}
+
+/**
+ * Merge REST last bar with in-memory bar updated by ticks.
+ * We usually prefer tick close when feeds agree (fresher last trade).
+ * If tick close and REST close diverge a lot, the tick path is often stale, wrong symbol,
+ * or a different venue — REST OHLC is the candle aggregate we requested and is safer for the chart.
+ */
+function mergeLastBar(restBar, liveBar, symbol) {
+  if (!restBar || !liveBar) return restBar;
+
+  const rt = normalizeTime(restBar.time);
+  const lt = normalizeTime(liveBar.time);
+
+  if (rt !== lt) return restBar;
+
+  const ro = Number(restBar.open);
+  const rh = Number(restBar.high);
+  const rl = Number(restBar.low);
+  const rc = Number(restBar.close);
+  const lo = Number(liveBar.open);
+  const lh = Number(liveBar.high);
+  const ll = Number(liveBar.low);
+  const lc = Number(liveBar.close);
+
+  if (Number.isFinite(rc) && Number.isFinite(lc)) {
+    const absDiff = Math.abs(lc - rc);
+    const rel = absDiff / Math.abs(rc);
+    const gold = isGoldSymbol(symbol || '');
+    const tickDisagreesWithRest = gold
+      ? rel > 0.0006 || absDiff > 2.5
+      : rel > 0.0015;
+    if (tickDisagreesWithRest) {
+      dbg(
+        `merge: tick close ${lc} vs REST close ${rc} (${symbol}) — using REST OHLC for this bar`,
+      );
+      return {
+        time: rt,
+        open: Number.isFinite(ro) ? ro : lo,
+        high: Number.isFinite(rh) ? rh : lh,
+        low: Number.isFinite(rl) ? rl : ll,
+        close: rc,
+      };
+    }
+  }
+
+  // REST carries exchange OHLC; live ticks may only repeat last price (e.g. Twelve WS:
+  // open=high=low=close=price). Combine: keep REST open; widen H/L with live; C from live.
+  const highs = [rh, lh, lc].filter((x) => Number.isFinite(x));
+  const lows = [rl, ll, lc].filter((x) => Number.isFinite(x));
+  let high = highs.length ? Math.max(...highs) : rh;
+  let low = lows.length ? Math.min(...lows) : rl;
+  if (!Number.isFinite(high)) high = Number.isFinite(rh) ? rh : Number.isFinite(lh) ? lh : lc;
+  if (!Number.isFinite(low)) low = Number.isFinite(rl) ? rl : Number.isFinite(ll) ? ll : lc;
+
+  return {
+    time: rt,
+    open: Number.isFinite(ro) ? ro : lo,
+    high,
+    low,
+    close: Number.isFinite(lc) ? lc : Number.isFinite(rc) ? rc : lc,
+  };
+}
+
+/** Find newest live bar with the same normalized bar time (length may differ from REST). */
+function findLiveBarSameTime(prevLive, restLastBar) {
+  if (!prevLive?.length || !restLastBar) return null;
+  const nt = normalizeTime(restLastBar.time);
+  for (let i = prevLive.length - 1; i >= 0; i--) {
+    if (normalizeTime(prevLive[i].time) === nt) return prevLive[i];
+  }
+  return null;
+}
+
+/**
+ * Lightweight Charts v5 rejects duplicate `time` and some invalid shapes — then setData throws
+ * and the pane stays empty while price lines (entry/SL) still show.
+ */
+function sanitizeCandlesForLwc(bars) {
+  if (!Array.isArray(bars) || !bars.length) return [];
+  const sorted = [...bars].sort((a, b) => {
+    const ta = typeof a.time === 'number' ? normalizeTime(a.time) : toBarTime(a.time);
+    const tb = typeof b.time === 'number' ? normalizeTime(b.time) : toBarTime(b.time);
+    return ta - tb;
+  });
+  const byTime = new Map();
+  for (const b of sorted) {
+    const t = typeof b.time === 'number' ? normalizeTime(b.time) : toBarTime(b.time);
+    if (!Number.isFinite(t) || t <= 0) continue;
+    let o = Number(b.open);
+    let h = Number(b.high);
+    let l = Number(b.low);
+    let c = Number(b.close);
+    if (!Number.isFinite(c) && b.value != null) c = Number(b.value);
+    if (!Number.isFinite(c)) continue;
+    if (!Number.isFinite(o)) o = c;
+    if (!Number.isFinite(h)) h = c;
+    if (!Number.isFinite(l)) l = c;
+    const hi = Math.max(h, o, c);
+    const lo = Math.min(l, o, c);
+    byTime.set(t, { time: t, open: o, high: hi, low: lo, close: c });
+  }
+  return Array.from(byTime.values()).sort((a, b) => a.time - b.time);
+}
+
+/** Aligned with backend `MAX_CHART_CANDLES` — merged REST+live must not exceed (avoids 1500→1501 setData churn). */
+const MAX_CHART_BARS = 1500;
+
+function sameBarTimes(prev, next) {
+  if (!prev?.length || !next?.length || prev.length !== next.length) return false;
+  for (let i = 0; i < prev.length; i++) {
+    if (normalizeTime(prev[i].time) !== normalizeTime(next[i].time)) return false;
+  }
+  return true;
+}
+
+function barOhlcEqual(a, b, showCandles) {
+  if (!a || !b) return false;
+  if (normalizeTime(a.time) !== normalizeTime(b.time)) return false;
+  if (showCandles) {
+    return (
+      Number(a.open) === Number(b.open) &&
+      Number(a.high) === Number(b.high) &&
+      Number(a.low) === Number(b.low) &&
+      Number(a.close) === Number(b.close)
+    );
+  }
+  return Number(a.close) === Number(b.close);
+}
+
+/** -1 if identical; else first index where OHLC differs */
+function firstOhlcDiffIndex(prev, next, showCandles) {
+  const n = Math.min(prev.length, next.length);
+  for (let i = 0; i < n; i++) {
+    if (!barOhlcEqual(prev[i], next[i], showCandles)) return i;
+  }
+  return -1;
+}
+
+function clonePlotSnapshot(plotData, showCandles) {
+  return plotData.map((b) => {
+    const t = normalizeTime(b.time);
+    if (showCandles) {
+      return {
+        time: t,
+        open: Number(b.open),
+        high: Number(b.high),
+        low: Number(b.low),
+        close: Number(b.close),
+      };
+    }
+    return { time: t, close: Number(b.close) };
+  });
+}
+
 /**
  * FX Trading Chart — TradingView Lightweight Charts.
  *
  * Strict data-flow contract:
- *   REST candles → series.setData()  — only on initial load / symbol / TF switch
- *   Live tick    → series.update()   — every tick, RAF-coalesced, never setData
- *
- * Once live mode is activated (first real candle OR first valid tick), sample
- * data and setData() are permanently disabled for that chart session.
+ *   REST candles → series.setData()  — initial load, symbol/TF change, container mount
+ *   Live tick    → series.update()   — every tick, RAF-coalesced (only when hasRealData)
  */
 /** Round price to symbol precision (XAU: 2 decimals, forex: 4). */
 function roundToTick(price, symbol) {
@@ -126,6 +296,7 @@ function FxChart({
   const [handlePositions, setHandlePositions] = useState({});
   const [crosshairData, setCrosshairData] = useState(null);
   const [measurePoints, setMeasurePoints] = useState([]);
+  const [chartSeriesError, setChartSeriesError] = useState(null);
   const chartSizeVersionRef = useRef(0);
   const chartResetTriggerRef = useRef(0);
   const chartBarSpacingRef = useRef(null);
@@ -139,18 +310,22 @@ function FxChart({
   const timeframeRef     = useRef(timeframe);
   const showCandlesRef   = useRef(showCandles);
 
-  const pendingTickRef   = useRef(null);
+  const tickQueueRef     = useRef([]);
   const rafScheduledRef  = useRef(false);
+  /** Latest applyPendingTick — setData effect runs before useCallback would be valid in deps order */
+  const applyPendingTickRef = useRef(() => {});
 
   // isSampleDataRef: true while dataRef holds generated sample bars.
   // Written only in the ref-sync useEffect, NEVER in useMemo.
   const isSampleDataRef  = useRef(false);
 
-  // hasActivatedLiveModeRef: once true, sample reseeding and sample setData
-  // are permanently blocked for this chart session.
-  // Activated by: real REST candles arriving OR first valid live tick.
-  // Reset to false: on symbol change, timeframe change, or chart recreation.
+  // hasActivatedLiveModeRef: true only while we have real REST candles (same as hasRealData).
+  // Ticks alone must not set this — WS can work while /candles returns 503; otherwise setData
+  // is skipped and the chart stays stuck on sample with "live mode" false-positive.
   const hasActivatedLiveModeRef = useRef(false);
+  const hasRealDataRef = useRef(false);
+  /** Snapshot of last full/incremental apply — avoids full setData(1500) when only the merged last bar changed */
+  const lastAppliedPlotRef = useRef(null);
 
   // ── Render-phase symbol/timeframe-change detection ──────────────────────────
   // Runs synchronously in the render body so refs are reset BEFORE any effects
@@ -166,12 +341,14 @@ function FxChart({
     // Reset live-mode gate so new symbol/TF starts fresh (sample data allowed again)
     hasActivatedLiveModeRef.current = false;
     isSampleDataRef.current         = false;
+    lastAppliedPlotRef.current      = null;
   }
 
   const [containerReady, setContainerReady] = useState(false);
 
   // ── Processed data (real REST candles or synthetic sample) ──────────────────
   const hasRealData = Array.isArray(externalData) && externalData.length > 0;
+  hasRealDataRef.current = hasRealData;
 
   // Only feed marketPrice into the memo when there is no real data.
   // If it were always a dep, every tick (which updates marketPrice) would
@@ -207,31 +384,61 @@ function FxChart({
 
   // ── Ref-sync effect — runs after every render that changes these values ──────
   // This is the ONLY place isSampleDataRef and hasActivatedLiveModeRef are written
-  // (except the render-phase reset above and applyPendingTick for activation).
+  // (except the render-phase reset above).
+  //
+  // When REST refetches (bar timer / cache), `data` from props can lag live ticks.
+  // Preserve live-appended bars (N+1) and merge overlapping last bar OHLC when times match.
   useEffect(() => {
-    dataRef.current        = data;
+    const prevLive = dataRef.current || [];
+    const prevSym = symbolRef.current;
+    let next = Array.isArray(data) ? [...data] : [];
+
+    if (prevSym === displaySymbol && hasRealData && Array.isArray(data) && data.length && prevLive.length) {
+      const restLen = data.length;
+      const lastIn = next[restLen - 1];
+      // Match by bar time, not index — prevLive may have an extra forward bar so
+      // prevLive[restLen-1] is the wrong row; without merge, setData() replaces OHLC with flat ticks.
+      if (lastIn != null) {
+        const matchLive = findLiveBarSameTime(prevLive, lastIn);
+        if (matchLive) {
+          const mergedLast = mergeLastBar(lastIn, matchLive, displaySymbol);
+          next = [...next.slice(0, -1), mergedLast];
+        }
+      }
+
+      if (prevLive.length > next.length) {
+        const lastRestTime = normalizeTime(next[next.length - 1]?.time);
+        const seen = new Set(next.map((b) => normalizeTime(b.time)));
+        const extraLiveBars = prevLive.filter((b) => {
+          const t = normalizeTime(b.time);
+          return t > lastRestTime && !seen.has(t);
+        });
+        next = [...next, ...extraLiveBars];
+      }
+    }
+
+    if (next.length > MAX_CHART_BARS) {
+      dbg(`ref-sync: trim ${next.length} → ${MAX_CHART_BARS} bars (keep newest)`);
+      next = next.slice(-MAX_CHART_BARS);
+    }
+
+    dataRef.current        = next;
     symbolRef.current      = displaySymbol;
     timeframeRef.current   = timeframe;
     showCandlesRef.current = showCandles;
 
-    // Mirror whether current data is sample or real
+    // Mirror whether current data is sample or real; live-mode tracks REST only (not ticks).
     isSampleDataRef.current = !hasRealData;
-
-    // Activate live mode as soon as real REST candles arrive
-    if (hasRealData) {
-      hasActivatedLiveModeRef.current = true;
-      dbg(`live mode activated by REST candles (${data.length} bars)`);
-    }
-  }, [data, displaySymbol, timeframe, showCandles, hasRealData]);
+    hasActivatedLiveModeRef.current = !!hasRealData;
+    if (!hasRealData) tickQueueRef.current = [];
+  }, [data, displaySymbol, timeframe, showCandles, hasRealData, containerReady]);
 
   // ── Chart instance — recreated on symbol, height, or series-type change ──────
   useEffect(() => {
     const container = chartContainerRef.current;
     if (!containerReady || !container) return;
 
-    // Full session reset: new chart = fresh start, no live-mode state carried over
-    hasActivatedLiveModeRef.current = false;
-    isSampleDataRef.current         = false;
+    lastAppliedPlotRef.current = null;
 
     const w = container.clientWidth || 100;
     const h = container.clientHeight || height;
@@ -270,13 +477,22 @@ function FxChart({
         vertLine: { labelBackgroundColor: '#de1414' },
         horzLine: { labelBackgroundColor: '#de1414' },
       },
+      /* Pan: wheel, click-drag, horizontal/vertical touch drag. Zoom: wheel, pinch, axis drag; double-click axis resets. */
       handleScroll: {
-        mouseWheel: true, pressedMouseMove: true,
-        horzTouchDrag: true, vertTouchDrag: true,
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: true,
       },
       handleScale: {
-        mouseWheel: true, pinch: true,
-        axisPressedMouseMove: true, axisDoubleClickReset: true,
+        mouseWheel: true,
+        pinch: true,
+        axisPressedMouseMove: true,
+        axisDoubleClickReset: true,
+      },
+      kineticScroll: {
+        touch: true,
+        mouse: false,
       },
       width: w,
       height: h,
@@ -309,7 +525,7 @@ function FxChart({
 
     chartRef.current        = chart;
     chartIdRef.current      = (chartIdRef.current || 0) + 1;
-    pendingTickRef.current  = null;
+    tickQueueRef.current    = [];
     rafScheduledRef.current = false;
     indicatorSeriesRef.current = { ma: null, bbUpper: null, bbMiddle: null, bbLower: null, rsi: null };
 
@@ -336,11 +552,13 @@ function FxChart({
     window.addEventListener('resize', applySize);
     const ro = new ResizeObserver(applySize);
     ro.observe(container);
+    // Flex layouts often report 0×0 on first mount; next frame + RO has real dimensions.
+    requestAnimationFrame(() => applySize());
 
     return () => {
       window.removeEventListener('resize', applySize);
       ro.disconnect();
-      pendingTickRef.current  = null;
+      tickQueueRef.current    = [];
       rafScheduledRef.current = false;
       indicatorSeriesRef.current = { ma: null, bbUpper: null, bbMiddle: null, bbLower: null, rsi: null };
       drawingTrendSeriesRef.current.forEach((s) => {
@@ -555,13 +773,14 @@ function FxChart({
     const fmt = (v) => (v != null ? Number(v).toFixed(isGold ? 2 : 4) : '');
 
     const posList = Array.isArray(positions) ? positions.filter((p) => toInternalSymbol(p.symbol) === chartSymbolKey) : [];
+    const priceKeyDecimals = isGold ? 2 : 5;
 
     // Build unique entry map first — one key per (side, normalized price). Entry lines created ONLY from this map.
     const uniqueEntries = new Map();
     posList.forEach((pos) => {
       const entry = pos.openPrice ?? pos.open_price ?? pos.entry;
       if (entry == null || !Number.isFinite(Number(entry))) return;
-      const price = Number(entry).toFixed(2);
+      const price = Number(entry).toFixed(priceKeyDecimals);
       const side = (pos.side || pos.type || 'buy').toLowerCase();
       const key = `${side}_${price}`;
       if (!uniqueEntries.has(key)) {
@@ -587,7 +806,7 @@ function FxChart({
     posList.forEach((pos) => {
       const sl = pos.sl ?? pos.sl_price ?? pos.stopLoss;
       if (sl == null || !Number.isFinite(Number(sl))) return;
-      const price = Number(sl).toFixed(2);
+      const price = Number(sl).toFixed(priceKeyDecimals);
       if (!uniqueSL.has(price)) uniqueSL.set(price, { price });
     });
     uniqueSL.forEach(({ price }) => {
@@ -607,7 +826,7 @@ function FxChart({
     posList.forEach((pos) => {
       const tp = pos.tp ?? pos.tp_price ?? pos.takeProfit;
       if (tp == null || !Number.isFinite(Number(tp))) return;
-      const price = Number(tp).toFixed(2);
+      const price = Number(tp).toFixed(priceKeyDecimals);
       if (!uniqueTP.has(price)) uniqueTP.set(price, { price });
     });
     uniqueTP.forEach(({ price }) => {
@@ -735,7 +954,7 @@ function FxChart({
   //   2. Skip empty-array clear when live mode is active (same reason).
   //
   useEffect(() => {
-    if (!seriesRef.current) return;
+    if (!containerReady || !seriesRef.current) return;
 
     // Guard 1 & 2: once live, never revert to sample or empty
     if (hasActivatedLiveModeRef.current && !hasRealData) {
@@ -745,32 +964,124 @@ function FxChart({
 
     if (!data.length) {
       dbg('setData: clearing chart (symbol switch or initial empty)');
+      setChartSeriesError(null);
+      lastAppliedPlotRef.current = null;
       dataRef.current = [];
       seriesRef.current.setData([]);
-      chartRef.current?.timeScale()?.fitContent();
+      try {
+        chartRef.current?.timeScale()?.fitContent();
+      } catch (_) { /* ignore */ }
       return;
     }
 
-    dbg(`setData: loading ${data.length} bars (real=${hasRealData}), last time=${data[data.length - 1]?.time}`);
+    const rawPlot = dataRef.current;
+    const plotData = sanitizeCandlesForLwc(rawPlot);
+    if (rawPlot.length && !plotData.length) {
+      const msg = 'Candle data was invalid after sanitization (check API OHLC).';
+      dbgWarn('setData:', msg, 'rawLen=', rawPlot.length);
+      setChartSeriesError(msg);
+      lastAppliedPlotRef.current = null;
+      dataRef.current = [];
+      try {
+        seriesRef.current.setData([]);
+      } catch (_) { /* ignore */ }
+      return;
+    }
+    if (plotData.length < rawPlot.length) {
+      dbgWarn(`setData: sanitized ${rawPlot.length} → ${plotData.length} bars (duplicate times or bad rows)`);
+    }
+    dataRef.current = plotData;
+    setChartSeriesError(null);
 
-    try {
-      if (showCandles) {
-        seriesRef.current.setData(data);
-      } else {
-        seriesRef.current.setData(data.map(({ time, close }) => ({ time, value: close })));
+    let cancelled = false;
+    let rafId = 0;
+
+    const flushTickQueue = () => {
+      requestAnimationFrame(() => {
+        if (!cancelled) applyPendingTickRef.current();
+      });
+    };
+
+    const series = seriesRef.current;
+    const prevSnap = lastAppliedPlotRef.current;
+
+    // REST refetch + ref-sync often only adjusts the last bar OHLC vs live ticks.
+    // Full setData(1500) resets the series, time scale, and feels like a freeze/glitch.
+    if (
+      hasRealData &&
+      prevSnap &&
+      prevSnap.length === plotData.length &&
+      sameBarTimes(prevSnap, plotData)
+    ) {
+      const diffAt = firstOhlcDiffIndex(prevSnap, plotData, showCandles);
+      if (diffAt === -1) {
+        flushTickQueue();
+        return () => {
+          cancelled = true;
+          if (rafId) cancelAnimationFrame(rafId);
+        };
       }
-    } catch (e) {
-      dbgWarn('setData threw:', e.message);
-      return;
+      if (diffAt === plotData.length - 1) {
+        try {
+          const b = plotData[diffAt];
+          if (showCandles) series.update(b);
+          else series.update({ time: b.time, value: b.close });
+          lastAppliedPlotRef.current = clonePlotSnapshot(plotData, showCandles);
+          flushTickQueue();
+          return () => {
+            cancelled = true;
+            if (rafId) cancelAnimationFrame(rafId);
+          };
+        } catch (e) {
+          dbgWarn('last-bar merge update failed, falling back to full setData:', e.message);
+        }
+      }
     }
 
-    const ts  = chartRef.current?.timeScale();
-    const len = data.length;
-    if (len > 70) ts?.setVisibleLogicalRange({ from: len - 70, to: len - 1 });
-    else ts?.fitContent();
-    ts?.scrollToRealTime();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, showCandles]);
+    dbg(`setData: loading ${plotData.length} bars (real=${hasRealData}), last time=${plotData[plotData.length - 1]?.time}`);
+
+    const applySeriesAndRange = () => {
+      if (cancelled || !seriesRef.current) return;
+      try {
+        if (showCandles) {
+          seriesRef.current.setData(plotData);
+        } else {
+          seriesRef.current.setData(plotData.map(({ time, close }) => ({ time, value: close })));
+        }
+      } catch (e) {
+        dbgWarn('setData threw:', e.message);
+        setChartSeriesError(e.message || 'Chart failed to load series');
+        return;
+      }
+
+      lastAppliedPlotRef.current = clonePlotSnapshot(plotData, showCandles);
+
+      const ts = chartRef.current?.timeScale();
+      const len = plotData.length;
+      try {
+        if (len > 70) ts?.setVisibleLogicalRange({ from: len - 70, to: len - 1 });
+        else ts?.fitContent();
+        ts?.scrollToRealTime();
+      } catch (e) {
+        dbgWarn('timeScale range:', e.message);
+      }
+
+      flushTickQueue();
+    };
+
+    // Large first paint (e.g. 1500 bars) blocks the main thread and feels frozen; yield one frame
+    // so the shell/layout can paint, then apply series data.
+    if (plotData.length >= 200) {
+      rafId = requestAnimationFrame(applySeriesAndRange);
+    } else {
+      applySeriesAndRange();
+    }
+
+    return () => {
+      cancelled = true;
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, [data, showCandles, containerReady, hasRealData]);
 
   // ── Chart updater — stable function, all deps via refs ──────────────────────
   //
@@ -779,138 +1090,98 @@ function FxChart({
   // internal state is read through refs — no stale closures possible.
   //
   const applyPendingTick = useCallback(function applyPendingTick() {
-    rafScheduledRef.current = false;
-
-    const tickData = pendingTickRef.current;
-    if (!tickData) return;
-    pendingTickRef.current = null; // clear immediately to prevent re-apply
-
-    const rawPrice = tickData.close ?? tickData.price;
-    if (!Number.isFinite(Number(rawPrice))) {
-      dbgWarn('invalid price', rawPrice);
-      return;
-    }
-
     const series = seriesRef.current;
-    if (!series) {
-      dbgWarn('seriesRef null — chart not ready');
-      return;
-    }
+    if (!series) return;
+    if (!hasRealDataRef.current) return;
 
-    const arr  = dataRef.current || [];
-    const prec = isGoldSymbol(symbolRef.current) ? 2 : 4;
-    const mult = Math.pow(10, prec);
-    const round = (n) => Math.round(Number(n) * mult) / mult;
-    const p    = round(rawPrice);
+    while (tickQueueRef.current.length > 0) {
+      const arr = dataRef.current || [];
+      // Do not shift until series data exists — otherwise ticks are dropped while REST/ref-sync
+      // is still catching up (first open), and live updates never appear until refresh.
+      if (!arr.length) break;
 
-    // Use the TICK TIMESTAMP to choose the candle bucket, not the local
-    // wall-clock. This keeps candle boundaries aligned with the provider and
-    // prevents \"slanted\" bodies or huge vertical bars when the client clock
-    // drifts.
-    //
-    // For 1m this becomes:
-    //   bucketTime = Math.floor(tickTimeSec / 60) * 60
-    //
-    // getCurrentBarStart already does the correct bucketing given a Date.
-    const tf = timeframeRef.current || '1m';
-    const tickMs =
-      typeof tickData.timestamp === 'number'
-        ? tickData.timestamp
-        : (tickData.datetime ? Date.parse(tickData.datetime) : Date.now());
-    const currentBarTime = getCurrentBarStart(tf, new Date(Number.isFinite(tickMs) ? tickMs : Date.now()));
+      const tickData = tickQueueRef.current.shift();
+      if (!tickData) continue;
 
-    // ── Case 1: no bars at all — seed from this tick ─────────────────────────
-    if (!arr.length) {
-      const bar = { time: currentBarTime, open: p, high: p, low: p, close: p };
-      dbg(`Case 1 seed: time=${currentBarTime} price=${p}`);
-      dataRef.current = [bar];
-      hasActivatedLiveModeRef.current = true;
-      isSampleDataRef.current         = false;
-      try {
-        if (showCandlesRef.current) series.setData([bar]);
-        else series.setData([{ time: currentBarTime, value: p }]);
-      } catch (e) { dbgWarn('Case 1 setData:', e.message); }
-      chartRef.current?.timeScale()?.scrollToRealTime();
-      return;
-    }
+      const rawPrice = tickData.close ?? tickData.price;
+      if (!Number.isFinite(Number(rawPrice))) continue;
 
-    // ── Case 2: sample data visible and live mode NOT yet active ─────────────
-    // Only allowed before activation. Once real data (REST or tick) has been
-    // seen, this block is permanently skipped.
-    if (isSampleDataRef.current && !hasActivatedLiveModeRef.current) {
-      const lastSampleClose = arr[arr.length - 1]?.close;
-      const priceDiff = lastSampleClose > 0
-        ? Math.abs(p - lastSampleClose) / lastSampleClose
-        : 1;
+      const tf = timeframeRef.current || '1m';
+      const prec = isGoldSymbol(symbolRef.current) ? 2 : 4;
+      const mult = Math.pow(10, prec);
+      const round = (n) => Math.round(Number(n) * mult) / mult;
+      const p = round(Number(rawPrice));
 
-      dbg(`Case 2 sample check: diff=${(priceDiff * 100).toFixed(3)}%`);
+      const tickWallMs = (() => {
+        if (typeof tickData.timestamp === 'number' && Number.isFinite(tickData.timestamp)) {
+          const t = tickData.timestamp;
+          return t < 1e12 ? t * 1000 : t;
+        }
+        const d = tickData.datetime;
+        if (d != null) {
+          if (typeof d === 'number' && Number.isFinite(d)) {
+            return d < 1e12 ? d * 1000 : d;
+          }
+          const parsed = Date.parse(String(d));
+          if (Number.isFinite(parsed)) return parsed;
+        }
+        return Date.now();
+      })();
+      const tickBarTime = normalizeTime(getCandleTime(Number.isFinite(tickWallMs) ? tickWallMs : Date.now(), tf));
 
-      if (priceDiff > 0.003) {
-        const sym      = symbolRef.current;
-        const seed     = sym.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-        const freshData = generateSampleOHLC(80, tf, seed, sym, p);
+      const lastBar = arr[arr.length - 1];
+      const lastTime = normalizeTime(lastBar.time);
 
-        dbg(`Case 2 reseed: price=${p}`);
-        dataRef.current         = freshData;
-        isSampleDataRef.current = false;
+      let newBar;
+
+      if (tickBarTime < lastTime) {
+        continue;
+      }
+
+      if (tickBarTime === lastTime) {
+        const updatedBar = {
+          ...lastBar,
+          close: p,
+          high: round(Math.max(Number(lastBar.high), p)),
+          low: round(Math.min(Number(lastBar.low), p)),
+        };
+        arr[arr.length - 1] = updatedBar;
+        dataRef.current = arr;
         try {
-          if (showCandlesRef.current) series.setData(freshData);
-          else series.setData(freshData.map(({ time, close }) => ({ time, value: close })));
-        } catch (e) { dbgWarn('Case 2 setData:', e.message); }
+          if (showCandlesRef.current) series.update(updatedBar);
+          else series.update({ time: lastBar.time, value: p });
+        } catch (e) {
+          dbgWarn('same-bar update failed:', e.message);
+        }
+        continue;
+      }
+
+      if (tickBarTime > lastTime) {
+        // `p` from this tickData is the first dequeued tick for this bar — defines open (FIFO queue preserves order)
+        newBar = {
+          time: tickBarTime,
+          open: p,
+          high: p,
+          low: p,
+          close: p,
+        };
+        arr.push(newBar);
+        dataRef.current = arr;
+        try {
+          if (showCandlesRef.current) series.update(newBar);
+          else series.update({ time: tickBarTime, value: p });
+        } catch (e) {
+          dbgWarn('new-bar update failed:', e.message);
+        }
         chartRef.current?.timeScale()?.scrollToRealTime();
-        return;
+        continue;
       }
-    }
-
-    // From here on: real data path — activate live mode
-    hasActivatedLiveModeRef.current = true;
-    isSampleDataRef.current         = false;
-
-    const last = arr[arr.length - 1];
-
-    // ── Case 3: new bar boundary crossed ─────────────────────────────────────
-    if (currentBarTime > last.time) {
-      const newBar = { time: currentBarTime, open: p, high: p, low: p, close: p };
-      dbg(`Case 3 NEW BAR: time=${currentBarTime} (prev=${last.time})`);
-      arr.push(newBar);
-      dataRef.current = arr;
-      try {
-        if (showCandlesRef.current) series.update(newBar);
-        else series.update({ time: currentBarTime, value: p });
-      } catch (e) {
-        dbgWarn('Case 3 update failed:', e.message, '— setData fallback');
-        try {
-          if (showCandlesRef.current) series.setData(arr);
-          else series.setData(arr.map(({ time, close }) => ({ time, value: close })));
-        } catch (e2) { dbgWarn('Case 3 fallback failed:', e2.message); }
-      }
-      chartRef.current?.timeScale()?.scrollToRealTime();
-      return;
-    }
-
-    // ── Case 4: update current bar ───────────────────────────────────────────
-    const updated = {
-      ...last,
-      close: p,
-      high: round(Math.max(last.high  ?? last.close, p)),
-      low:  round(Math.min(last.low   ?? last.close, p)),
-    };
-    dbg(`Case 4 UPDATE: t=${last.time} o=${updated.open} h=${updated.high} l=${updated.low} c=${updated.close}`);
-    arr[arr.length - 1] = updated;
-    dataRef.current = arr;
-    try {
-      if (showCandlesRef.current) series.update(updated);
-      else series.update({ time: last.time, value: p });
-    } catch (e) {
-      dbgWarn('Case 4 update failed:', e.message, 'lastT=', last.time, 'curT=', currentBarTime);
-      try {
-        if (showCandlesRef.current) series.setData(arr);
-        else series.setData(arr.map(({ time, close }) => ({ time, value: close })));
-      } catch (e2) { dbgWarn('Case 4 fallback failed:', e2.message); }
     }
   // Empty deps — every internal value is read through a ref
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  applyPendingTickRef.current = applyPendingTick;
 
   // ── Live tick → RAF path ─────────────────────────────────────────────────────
   //
@@ -1039,13 +1310,28 @@ function FxChart({
 
     // Buffer the tick — applyPendingTick will consume it via RAF.
     // Include timestamp for bar-boundary alignment (provider/server time when available).
-    const tickMs =
-      (tick.timestamp != null && Number.isFinite(tick.timestamp))
-        ? (tick.timestamp < 1e13 ? tick.timestamp * 1000 : tick.timestamp)
-        : (tick.providerTs != null && Number.isFinite(tick.providerTs))
-          ? (tick.providerTs < 1e13 ? tick.providerTs * 1000 : tick.providerTs)
-          : (tick.datetime ? Date.parse(tick.datetime) : Date.now());
-    pendingTickRef.current = {
+    // Must match applyPendingTick tickWallMs: < 1e12 → seconds (×1000), else already ms.
+    // Using 1e13 wrongly treats normal Unix ms (~1.7e12) as seconds → wrong bar bucket / candles.
+    const tickMs = (() => {
+      if (tick.timestamp != null && Number.isFinite(tick.timestamp)) {
+        const t = tick.timestamp;
+        return t < 1e12 ? t * 1000 : t;
+      }
+      if (tick.providerTs != null && Number.isFinite(tick.providerTs)) {
+        const t = tick.providerTs;
+        return t < 1e12 ? t * 1000 : t;
+      }
+      const d = tick.datetime;
+      if (d != null) {
+        if (typeof d === 'number' && Number.isFinite(d)) {
+          return d < 1e12 ? d * 1000 : d;
+        }
+        const parsed = Date.parse(String(d));
+        if (Number.isFinite(parsed)) return parsed;
+      }
+      return Date.now();
+    })();
+    tickQueueRef.current.push({
       close:    Number(rawPrice),
       price:    Number(rawPrice),
       open:     tick.open,
@@ -1053,13 +1339,16 @@ function FxChart({
       low:      tick.low,
       datetime: tick.datetime,
       timestamp: Number.isFinite(tickMs) ? tickMs : Date.now(),
-    };
+    });
 
     if (!seriesRef.current) return; // chart not ready — tick is buffered above
 
     if (!rafScheduledRef.current) {
       rafScheduledRef.current = true;
-      requestAnimationFrame(applyPendingTick);
+      requestAnimationFrame(() => {
+        rafScheduledRef.current = false;
+        applyPendingTick();
+      });
     }
   }, [tick, applyPendingTick]);
 
@@ -1148,6 +1437,7 @@ function FxChart({
           chartContainerRef.current = el;
           setContainerReady(!!el);
         }}
+        className="fx-chart-container-host"
         style={{ flex: 1, minHeight: 0, width: '100%' }}
       />
       {onModifySLTP && Object.keys(handlePositions).length > 0 && (
@@ -1204,6 +1494,28 @@ function FxChart({
               );
             })}
           </div>
+        </div>
+      )}
+      {chartSeriesError && (
+        <div
+          className="fx-chart-series-error"
+          style={{
+            position: 'absolute',
+            top: 8,
+            left: 8,
+            right: 8,
+            maxWidth: 'min(100%, 420px)',
+            fontSize: 12,
+            color: '#fecaca',
+            background: 'rgba(127,29,29,0.92)',
+            padding: '8px 10px',
+            borderRadius: 6,
+            zIndex: 2,
+            pointerEvents: 'none',
+          }}
+          role="alert"
+        >
+          {chartSeriesError}
         </div>
       )}
       {modifyError && (

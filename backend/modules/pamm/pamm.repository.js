@@ -8,6 +8,8 @@ const MANAGERS_COLLECTION = 'pamm_managers';
 const ALLOCATIONS_COLLECTION = 'pamm_allocations';
 const TRADES_COLLECTION = 'manager_trades';
 const ACCEPTANCE_COLLECTION = 'pamm_investor_acceptance';
+const RESERVE_TRANSACTIONS_COLLECTION = 'pamm_reserve_transactions';
+const RESERVE_WALLETS_COLLECTION = 'pamm_reserve_wallets';
 
 async function managersCol() {
   const db = await getDb();
@@ -27,6 +29,16 @@ async function tradesCol() {
 async function acceptanceCol() {
   const db = await getDb();
   return db.collection(ACCEPTANCE_COLLECTION);
+}
+
+async function reserveTransactionsCol() {
+  const db = await getDb();
+  return db.collection(RESERVE_TRANSACTIONS_COLLECTION);
+}
+
+async function reserveWalletsCol() {
+  const db = await getDb();
+  return db.collection(RESERVE_WALLETS_COLLECTION);
 }
 
 // ---------- Managers ----------
@@ -436,6 +448,35 @@ async function hasAccepted(investorId, strategyId) {
   return !!doc;
 }
 
+async function listReserveTransactionsByFund(fundId, options = {}) {
+  const col = await reserveTransactionsCol();
+  const limit = Math.max(1, Math.min(Number(options.limit) || 50, 200));
+  const list = await col
+    .find({ fundId: String(fundId) })
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .toArray();
+  return list.map((t) => ({ id: t._id.toString(), ...t, _id: undefined }));
+}
+
+async function getReserveWalletByFund(fundId) {
+  const col = await reserveWalletsCol();
+  const doc = await col.findOne({ fundId: String(fundId), walletType: 'pamm_ai_reserve' });
+  return doc
+    ? {
+        id: doc._id.toString(),
+        fundId: String(doc.fundId),
+        managerId: String(doc.managerId || ''),
+        currency: doc.currency || 'USD',
+        walletType: doc.walletType || 'pamm_ai_reserve',
+        balance: Number(doc.balance) || 0,
+        status: doc.status || 'active',
+        createdAt: doc.createdAt || null,
+        updatedAt: doc.updatedAt || null,
+      }
+    : null;
+}
+
 export default {
   createManager,
   getManagerByUserId,
@@ -466,4 +507,6 @@ export default {
   incrementFundReserve,
   recordAcceptance,
   hasAccepted,
+  listReserveTransactionsByFund,
+  getReserveWalletByFund,
 };

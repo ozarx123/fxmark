@@ -1,5 +1,5 @@
 /**
- * Superadmin: manual PAMM realized P&L, wallet profit credit, IB pending commission — single transaction.
+ * Superadmin: manual PAMM realized P&L, wallet profit adjustment (+/−), IB pending commission — single transaction.
  */
 import { randomBytes } from 'crypto';
 import userRepo from '../users/user.repository.js';
@@ -14,6 +14,11 @@ import audit from './audit.logs.js';
 const MAX_WALLET = 500_000;
 const MAX_COMMISSION = 500_000;
 const MAX_PNL_DELTA_ABS = 1_000_000;
+
+function allowInsufficientBalanceForAdminDebit() {
+  const v = String(process.env.ADMIN_PROFIT_ADJUST_ALLOW_INSUFFICIENT_BALANCE || '').toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes';
+}
 
 function refBase() {
   return `pcadj_${Date.now()}_${randomBytes(6).toString('hex')}`;
@@ -112,8 +117,10 @@ export async function applyAdjustment(params) {
     err.statusCode = 400;
     throw err;
   }
-  if (hasWallet && (wCredit <= 0 || wCredit > MAX_WALLET || !Number.isFinite(wCredit))) {
-    const err = new Error(`Wallet credit must be between 0.01 and ${MAX_WALLET} USD`);
+  if (hasWallet && (!Number.isFinite(wCredit) || Math.abs(wCredit) > MAX_WALLET || Math.abs(wCredit) < 0.01)) {
+    const err = new Error(
+      `Wallet adjustment must be non-zero and between -${MAX_WALLET} and +${MAX_WALLET} USD (min 0.01 magnitude)`
+    );
     err.statusCode = 400;
     throw err;
   }
@@ -137,7 +144,7 @@ export async function applyAdjustment(params) {
     ibCommissionId: null,
   };
 
-  await withTransaction(async (session) => {
+  await financialTransactionService.runPairedWithTransaction(async (session) => {
     if (hasPnl) {
       const alloc = await pammRepo.getAllocationByIdOnly(pammAllocationId, { session });
       if (!alloc || !pammRepo.followerIdMatches(alloc.followerId, targetUserId)) {
@@ -155,6 +162,18 @@ export async function applyAdjustment(params) {
 
     if (hasWallet) {
       const txRef = `${base}_w`;
+      const walletBefore = await walletRepo.getOrCreateWallet(targetUserId, 'USD', { session });
+      const balBefore = Number(walletBefore.balance) || 0;
+      if (wCredit < 0 && balBefore + wCredit < -0.01 && !allowInsufficientBalanceForAdminDebit()) {
+        const debit = Math.abs(wCredit);
+        const err = new Error(
+          `Insufficient wallet balance for negative adjustment. Current USD wallet balance is ${balBefore.toFixed(2)}; ` +
+            `requested debit is ${debit.toFixed(2)}. Use a smaller amount, credit the wallet first, or set env ` +
+            `ADMIN_PROFIT_ADJUST_ALLOW_INSUFFICIENT_BALANCE=1 only if you intentionally allow balance below zero.`
+        );
+        err.statusCode = 400;
+        throw err;
+      }
       const txId = await walletRepo.createTransaction(
         {
           userId: targetUserId,
@@ -169,7 +188,11 @@ export async function applyAdjustment(params) {
         { session }
       );
       await walletRepo.updateTransaction(txId, { reference: txId }, { session });
-      await ledgerService.postAdminCredit(targetUserId, wCredit, 'USD', txId, { session });
+      if (wCredit > 0) {
+        await ledgerService.postAdminCredit(targetUserId, wCredit, 'USD', txId, { session });
+      } else {
+        await ledgerService.postAdminDebit(targetUserId, Math.abs(wCredit), 'USD', txId, { session });
+      }
       const w = await walletRepo.updateBalance(targetUserId, 'USD', wCredit, { session });
       result.wallet = { transactionId: txId, credited: wCredit, balanceUsd: w?.balance };
     }
