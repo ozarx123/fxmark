@@ -71,10 +71,9 @@ export default function TerminalLayout() {
   const { connected: tradingConnected, balanceUpdate } = useTradingSocket();
   const notification = useTradeNotifications();
   /**
-   * Last bar close actually painted by FxChart (merged REST + live ticks). Prefer this for market orders
-   * so the ticket matches the chart. When null/loading, fall back to the same central tick pool as
-   * SymbolsQuotesPanel (not a second useMarketData instance — avoids subtle desync).
-   * Note: quote strip Bid/Ask are synthetic mid ± spread; chart/ticket use last/mid from feed — not bid/ask legs.
+   * Last bar close painted by FxChart (merged REST + live ticks). Used for market price + order ticket.
+   * SymbolsQuotesPanel receives this as chartLastClose for the selected symbol so Mid/Bid/Ask bracket the same
+   * reference as the chart header; other symbols use live tick mid only.
    */
   const [chartDisplayedClose, setChartDisplayedClose] = useState(null);
   useEffect(() => {
@@ -722,6 +721,7 @@ export default function TerminalLayout() {
             symbols={SYMBOLS}
             selectedSymbol={symbol}
             onSelectSymbol={setSymbol}
+            chartLastClose={chartDisplayedClose}
           />
         </aside>
 
