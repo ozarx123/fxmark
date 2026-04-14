@@ -5,6 +5,16 @@ import './load-env.js';
 
 const trimmed = (v) => (v || '').trim().replace(/\/$/, '');
 
+/** Parse boolean env vars; unknown values fall back to `defaultValue`. */
+function envBool(name, defaultValue) {
+  const v = process.env[name];
+  if (v === undefined || v === '') return defaultValue;
+  const s = String(v).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(s)) return true;
+  if (['0', 'false', 'no', 'off'].includes(s)) return false;
+  return defaultValue;
+}
+
 const nodeEnvRaw = process.env.NODE_ENV;
 const isLocalDevDefault =
   !nodeEnvRaw || nodeEnvRaw === 'development';
@@ -66,4 +76,10 @@ export default {
   mailCompanyAddress: (process.env.MAIL_COMPANY_ADDRESS || '').trim(),
   /** Full URL to logo image for HTML emails (default: FRONTEND_URL + /fxmark-logo.png) */
   mailLogoUrl: trimmed(process.env.MAIL_LOGO_URL),
+  /**
+   * When false: new users are created verified, login/refresh do not require verification,
+   * and API user payloads report emailVerified true (existing unverified users can sign in).
+   * Default true for production-style deployments.
+   */
+  emailVerificationRequired: envBool('EMAIL_VERIFICATION_REQUIRED', true),
 };

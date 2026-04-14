@@ -83,6 +83,7 @@ export default function MobileTerminalView({
   alerts,
   onRemoveAlert,
   quickOrderLoading,
+  onChartDisplayedCloseChange,
 }) {
   const [activeSection, setActiveSection] = useState('chart');
   const [orderSheetOpen, setOrderSheetOpen] = useState(false);
@@ -228,6 +229,7 @@ export default function MobileTerminalView({
               <div className="chart-container">
                 <ChartWorkspace
                   symbol={chartSlot?.symbol ?? symbol}
+                  onChartDisplayedCloseChange={onChartDisplayedCloseChange}
                   onSymbolChange={(s) => { setSymbol(s); setChartSlot({ symbol: s }); }}
                   symbols={symbols}
                   timeframe={chartSlot?.timeframe ?? '1m'}

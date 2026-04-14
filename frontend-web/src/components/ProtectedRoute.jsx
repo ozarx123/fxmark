@@ -2,6 +2,7 @@ import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { hasRole } from '../config/roleRoutes';
+import { isEmailVerificationRequired } from '../config/emailVerification';
 
 /**
  * Protects routes by auth and optional role.
@@ -24,7 +25,12 @@ export default function ProtectedRoute({
     return <Navigate to="/auth" state={{ from: location }} replace />;
   }
 
-  if (requireAuth && isAuthenticated && user?.emailVerified !== true) {
+  if (
+    requireAuth &&
+    isAuthenticated &&
+    isEmailVerificationRequired() &&
+    user?.emailVerified !== true
+  ) {
     return <Navigate to="/auth/verify-email" replace />;
   }
 

@@ -103,6 +103,24 @@ function accountNoEqualityFilter(raw) {
   return { accountNo: { $regex: new RegExp(`^${escapeRegex(t)}$`, 'i') } };
 }
 
+/**
+ * Login / lookup by accountNo. MongoDB $regex only matches string fields; some legacy rows store
+ * numeric account numbers as BSON int/long, which would otherwise never match.
+ */
+function accountNoLookupFilter(raw) {
+  const t = (raw || '').trim();
+  if (!t) return null;
+  const regexPart = accountNoEqualityFilter(t);
+  if (!regexPart) return null;
+  if (/^\d+$/.test(t)) {
+    const n = parseInt(t, 10);
+    if (Number.isFinite(n)) {
+      return { $or: [regexPart, { accountNo: n }, { accountNo: String(n) }] };
+    }
+  }
+  return regexPart;
+}
+
 const ACCOUNT_NO_ALLOC_RETRY = 8;
 
 function isDuplicateAccountNoError(err) {
@@ -165,7 +183,7 @@ async function findByEmail(email) {
 async function findByAccountNo(accountNo) {
   if (!accountNo || typeof accountNo !== 'string') return null;
   const col = await collection();
-  const filter = accountNoEqualityFilter(accountNo);
+  const filter = accountNoLookupFilter(accountNo);
   if (!filter) return null;
   const user = await col.findOne(filter);
   return user ? toUser(user) : null;
@@ -322,7 +340,7 @@ async function findByEmailWithPassword(email) {
 async function findByAccountNoWithPassword(rawAccountNo) {
   if (!rawAccountNo || typeof rawAccountNo !== 'string') return null;
   const col = await collection();
-  const filter = accountNoEqualityFilter(rawAccountNo);
+  const filter = accountNoLookupFilter(rawAccountNo);
   if (!filter) return null;
   const user = await col.findOne(filter);
   return user ? toUserWithHash(user) : null;
@@ -442,7 +460,7 @@ async function list(options = {}) {
         { email: { $regex: s, $options: 'i' } },
         { name: { $regex: s, $options: 'i' } },
       ];
-      or.push(accountNoEqualityFilter(s));
+      or.push(accountNoLookupFilter(s));
       filter.$or = or.filter(Boolean);
     }
   }
@@ -467,6 +485,7 @@ export default {
   toUser,
   findByEmailWithPassword,
   findByAccountNoWithPassword,
+  accountNoLookupFilter,
   getNextNumericAccountNo,
   completeEmailVerificationByToken,
   resetPasswordWithToken,

@@ -72,7 +72,16 @@ export default function TerminalLayout() {
   const { ticks, connected: marketConnected } = useMarketDataContext();
   const { connected: tradingConnected, balanceUpdate } = useTradingSocket();
   const notification = useTradeNotifications();
-  const marketPrice = tick?.close ?? tick?.price ?? null;
+  /** Last bar close as shown on chart (REST+tick merge); falls back to pool tick when chart has not reported yet */
+  const [chartDisplayedClose, setChartDisplayedClose] = useState(null);
+  useEffect(() => {
+    setChartDisplayedClose(null);
+  }, [symbol, timeframe]);
+  const tickPrice = tick?.close ?? tick?.price ?? null;
+  const marketPrice =
+    chartDisplayedClose != null && Number.isFinite(Number(chartDisplayedClose))
+      ? Number(chartDisplayedClose)
+      : tickPrice;
 
   const positionsWithPnl = useMemo(() => {
     if (!Array.isArray(positions)) return [];
@@ -576,6 +585,7 @@ export default function TerminalLayout() {
           symbol={symbol}
           setSymbol={setSymbol}
           symbols={SYMBOLS}
+          onChartDisplayedCloseChange={setChartDisplayedClose}
           marketPrice={marketPrice}
           volume={volume}
           setVolume={setVolume}
@@ -729,6 +739,7 @@ export default function TerminalLayout() {
             <ChartWorkspace
               key={i}
               symbol={slot.symbol}
+              onChartDisplayedCloseChange={i === 0 ? setChartDisplayedClose : undefined}
               onSymbolChange={(s) => setChartSlot(i, { symbol: s })}
               symbols={SYMBOLS}
               timeframe={slot.timeframe}

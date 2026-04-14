@@ -5,6 +5,7 @@ import FxmarkLogo from '../../components/FxmarkLogo';
 import { getApiBase } from '../../config/apiBase.js';
 
 import { ensureUserRole } from '../../utils/authHelpers';
+import { isEmailVerificationRequired } from '../../config/emailVerification';
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PASSWORD_MIN = 8;
 
@@ -89,7 +90,11 @@ export default function Auth() {
         navigate(target, { replace: true });
         return;
       }
-      if (res.status === 403 && (data.code === 'EMAIL_NOT_VERIFIED' || String(data.error || data.message || '').toLowerCase().includes('verif'))) {
+      if (
+        isEmailVerificationRequired() &&
+        res.status === 403 &&
+        (data.code === 'EMAIL_NOT_VERIFIED' || String(data.error || data.message || '').toLowerCase().includes('verif'))
+      ) {
         setError('Please verify your email. Check your inbox or resend the verification email.');
         navigate('/auth/verify-email', {
           state: { email: data.user?.email || (isAccountNoLogin ? '' : trimmedId) },
@@ -147,8 +152,8 @@ export default function Auth() {
       if (res.ok) {
         const u = ensureUserRole(data.user || { email: signupEmail, name: signupName || signupEmail.split('@')[0] }, signupEmail);
         login(u, data.accessToken);
-        // Always land on verify-email until the account is verified (same as resend flow). Do not skip when the email sent OK.
-        const needsEmailVerification = data.user?.emailVerified !== true;
+        const needsEmailVerification =
+          isEmailVerificationRequired() && data.user?.emailVerified !== true;
         const target = needsEmailVerification
           ? '/auth/verify-email'
           : safeRedirect || (u.profileComplete ? '/dashboard' : '/auth/profile-setup');

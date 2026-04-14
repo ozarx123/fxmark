@@ -105,15 +105,24 @@ export async function listRecentBullRunTrades(options = {}) {
   }));
 }
 
-/** Investors who took a wallet debit on loss distribution for this position (from ledger `pamm_dist` WALLET legs). */
+/**
+ * Investors who took a wallet debit on loss distribution for this position (ledger `pamm_dist` WALLET legs).
+ * Bull Run uses composite referenceId (`pammdist|...|pos:<id>|...|type:loss`); classic flow may use plain positionId.
+ */
 async function buildLossDistributionByUserFromLedger(positionId) {
   const pid = String(positionId);
-  const entries = await ledgerRepo.listByReference('pamm_dist', pid);
+  const db = await getDb();
+  const col = db.collection('ledger_entries');
+  const escaped = escapeRegex(pid);
+  const entries = await col
+    .find({
+      referenceType: 'pamm_dist',
+      accountCode: ACCOUNTS.WALLET,
+      $or: [{ referenceId: pid }, { referenceId: { $regex: `pos:${escaped}` } }],
+    })
+    .toArray();
   const walletLegs = entries.filter(
-    (e) =>
-      e.accountCode === ACCOUNTS.WALLET &&
-      String(e.entityId) !== String(SYSTEM_ACCOUNT_ID) &&
-      String(e.entityId) !== 'system'
+    (e) => String(e.entityId) !== String(SYSTEM_ACCOUNT_ID) && String(e.entityId) !== 'system'
   );
   const byUser = new Map();
   for (const e of walletLegs) {
@@ -130,6 +139,32 @@ async function buildLossDistributionByUserFromLedger(positionId) {
     rows.push({ userId: uid, lossShareUsd: amt });
   }
   return rows;
+}
+
+/** pamm_dist wallet rows for a close: reference = positionId (classic) or Bull Run `pammdist|...|pos:...`. */
+async function listPammDistTransactionsByPositionExtended(positionId) {
+  const db = await getDb();
+  const col = db.collection('wallet_transactions');
+  const pid = String(positionId);
+  const escaped = escapeRegex(pid);
+  const refOr = [{ reference: pid }];
+  if (ObjectId.isValid(pid) && pid.length === 24) refOr.push({ reference: new ObjectId(pid) });
+  refOr.push({ reference: { $regex: `pos:${escaped}` } });
+  const list = await col
+    .find({
+      type: 'pamm_dist',
+      status: 'completed',
+      $or: refOr,
+    })
+    .toArray();
+  return list.map((t) => ({
+    id: t._id.toString(),
+    userId: String(t.userId ?? ''),
+    amount: Number(t.amount) || 0,
+    currency: t.currency || 'USD',
+    reference: t.reference,
+    completedAt: t.completedAt,
+  }));
 }
 
 async function loadTradeByPositionId(positionId) {
@@ -187,7 +222,7 @@ export async function rollbackBullRunTradeClose(positionId, options = {}) {
   }
 
   const pnl = Number(trade.pnl) || 0;
-  const distTxs = await walletRepo.listPammDistTransactionsByPosition(pid);
+  const distTxs = await listPammDistTransactionsByPositionExtended(pid);
 
   const sumCredits = distTxs.reduce((s, x) => s + (Math.abs(Number(x.amount)) || 0), 0);
   const plan = {

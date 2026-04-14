@@ -269,6 +269,8 @@ function FxChart({
   measureMode = false,
   chartResetTrigger = 0,
   chartBarSpacing = null,
+  /** When set, called with the last bar close actually shown on the series (merged REST+tick), or null when not in live mode — keeps ticker aligned with chart. */
+  onDisplayedLastCloseChange = null,
 }) {
   const displaySymbol = toDisplaySymbol(symbol);
   const chartSymbolKey = toInternalSymbol(symbol);
@@ -349,6 +351,40 @@ function FxChart({
   // ── Processed data (real REST candles or synthetic sample) ──────────────────
   const hasRealData = Array.isArray(externalData) && externalData.length > 0;
   hasRealDataRef.current = hasRealData;
+
+  const onDisplayedLastCloseChangeRef = useRef(onDisplayedLastCloseChange);
+  useEffect(() => {
+    onDisplayedLastCloseChangeRef.current = onDisplayedLastCloseChange;
+  }, [onDisplayedLastCloseChange]);
+
+  const isReplayModeRef = useRef(!!isReplayMode);
+  useEffect(() => {
+    isReplayModeRef.current = !!isReplayMode;
+  }, [isReplayMode]);
+
+  const emitDisplayedLastClose = useCallback(() => {
+    const cb = onDisplayedLastCloseChangeRef.current;
+    if (!cb) return;
+    if (isReplayModeRef.current) return;
+    if (!hasRealDataRef.current) {
+      cb(null);
+      return;
+    }
+    const arr = dataRef.current || [];
+    const last = arr[arr.length - 1];
+    const c = last?.close != null ? Number(last.close) : null;
+    cb(Number.isFinite(c) ? c : null);
+  }, []);
+
+  const emitDisplayedLastCloseRef = useRef(emitDisplayedLastClose);
+  emitDisplayedLastCloseRef.current = emitDisplayedLastClose;
+
+  useEffect(() => {
+    return () => {
+      const cb = onDisplayedLastCloseChangeRef.current;
+      if (cb) cb(null);
+    };
+  }, []);
 
   // Only feed marketPrice into the memo when there is no real data.
   // If it were always a dep, every tick (which updates marketPrice) would
@@ -431,6 +467,7 @@ function FxChart({
     isSampleDataRef.current = !hasRealData;
     hasActivatedLiveModeRef.current = !!hasRealData;
     if (!hasRealData) tickQueueRef.current = [];
+    emitDisplayedLastCloseRef.current();
   }, [data, displaySymbol, timeframe, showCandles, hasRealData, containerReady]);
 
   // ── Chart instance — recreated on symbol, height, or series-type change ──────
@@ -968,6 +1005,7 @@ function FxChart({
       lastAppliedPlotRef.current = null;
       dataRef.current = [];
       seriesRef.current.setData([]);
+      emitDisplayedLastClose();
       try {
         chartRef.current?.timeScale()?.fitContent();
       } catch (_) { /* ignore */ }
@@ -982,6 +1020,7 @@ function FxChart({
       setChartSeriesError(msg);
       lastAppliedPlotRef.current = null;
       dataRef.current = [];
+      emitDisplayedLastClose();
       try {
         seriesRef.current.setData([]);
       } catch (_) { /* ignore */ }
@@ -1027,6 +1066,7 @@ function FxChart({
           if (showCandles) series.update(b);
           else series.update({ time: b.time, value: b.close });
           lastAppliedPlotRef.current = clonePlotSnapshot(plotData, showCandles);
+          emitDisplayedLastClose();
           flushTickQueue();
           return () => {
             cancelled = true;
@@ -1055,6 +1095,7 @@ function FxChart({
       }
 
       lastAppliedPlotRef.current = clonePlotSnapshot(plotData, showCandles);
+      emitDisplayedLastClose();
 
       const ts = chartRef.current?.timeScale();
       const len = plotData.length;
@@ -1094,6 +1135,7 @@ function FxChart({
     if (!series) return;
     if (!hasRealDataRef.current) return;
 
+    let didWork = false;
     while (tickQueueRef.current.length > 0) {
       const arr = dataRef.current || [];
       // Do not shift until series data exists — otherwise ticks are dropped while REST/ref-sync
@@ -1138,6 +1180,8 @@ function FxChart({
         continue;
       }
 
+      didWork = true;
+
       if (tickBarTime === lastTime) {
         const updatedBar = {
           ...lastBar,
@@ -1177,6 +1221,7 @@ function FxChart({
         continue;
       }
     }
+    if (didWork) emitDisplayedLastCloseRef.current();
   // Empty deps — every internal value is read through a ref
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

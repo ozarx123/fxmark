@@ -2,6 +2,10 @@
  * Change a user's password in MongoDB.
  * Run: node scripts/change-password.js [email] [newPassword]
  * Example: node scripts/change-password.js clarokochi@gmail.com MyNewPass123
+ *
+ * Target a specific database (e.g. main `test`): set TARGET_DB or MONGO_DATABASE for this run only.
+ *   TARGET_DB=test node scripts/change-password.js user@example.com MyNewPass123
+ *   PowerShell: $env:TARGET_DB="test"; node scripts/change-password.js user@example.com MyNewPass123
  */
 import 'dotenv/config';
 import bcrypt from 'bcryptjs';
@@ -36,7 +40,9 @@ async function changePassword() {
     process.exit(1);
   }
 
-  const db = await getDb();
+  const dbName = (process.env.TARGET_DB || process.env.MONGO_DATABASE || '').trim() || undefined;
+  const db = await getDb(dbName);
+  if (dbName) console.log('Using database:', db.databaseName);
   const col = db.collection(USERS_COLLECTION);
   const user = await col.findOne({ email });
 

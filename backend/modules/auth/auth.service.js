@@ -184,6 +184,7 @@ async function register(payload) {
       referralSource = 'default';
     }
   }
+  const verificationOn = config.emailVerificationRequired;
   const userId = await userRepo.createOne({
     email,
     passwordHash,
@@ -191,7 +192,7 @@ async function register(payload) {
     role: payload.role || 'user',
     kycStatus: payload.kycStatus || 'pending',
     profileComplete: false,
-    emailVerified: false,
+    emailVerified: !verificationOn,
     ...(phone && { phone }),
     ...(referrerId && { referrerId }),
     ...(referralSource && { referralSource }),
@@ -200,25 +201,27 @@ async function register(payload) {
 
   let verificationEmailSent = false;
   let verificationMessage = '';
-  try {
-    const token = await assignVerificationTokenToUser(userId);
-    const result = await sendVerificationEmail(email, token);
-    verificationEmailSent = !!result?.sent;
-    if (verificationEmailSent) {
-      verificationMessage = 'Check your inbox for a verification link.';
-    } else {
-      verificationMessage =
-        result?.error || 'Verification email could not be sent. Try “Resend” on the verification page or check server email settings.';
-    }
-  } catch (e) {
-    console.warn('[auth] Verification email send failed:', e.message);
-    verificationEmailSent = false;
-    const msg = e?.message || '';
-    if (msg.includes('FRONTEND_URL or API_URL must be set')) {
-      verificationMessage =
-        'Email verification link is not configured. Set API_URL (public) and ideally FRONTEND_URL / WEB_APP_URL on the server.';
-    } else {
-      verificationMessage = msg || 'Verification email could not be sent.';
+  if (verificationOn) {
+    try {
+      const token = await assignVerificationTokenToUser(userId);
+      const result = await sendVerificationEmail(email, token);
+      verificationEmailSent = !!result?.sent;
+      if (verificationEmailSent) {
+        verificationMessage = 'Check your inbox for a verification link.';
+      } else {
+        verificationMessage =
+          result?.error || 'Verification email could not be sent. Try “Resend” on the verification page or check server email settings.';
+      }
+    } catch (e) {
+      console.warn('[auth] Verification email send failed:', e.message);
+      verificationEmailSent = false;
+      const msg = e?.message || '';
+      if (msg.includes('FRONTEND_URL or API_URL must be set')) {
+        verificationMessage =
+          'Email verification link is not configured. Set API_URL (public) and ideally FRONTEND_URL / WEB_APP_URL on the server.';
+      } else {
+        verificationMessage = msg || 'Verification email could not be sent.';
+      }
     }
   }
 
@@ -240,9 +243,9 @@ async function register(payload) {
   const refreshToken = await createRefreshToken(userId);
   return {
     success: true,
-    requiresEmailVerification: true,
+    requiresEmailVerification: verificationOn,
     verificationEmailSent,
-    message: verificationMessage,
+    message: verificationOn ? verificationMessage : '',
     accessToken,
     refreshToken,
     user: sanitizeUser(user),
@@ -287,7 +290,7 @@ async function login(payload) {
   }
   const ensured = await userRepo.ensureAccountNo(user.id);
   if (ensured?.accountNo) user = { ...user, accountNo: ensured.accountNo };
-  if (user.emailVerified !== true) {
+  if (config.emailVerificationRequired && user.emailVerified !== true) {
     const err = new Error('Email not verified');
     err.statusCode = 403;
     err.code = 'EMAIL_NOT_VERIFIED';
@@ -357,7 +360,7 @@ async function refresh(refreshToken) {
     err.statusCode = 401;
     throw err;
   }
-  if (user.emailVerified !== true) {
+  if (config.emailVerificationRequired && user.emailVerified !== true) {
     const err = new Error('Email not verified');
     err.statusCode = 403;
     err.code = 'EMAIL_NOT_VERIFIED';
@@ -408,6 +411,9 @@ function sanitizeUser(user) {
     passwordResetExpires,
     ...safe
   } = user;
+  if (!config.emailVerificationRequired) {
+    return { ...safe, emailVerified: true };
+  }
   return safe;
 }
 
@@ -505,6 +511,13 @@ async function resetPasswordWithToken(payload) {
 }
 
 async function verifyEmail(token) {
+  if (!config.emailVerificationRequired) {
+    return {
+      verified: true,
+      verificationDisabled: true,
+      message: 'Email verification is not required.',
+    };
+  }
   if (!token || typeof token !== 'string' || !String(token).trim()) {
     const err = new Error('Verification token is required');
     err.statusCode = 400;
@@ -566,6 +579,9 @@ async function verifyEmail(token) {
 }
 
 async function resendVerificationEmail(email) {
+  if (!config.emailVerificationRequired) {
+    return { sent: false, message: 'Email verification is not required for this deployment.' };
+  }
   const e = (email || '').toLowerCase().trim();
   if (!e) {
     const err = new Error('Email is required');

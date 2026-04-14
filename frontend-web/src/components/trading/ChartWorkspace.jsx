@@ -42,6 +42,8 @@ export default function ChartWorkspace({
   onBreakout,
   compactMobile = false,
   className = '',
+  /** Primary chart only: syncs header/ticker price with merged chart last close */
+  onChartDisplayedCloseChange = null,
 }) {
   const timeframe = controlledTimeframe ?? '1m';
   const indicators = controlledIndicators ?? defaultIndicators();
@@ -387,6 +389,7 @@ export default function ChartWorkspace({
         measureMode={measureMode}
         chartResetTrigger={chartResetTrigger}
         chartBarSpacing={chartBarSpacing}
+        onDisplayedLastCloseChange={onChartDisplayedCloseChange}
       />
     </div>
   );
