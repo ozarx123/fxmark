@@ -205,17 +205,39 @@ app.use((req, res, next) => {
   next();
 });
 
-// ── Security: Global rate limit (skip Socket.IO; they never reach here) ───────
+/**
+ * Global rate limit — protects abusive POST/PUT traffic. Default was 200/15min/IP which is too low
+ * for SPAs that poll charts (/api/market/candles), maintenance status, token refresh, etc. Those paths
+ * are skipped here; tune RATE_LIMIT_MAX_GLOBAL for everything else (default 1200).
+ * /api/trading/* is excluded so buy/sell/limit orders, TP/SL, polls for positions/orders are not throttled by IP.
+ */
+function globalLimiterSkip(req) {
+  const url = (req.originalUrl || req.url || '').split('?')[0];
+  const path = url.replace(/\/+$/, '') || '/';
+  if (path === '/api/webhooks/nowpayments') return true;
+  // Authenticated trading: orders, positions, SL/TP, account summary — must not share generic IP bucket
+  if (path.startsWith('/api/trading')) return true;
+  // Chart + market reads (high volume; Finnhub/Twelve already rate-limit upstream)
+  if (path.startsWith('/api/market')) return true;
+  // Login / signup — only authLimiter applies (below); do not double-count against global IP bucket
+  if (path === '/api/auth/login' || path === '/api/auth/register' || path === '/api/auth/signup') return true;
+  // Token rotation — authLimiter does not cover refresh; skip global so SPA sessions stay usable
+  if (path === '/api/auth/refresh') return true;
+  // Polled by SPA / probes — should never lock users out of the app
+  if (path === '/api/platform/maintenance') return true;
+  if (path === '/health' || path === '/api/health' || path === '/health/db' || path === '/health/redis') return true;
+  // Socket.IO long-polling (same IP as browser tab)
+  if (path.startsWith('/socket.io')) return true;
+  return false;
+}
+
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: parseInt(process.env.RATE_LIMIT_MAX_GLOBAL || '200', 10),
+  max: Math.max(50, parseInt(process.env.RATE_LIMIT_MAX_GLOBAL || '1200', 10)),
   message: { error: 'Too many requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => {
-    const url = (req.originalUrl || '').split('?')[0];
-    return url === '/api/webhooks/nowpayments';
-  },
+  skip: globalLimiterSkip,
 });
 app.use(globalLimiter);
 

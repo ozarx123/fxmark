@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useAccount } from '../../context/AccountContext';
-import { useMarketData } from '../../hooks/useMarketData';
 import { useMarketDataContext } from '../../context/MarketDataContext';
 import { useTradingSocket } from '../../services/tradingSocket';
 import { useTradeNotifications } from '../../hooks/useTradeNotifications';
@@ -68,20 +67,26 @@ export default function TerminalLayout() {
 
   const symbol = chartSlots[0]?.symbol ?? 'XAU/USD';
   const timeframe = chartSlots[0]?.timeframe ?? '1m';
-  const { tick } = useMarketData(symbol, timeframe);
   const { ticks, connected: marketConnected } = useMarketDataContext();
   const { connected: tradingConnected, balanceUpdate } = useTradingSocket();
   const notification = useTradeNotifications();
-  /** Last bar close as shown on chart (REST+tick merge); falls back to pool tick when chart has not reported yet */
+  /**
+   * Last bar close actually painted by FxChart (merged REST + live ticks). Prefer this for market orders
+   * so the ticket matches the chart. When null/loading, fall back to the same central tick pool as
+   * SymbolsQuotesPanel (not a second useMarketData instance — avoids subtle desync).
+   * Note: quote strip Bid/Ask are synthetic mid ± spread; chart/ticket use last/mid from feed — not bid/ask legs.
+   */
   const [chartDisplayedClose, setChartDisplayedClose] = useState(null);
   useEffect(() => {
     setChartDisplayedClose(null);
   }, [symbol, timeframe]);
-  const tickPrice = tick?.close ?? tick?.price ?? null;
+  const symbolKeyForPrice = (symbol || '').replace(/\//g, '').toUpperCase();
+  const poolTickPrice =
+    ticks?.[symbolKeyForPrice]?.close ?? ticks?.[symbolKeyForPrice]?.price ?? null;
   const marketPrice =
     chartDisplayedClose != null && Number.isFinite(Number(chartDisplayedClose))
       ? Number(chartDisplayedClose)
-      : tickPrice;
+      : poolTickPrice;
 
   const positionsWithPnl = useMemo(() => {
     if (!Array.isArray(positions)) return [];
