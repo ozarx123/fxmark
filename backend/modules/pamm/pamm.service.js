@@ -200,6 +200,7 @@ async function getFundDetail(fundId, followerId = null, viewerRole = 'user') {
       const investorTodayProfitAmount = Number.isFinite(todayProfit)
         ? (todayProfit * myAllocationPercent) / 100
         : 0;
+      // Clients need real allocation id for POST /pamm/add-funds, /withdraw, /unfollow (not a synthetic id).
       return {
         todayProfit: Number(investorTodayProfitAmount) || 0,
         balance: myAllocation ? Number(myAllocation.allocatedBalance) || 0 : 0,
@@ -210,6 +211,13 @@ async function getFundDetail(fundId, followerId = null, viewerRole = 'user') {
           date: t.date,
         })),
         hasActiveTrade: hasActiveTrade === true,
+        allocationId: myAllocation?.id ?? null,
+        fund: {
+          id: fund.id,
+          userId: fund.userId,
+          name: fund.name,
+          isPublic: fund.isPublic !== false,
+        },
       };
     } else {
       let reserveTransactions = [];

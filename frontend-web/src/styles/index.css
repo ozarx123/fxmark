@@ -3941,6 +3941,17 @@ body {
   color: rgba(255, 255, 255, 0.75);
 }
 
+/* IB dashboard */
+.ib-profile-total-earnings {
+  margin: 0.5rem 0 0;
+  font-size: 1.05rem;
+  color: var(--fxmark-text);
+}
+
+.ib-profile-total-earnings strong {
+  font-weight: 600;
+}
+
 /* IB referral link generator */
 .ib-referral-generator {
   margin-bottom: 1.5rem;

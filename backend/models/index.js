@@ -6,6 +6,7 @@ import * as positionModel from './position.model.js';
 import * as pammModel from './pamm.model.js';
 import * as ibModel from './ib.model.js';
 import * as ledgerModel from './ledger.model.js';
+import * as marketHistoryModel from './marketHistory.model.js';
 
 export const user = userModel;
 export const refreshToken = refreshTokenModel;
@@ -15,3 +16,4 @@ export const position = positionModel;
 export const pamm = pammModel;
 export const ib = ibModel;
 export const ledger = ledgerModel;
+export const marketHistory = marketHistoryModel;

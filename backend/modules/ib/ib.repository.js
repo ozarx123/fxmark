@@ -799,6 +799,86 @@ async function listCommissionsByIb(ibId, options = {}) {
   return list.map((c) => ({ id: c._id.toString(), ...c, _id: undefined }));
 }
 
+/**
+ * Sum trade IB commission amounts credited in [fromInclusive, toExclusive) (typically UTC day window).
+ */
+async function sumIbTradeCommissionsCreatedBetween(ibId, fromInclusive, toExclusive) {
+  if (!ibId) return 0;
+  const col = await commissionsCol();
+  const result = await col
+    .aggregate([
+      {
+        $match: {
+          ibId,
+          createdAt: { $gte: fromInclusive, $lt: toExclusive },
+        },
+      },
+      { $group: { _id: null, total: { $sum: '$amount' } } },
+    ])
+    .next();
+  return result?.total ?? 0;
+}
+
+function pammIbMatchForIbId(ibId) {
+  const idStr = String(ibId).trim();
+  const orConditions = [{ ib_id: idStr }];
+  if (ObjectId.isValid(idStr) && idStr.length === 24) {
+    orConditions.push({ ib_id: new ObjectId(idStr) });
+  }
+  return { $or: orConditions };
+}
+
+/**
+ * Sum PAMM IB commission_amount for this IB in [fromInclusive, toExclusive) on created_at.
+ */
+async function sumPammIbCommissionForIbBetween(ibId, fromInclusive, toExclusive) {
+  if (!ibId) return 0;
+  const col = await pammIbCommissionLogsCol();
+  const result = await col
+    .aggregate([
+      {
+        $match: {
+          ...pammIbMatchForIbId(ibId),
+          created_at: { $gte: fromInclusive, $lt: toExclusive },
+        },
+      },
+      { $group: { _id: null, total: { $sum: '$commission_amount' } } },
+    ])
+    .next();
+  return result?.total ?? 0;
+}
+
+/** Lifetime sum of PAMM IB commission_amount for this IB (all time). */
+async function sumAllPammIbCommissionForIb(ibId) {
+  if (!ibId) return 0;
+  const col = await pammIbCommissionLogsCol();
+  const result = await col
+    .aggregate([
+      { $match: pammIbMatchForIbId(ibId) },
+      { $group: { _id: null, total: { $sum: '$commission_amount' } } },
+    ])
+    .next();
+  return result?.total ?? 0;
+}
+
+/**
+ * Total IB earnings for the UTC calendar day containing `day` (trade + PAMM logs).
+ * @returns {{ total: number, trade: number, pamm: number, utcDate: string }}
+ */
+async function getIbEarningsForUtcDay(ibId, day = new Date()) {
+  const start = new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate()));
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  const [tradeRaw, pammRaw] = await Promise.all([
+    sumIbTradeCommissionsCreatedBetween(ibId, start, end),
+    sumPammIbCommissionForIbBetween(ibId, start, end),
+  ]);
+  const trade = Math.round(Number(tradeRaw) * 100) / 100;
+  const pamm = Math.round(Number(pammRaw) * 100) / 100;
+  const total = Math.round((trade + pamm) * 100) / 100;
+  const utcDate = start.toISOString().slice(0, 10);
+  return { total, trade, pamm, utcDate };
+}
+
 async function sumPendingByIb(ibId) {
   const col = await commissionsCol();
   const result = await col.aggregate([
@@ -960,6 +1040,10 @@ export default {
   createCommission,
   listCommissionsByIb,
   listCommissionsAll,
+  sumIbTradeCommissionsCreatedBetween,
+  sumPammIbCommissionForIbBetween,
+  sumAllPammIbCommissionForIb,
+  getIbEarningsForUtcDay,
   sumPendingByIb,
   sumAllPendingCommissions,
   markCommissionsPaid,

@@ -22,6 +22,8 @@ async function ensureIndexes() {
     [models.ib.COMMISSIONS_COLLECTION, models.ib.commissionIndexes],
     [models.ib.PAYOUTS_COLLECTION, models.ib.payoutIndexes],
     [models.ledger.LEDGER_COLLECTION, models.ledger.ledgerIndexes],
+    [models.marketHistory.TICKS_COLLECTION, models.marketHistory.ticksIndexes],
+    [models.marketHistory.OHLC_COLLECTION, models.marketHistory.ohlcIndexes],
   ];
 
   console.log('Ensuring indexes...');

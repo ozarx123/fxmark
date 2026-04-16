@@ -1,6 +1,7 @@
 import { WebSocketServer } from 'ws';
 import { Server as SocketIOServer } from 'socket.io';
 import jwtStrategy from '../modules/auth/jwt.strategy.js';
+import { maybePersistXauusdTick } from './services/xauusdMarketPersistence.js';
 
 let wss = null;
 let io = null;
@@ -236,6 +237,12 @@ export function broadcastTick(tick) {
 
     lastPrices.set(symbol, price);
     lastTsMap.set(symbol, ts);
+
+    try {
+      maybePersistXauusdTick(data, tick);
+    } catch (e) {
+      console.warn('[ws] xauusd persist:', e.message);
+    }
   } else {
     const ts = Date.now();
     lastPrices.set(symbol, price);

@@ -12,8 +12,12 @@ import {
 import * as cache from '../services/cache.js';
 import { VALID_TIMEFRAMES } from '../config/symbolMap.js';
 import { getCurrentBarStart } from '../config/candleTime.js';
+import { findOhlcBars } from '../../modules/market/market-history.repository.js';
 
 const router = Router();
+
+const XAUUSD_HISTORY_FROM_DB =
+  process.env.XAUUSD_HISTORY_FROM_DB === 'true' || process.env.XAUUSD_HISTORY_FROM_DB === '1';
 
 const FINNHUB_KEY = () => (process.env.FINNHUB_API_KEY || '').trim();
 
@@ -76,6 +80,32 @@ const MAX_CHART_CANDLES = Math.min(
   Math.max(200, parseInt(process.env.MAX_CHART_CANDLES || '1500', 10) || 1500)
 );
 
+function parseQueryRangeToSec(fromIso, toIso) {
+  let fromSec;
+  let toSec;
+  if (fromIso) {
+    const t = Date.parse(String(fromIso));
+    if (Number.isFinite(t)) fromSec = Math.floor(t / 1000);
+  }
+  if (toIso) {
+    const t = Date.parse(String(toIso));
+    if (Number.isFinite(t)) toSec = Math.floor(t / 1000);
+  }
+  return { fromSec, toSec };
+}
+
+async function loadInternalOhlcCandles(internalSymbol, normalizedTf, from, to) {
+  const { fromSec, toSec } = parseQueryRangeToSec(from, to);
+  if (fromSec != null || toSec != null) {
+    return findOhlcBars(internalSymbol, normalizedTf, {
+      fromSec,
+      toSec,
+      limit: MAX_CHART_CANDLES,
+    });
+  }
+  return findOhlcBars(internalSymbol, normalizedTf, { limit: MAX_CHART_CANDLES });
+}
+
 function capCandlesForChart(candles) {
   if (!Array.isArray(candles) || candles.length <= MAX_CHART_CANDLES) return candles;
   return candles.slice(-MAX_CHART_CANDLES);
@@ -123,12 +153,6 @@ router.get('/candles', async (req, res) => {
     if (!symbol || !tf) {
       return res.status(400).json({ error: 'symbol and tf are required' });
     }
-    if (!FINNHUB_KEY() && !twelveDataApiKey()) {
-      return res.status(500).json({
-        error: 'Market data not configured',
-        hint: 'Set FINNHUB_API_KEY and/or TWELVEDATA_API_KEY in backend/.env',
-      });
-    }
     const normalizedTf = normalizeTf(tf);
     if (!VALID_TIMEFRAMES.includes(normalizedTf)) {
       return res.status(400).json({
@@ -137,6 +161,7 @@ router.get('/candles', async (req, res) => {
     }
 
     const internalSymbol = String(symbol || '').replace(/\//g, '').toUpperCase();
+    const wantsInternalXau = XAUUSD_HISTORY_FROM_DB && internalSymbol === 'XAUUSD';
 
     const cacheKey = `candles:${internalSymbol}:${normalizedTf}:${from || ''}:${to || ''}`;
     const ttl = getCandleCacheTTL(normalizedTf, from, to);
@@ -155,6 +180,41 @@ router.get('/candles', async (req, res) => {
     if (cached) {
       return res.json(capCandlesForChart(cached));
     }
+
+    if (wantsInternalXau) {
+      try {
+        const internal = await loadInternalOhlcCandles(internalSymbol, normalizedTf, from, to);
+        if (internal?.length > 0) {
+          const candles = capCandlesForChart(internal);
+          if (useStaleKey) {
+            await Promise.all([
+              cache.set(cacheKey, candles, ttl),
+              cache.set(`${cacheKey}:swr`, candles, CANDLES_STALE_TTL),
+            ]);
+          } else {
+            await cache.set(cacheKey, candles, ttl);
+          }
+          return res.json(candles);
+        }
+      } catch (e) {
+        console.warn('[market/candles] internal XAUUSD:', e.message);
+      }
+    }
+
+    if (!FINNHUB_KEY() && !twelveDataApiKey()) {
+      if (wantsInternalXau) {
+        return res.status(503).json({
+          error:
+            'No XAUUSD OHLC in MongoDB yet, and no external market API keys are configured.',
+          hint: 'Run the feed with XAUUSD_PERSIST_TICKS=1 to fill the DB, or set FINNHUB_API_KEY / TWELVEDATA_API_KEY.',
+        });
+      }
+      return res.status(500).json({
+        error: 'Market data not configured',
+        hint: 'Set FINNHUB_API_KEY and/or TWELVEDATA_API_KEY in backend/.env',
+      });
+    }
+
     if (staleCached) {
       setImmediate(() => {
         fetchCandlesWithFallback({

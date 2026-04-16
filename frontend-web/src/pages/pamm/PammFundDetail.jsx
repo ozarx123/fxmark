@@ -84,14 +84,16 @@ export default function PammFundDetail() {
     && Number.isFinite(Number(detail.totalProfit))
   );
 
-  const fund = isInvestorMinimalBullRunResponse ? null : detail.fund;
+  const fund = isInvestorMinimalBullRunResponse ? detail.fund ?? null : detail.fund;
   const stats = isInvestorMinimalBullRunResponse ? null : detail.stats;
   const myAllocation = isInvestorMinimalBullRunResponse
-    ? {
-        id: `inv-min-${fundId}`,
-        allocatedBalance: Number(detail.balance) || 0,
-        realizedPnl: Number(detail.totalProfit) || 0,
-      }
+    ? (detail.allocationId
+        ? {
+            id: detail.allocationId,
+            allocatedBalance: Number(detail.balance) || 0,
+            realizedPnl: Number(detail.totalProfit) || 0,
+          }
+        : null)
     : detail.myAllocation;
   const bullRun = isInvestorMinimalBullRunResponse
     ? {

@@ -100,17 +100,27 @@ async function listReferralJoinings(ibId, options = {}) {
 async function getStats(ibId) {
   const profile = await ibRepo.getProfileById(ibId) || await ibRepo.getProfileByUserId(ibId);
   const effectiveId = profile ? profile.userId : ibId;
-  const [balance, referralCount] = await Promise.all([
+  const [balance, referralCount, daily, pammLifetimeRaw] = await Promise.all([
     getBalance(effectiveId),
     ibRepo.countReferralsByIb(effectiveId),
+    ibRepo.getIbEarningsForUtcDay(effectiveId),
+    ibRepo.sumAllPammIbCommissionForIb(effectiveId),
   ]);
-  const totalEarnings = (balance.pending || 0) + (balance.paid || 0);
+  const tradeTotal = (balance.pending || 0) + (balance.paid || 0);
+  const pammLifetime = Math.round(Number(pammLifetimeRaw) * 100) / 100;
+  const totalEarnings = Math.round((tradeTotal + pammLifetime) * 100) / 100;
   return {
     referralCount: referralCount ?? 0,
     pending: balance.pending ?? 0,
     paid: balance.paid ?? 0,
-    totalEarnings: Math.round(totalEarnings * 100) / 100,
+    totalEarnings,
+    totalEarningsTrade: Math.round(tradeTotal * 100) / 100,
+    totalEarningsPammLifetime: pammLifetime,
     currency: balance.currency || 'USD',
+    dailyEarnings: daily.total,
+    dailyEarningsTrade: daily.trade,
+    dailyEarningsPamm: daily.pamm,
+    dailyEarningsUtcDate: daily.utcDate,
   };
 }
 

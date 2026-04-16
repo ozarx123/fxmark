@@ -117,7 +117,19 @@ export default function Ib() {
       ]);
       setProfile(profRes);
       setBalance(balRes || { pending: 0, paid: 0, currency: 'USD' });
-      setStats(statsRes || { referralCount: 0, totalEarnings: 0, pending: 0, paid: 0, currency: 'USD' });
+      setStats(
+        statsRes || {
+          referralCount: 0,
+          totalEarnings: 0,
+          totalEarningsTrade: 0,
+          totalEarningsPammLifetime: 0,
+          pending: 0,
+          paid: 0,
+          currency: 'USD',
+          dailyEarnings: 0,
+          dailyEarningsUtcDate: null,
+        }
+      );
       setReferrals(Array.isArray(refRes) ? refRes : []);
       setJoinings(Array.isArray(joinRes) ? joinRes : []);
       setCommissions(Array.isArray(commRes) ? commRes : []);
@@ -244,12 +256,23 @@ export default function Ib() {
   const currency = balance?.currency ?? 'USD';
   const referralCount = stats?.referralCount ?? 0;
   const totalEarnings = stats?.totalEarnings ?? (pending + paid);
+  const dailyEarnings = stats?.dailyEarnings ?? 0;
+  const dailyEarningsUtcDate = stats?.dailyEarningsUtcDate;
 
   return (
     <div className="page ib-page">
       <header className="page-header">
-        <h1>Introducing Broker</h1>
-        <p className="page-subtitle">Commission and payouts</p>
+        <div>
+          <h1>Introducing Broker</h1>
+          <p className="page-subtitle">Commission and payouts</p>
+          {!loading && (
+            <p className="ib-profile-total-earnings" aria-live="polite">
+              Total earnings{' '}
+              <strong>{formatCurrency(totalEarnings, currency)}</strong>
+              <span className="muted"> {currency} · lifetime (trade + PAMM)</span>
+            </p>
+          )}
+        </div>
       </header>
       <section className="page-content">
         {error && <p className="form-error">{error}</p>}
@@ -287,9 +310,16 @@ export default function Ib() {
             <span className="card-label">Total signups</span>
           </div>
           <div className="card">
+            <h3>Today's earnings</h3>
+            <p className="card-value">{loading ? '…' : formatCurrency(dailyEarnings, currency)}</p>
+            <span className="card-label">
+              {dailyEarningsUtcDate ? `UTC ${dailyEarningsUtcDate} · trade + PAMM` : 'UTC day · trade + PAMM'}
+            </span>
+          </div>
+          <div className="card">
             <h3>Total earnings</h3>
             <p className="card-value">{loading ? '…' : formatCurrency(totalEarnings, currency)}</p>
-            <span className="card-label">{currency}</span>
+            <span className="card-label">Lifetime · trade + PAMM</span>
           </div>
           <div className="card">
             <h3>Pending commission</h3>

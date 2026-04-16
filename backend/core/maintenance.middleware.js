@@ -1,6 +1,6 @@
 /**
  * Blocks most /api traffic with 503 when platform maintenance is active.
- * Exempt: /api/platform/maintenance, /api/health, auth flows, JWT with staff roles.
+ * Exempt: /api/platform/maintenance, /api/health, GET /api/market/* (read-only quotes/candles), auth flows, JWT with staff roles.
  */
 import * as maintenanceService from '../modules/admin/maintenance.service.js';
 import { optionalAuthenticate } from './middleware.js';
@@ -40,6 +40,10 @@ export async function maintenanceApiGate(req, res, next) {
 
   if (p === '/platform/maintenance' || p === '/health') return next();
   if (p === '/webhooks/nowpayments') return next();
+  // Read-only market routes: candles/quotes have no account data; allow charts/tickers during maintenance
+  if (req.method === 'GET' && (p === '/market/candles' || p === '/market/quote' || p.startsWith('/market/'))) {
+    return next();
+  }
 
   let active;
   let message;
