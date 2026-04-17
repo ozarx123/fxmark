@@ -30,6 +30,7 @@
     "check:zoho": "node scripts/check-zoho-env.js",
     "test:verification-email": "node scripts/test-verification-email.js",
     "export:wallet-ledger-csv": "node scripts/export-users-wallet-ledger-csv.js",
+    "export:pamm-ledger-account": "node scripts/export-pamm-ledger-account-csv.js",
     "db:compare:test-staging": "node scripts/compare-dbs.js test test_staging_20260331104711",
     "db:refresh:staging": "powershell -ExecutionPolicy Bypass -File ./scripts/refresh-staging-db.ps1"
   },
