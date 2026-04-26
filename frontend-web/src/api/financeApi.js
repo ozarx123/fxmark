@@ -90,3 +90,42 @@ export async function getStatement(params = {}) {
   return res.json();
 }
 
+function triggerBlobDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Download statement as CSV or PDF (authenticated GET, same query params as getStatement).
+ * @param {'csv'|'pdf'} kind
+ */
+export async function downloadStatementFile(params, kind, filename) {
+  const q = new URLSearchParams();
+  if (params.from) q.set('from', params.from);
+  if (params.to) q.set('to', params.to);
+  if (params.accountCode) q.set('accountCode', params.accountCode);
+  if (params.limit) q.set('limit', params.limit);
+  const path = kind === 'pdf' ? '/finance/statements.pdf' : '/finance/statements.csv';
+  const url = `${API_BASE}${path}${q.toString() ? `?${q}` : ''}`;
+  const token = getToken();
+  const headers = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(url, { headers });
+  if (!res.ok) {
+    let msg = 'Download failed';
+    try {
+      const j = await res.json();
+      if (j.error) msg = j.error;
+    } catch (_) {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  const blob = await res.blob();
+  triggerBlobDownload(blob, filename);
+}
+

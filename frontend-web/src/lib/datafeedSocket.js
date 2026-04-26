@@ -3,6 +3,7 @@
  * MarketDataProvider subscribes here; consumers read from context.
  */
 import { io } from 'socket.io-client';
+import { getApiOrigin } from '../config/apiBase.js';
 
 let socket = null;
 let connectCount = 0;
@@ -13,13 +14,7 @@ function getDatafeedSocketUrl() {
   if (import.meta.env.DEV) {
     return 'http://localhost:3000';
   }
-  const api = import.meta.env.VITE_API_URL;
-  if (api) {
-    const base = api.replace(/\/api\/?$/, '');
-    return base.startsWith('https') ? base : base.replace(/^http/, 'http');
-  }
-  if (import.meta.env.PROD) return 'https://fxmark-backend-541368249845.us-central1.run.app';
-  return typeof window !== 'undefined' ? window.location.origin : '';
+  return getApiOrigin();
 }
 
 function getAuthToken() {

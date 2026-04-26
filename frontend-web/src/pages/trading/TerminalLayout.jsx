@@ -799,6 +799,7 @@ export default function TerminalLayout() {
           <TerminalTabs
             accountId={accountId}
             accountNumber={accountNumber}
+            accountType={effectiveAccount?.type}
             orders={orders}
             history={history}
             positions={positions}

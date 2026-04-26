@@ -1,11 +1,7 @@
 import { useState, useEffect } from 'react';
+import { getApiBase } from '../config/apiBase.js';
 
-const API_BASE = (() => {
-  const base = import.meta.env.VITE_API_URL;
-  if (base) return base.replace(/\/api\/?$/, '') + '/api';
-  if (import.meta.env.PROD) return 'https://fxmark-backend-541368249845.us-central1.run.app/api';
-  return '/api';
-})();
+const API_BASE = getApiBase();
 
 /**
  * Fetches technical analysis (RSI, MACD, trend, levels) from the backend (Finnhub candles + server-side TA).

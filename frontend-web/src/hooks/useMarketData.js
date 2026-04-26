@@ -1,14 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useMarketDataContext } from '../context/MarketDataContext.jsx';
 import { getSecondsToNextBar } from '../lib/candleTime.js';
+import { getApiBase } from '../config/apiBase.js';
 
-/** API base for market data - use backend URL in production */
-const API_BASE = (() => {
-  const base = import.meta.env.VITE_API_URL;
-  if (base) return base.replace(/\/api\/?$/, '') + '/api/market';
-  if (import.meta.env.PROD) return 'https://fxmark-backend-541368249845.us-central1.run.app/api/market';
-  return '/api/market';
-})();
+/** Market REST routes (same origin resolution as auth + `getApiBase()`). */
+const API_BASE = `${getApiBase()}/market`;
 
 /** Production: longer timeout for Cloud Run cold starts; retries for resilience */
 const FETCH_TIMEOUT_MS = import.meta.env.PROD ? 20000 : 10000;

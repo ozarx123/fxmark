@@ -18,6 +18,8 @@ const SYMBOL_OPTIONS = ['', 'XAU/USD', 'EUR/USD', 'GBP/USD', 'USD/JPY', 'USD/CHF
 export default function TerminalTabs({
   accountId,
   accountNumber,
+  /** 'live' | 'demo' | 'pamm' | other — used in export filename */
+  accountType,
   orders = [],
   history = [],
   positions,
@@ -89,7 +91,8 @@ export default function TerminalTabs({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `trade-history-${new Date().toISOString().slice(0, 10)}.csv`;
+    const acct = (accountType && String(accountType).trim()) || 'account';
+    a.download = `trade-history-${acct}-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };

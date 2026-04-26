@@ -3,6 +3,8 @@
  *
  *   TARGET_DB=test node scripts/export-pamm-ledger-account-csv.js 10020
  *   TARGET_DB=test node scripts/export-pamm-ledger-account-csv.js --account=10020 --out=./logs/pamm-10020.csv
+ *   TARGET_DB=test node scripts/export-pamm-ledger-account-csv.js 10020 --also-full
+ *   (writes a second file: full-ledger-account-<no>-<stamp>.csv with all ledger rows for that user)
  *
  * Uses CONNECTION_STRING from .env. TARGET_DB / MONGO_DATABASE selects the database (e.g. main app DB `test`).
  */
@@ -18,9 +20,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PAMM_REF_PREFIX = /^pamm/i;
 
 function parseArgs(argv) {
-  const out = { account: '', out: '' };
+  const out = { account: '', out: '', alsoFull: false };
   const pos = [];
   for (const a of argv.slice(2)) {
+    if (a === '--also-full') {
+      out.alsoFull = true;
+      continue;
+    }
     const m = /^--([^=]+)=(.*)$/.exec(a);
     if (m) {
       if (m[1] === 'account') out.account = m[2].trim();
@@ -137,6 +143,45 @@ async function main() {
   fs.writeFileSync(outPath, lines.join('\n'), 'utf8');
   console.log('Rows:', rows.length);
   console.log('Wrote:', path.resolve(outPath));
+
+  if (args.alsoFull) {
+    const fullRows = await db
+      .collection('ledger_entries')
+      .find(entityOrForUserId(uidStr))
+      .sort({ createdAt: 1 })
+      .limit(50000)
+      .toArray();
+    const fullOut = path.join(
+      path.dirname(outPath),
+      `full-ledger-account-${accountNo}-${stamp}.csv`,
+    );
+    const fullLines = [header.map(csvEscape).join(',')];
+    for (const e of fullRows) {
+      const id = e._id != null ? e._id.toString() : '';
+      const createdAt = e.createdAt instanceof Date ? e.createdAt.toISOString() : e.createdAt || '';
+      fullLines.push(
+        [
+          id,
+          createdAt,
+          e.accountCode,
+          e.entityId != null ? String(e.entityId) : '',
+          e.debit ?? '',
+          e.credit ?? '',
+          e.currency ?? '',
+          e.referenceType ?? '',
+          e.referenceId != null ? String(e.referenceId) : '',
+          e.pammFundId != null ? String(e.pammFundId) : '',
+          e.description ?? '',
+          e.reference ?? '',
+        ]
+          .map(csvEscape)
+          .join(','),
+      );
+    }
+    fs.writeFileSync(fullOut, fullLines.join('\n'), 'utf8');
+    console.log('Full ledger rows:', fullRows.length);
+    console.log('Also wrote:', path.resolve(fullOut));
+  }
 }
 
 main()

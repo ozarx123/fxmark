@@ -4,7 +4,7 @@
   "framework": "vite",
   "build": {
     "env": {
-      "VITE_API_URL": "https://fxmark-backend-541368249845.us-central1.run.app/api"
+      "VITE_API_URL": "https://fxmark-backend-77025790101.us-central1.run.app/api"
     }
   },
   "rewrites": [

@@ -58,6 +58,57 @@ export default function Finance() {
     [adminLedgerView]
   );
 
+  const accountExportTag = useMemo(
+    () =>
+      activeAccount?.type === 'live'
+        ? 'live'
+        : activeAccount?.type === 'demo'
+          ? 'demo'
+          : String(activeAccount?.type || 'account'),
+    [activeAccount?.type],
+  );
+
+  const exportLedgerCsv = useCallback(async () => {
+    try {
+      const raw = await financeApi.getLedgerEntries({ limit: 2000 });
+      const list = filterReportEntries(raw);
+      const esc = (v) => {
+        const s = v == null ? '' : String(v);
+        if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+        return s;
+      };
+      const header = ['Date', 'AccountCode', 'AccountName', 'Description', 'Debit', 'Credit', 'ReferenceType', 'ReferenceId'];
+      const lines = [header.join(',')];
+      for (const e of list) {
+        const d = e.createdAt ? new Date(e.createdAt).toISOString().slice(0, 10) : '';
+        lines.push(
+          [
+            d,
+            e.accountCode ?? '',
+            e.accountName ?? '',
+            e.description ?? '',
+            e.debit ?? '',
+            e.credit ?? '',
+            e.referenceType ?? '',
+            e.referenceId ?? '',
+          ]
+            .map(esc)
+            .join(','),
+        );
+      }
+      const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const stamp = new Date().toISOString().slice(0, 10);
+      a.download = `ledger-${accountExportTag}-${stamp}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setOrderError(e.message || 'Export failed');
+    }
+  }, [filterReportEntries, accountExportTag]);
+
   const statementRows = useMemo(
     () => filterReportEntries(statement?.entries),
     [statement, filterReportEntries]
@@ -150,6 +201,37 @@ export default function Finance() {
       setStatement(null);
     }
   }, [isAuthenticated, statementFrom, statementTo]);
+
+  const statementExportParams = useMemo(
+    () => ({ from: statementFrom, to: statementTo, limit: 2000 }),
+    [statementFrom, statementTo],
+  );
+
+  const downloadStatementCsvExport = useCallback(async () => {
+    setOrderError('');
+    try {
+      await financeApi.downloadStatementFile(
+        statementExportParams,
+        'csv',
+        `statement-${accountExportTag}-${statementFrom}_to_${statementTo}.csv`,
+      );
+    } catch (e) {
+      setOrderError(e.message || 'Download failed');
+    }
+  }, [statementExportParams, accountExportTag, statementFrom, statementTo]);
+
+  const downloadStatementPdfExport = useCallback(async () => {
+    setOrderError('');
+    try {
+      await financeApi.downloadStatementFile(
+        statementExportParams,
+        'pdf',
+        `statement-${accountExportTag}-${statementFrom}_to_${statementTo}.pdf`,
+      );
+    } catch (e) {
+      setOrderError(e.message || 'Download failed');
+    }
+  }, [statementExportParams, accountExportTag, statementFrom, statementTo]);
 
   useEffect(() => {
     if (tab === 'reports') {
@@ -381,7 +463,13 @@ export default function Finance() {
         {tab === 'ledger' && (
           <div className="section-block">
             <h2>Ledger entries</h2>
-            <p className="muted">All journal entries. Filter by account in the API.</p>
+            <p className="muted">All journal entries for your profile (wallet, P&amp;L, fees — same data in live and demo trading modes).</p>
+            <div className="report-filters" style={{ marginBottom: '0.75rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={exportLedgerCsv}>
+                Export ledger CSV
+              </button>
+              <span className="muted" style={{ fontSize: '0.85rem' }}>Up to 2000 rows · filename includes active mode ({accountExportTag})</span>
+            </div>
             <div className="table-wrap">
               <table className="table">
                 <thead>
@@ -528,6 +616,12 @@ export default function Finance() {
               <input type="date" value={statementFrom} onChange={(e) => setStatementFrom(e.target.value)} className="form-input form-input-sm" />
               <input type="date" value={statementTo} onChange={(e) => setStatementTo(e.target.value)} className="form-input form-input-sm" />
               <button type="button" className="btn btn-secondary btn-sm" onClick={loadStatement}>Load statement</button>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={downloadStatementCsvExport}>
+                Download CSV
+              </button>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={downloadStatementPdfExport}>
+                Download PDF
+              </button>
             </div>
             {statement && (
               <div className="report-content">

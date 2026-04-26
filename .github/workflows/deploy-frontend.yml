@@ -36,5 +36,5 @@ jobs:
       - name: Build
         working-directory: frontend-web
         env:
-          VITE_API_URL: ${{ secrets.VITE_API_URL || 'https://fxmark-backend-541368249845.us-central1.run.app' }}
+          VITE_API_URL: ${{ secrets.VITE_API_URL || 'https://fxmark-backend-77025790101.us-central1.run.app/api' }}
         run: npm run build
